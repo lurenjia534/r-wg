@@ -3,17 +3,20 @@
 //! - 通过 MPSC 命令通道驱动 gotatun 设备的生命周期，确保串行执行。
 //! - 对外提供同步 API（start/stop/status），内部异步执行并做清理回滚。
 use std::fmt;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gotatun::device::{
     self,
-    api::{command::Response, ApiServer},
+    api::{command::{Get, Response}, ApiServer},
     DeviceConfig, DeviceHandle, DefaultDeviceTransports,
 };
 use gotatun::udp::socket::UdpSocketFactory;
 use tokio::sync::{mpsc, oneshot};
 
 use super::config::{self, ConfigError};
+use crate::log;
 use crate::platform;
 /// 启动请求：包含 TUN 设备名称与配置文本。
 ///
@@ -46,6 +49,22 @@ pub enum EngineStatus {
     Stopped,
     /// 已启动。
     Running,
+}
+
+/// gotatun 设备的运行时统计信息。
+#[derive(Debug, Clone)]
+pub struct EngineStats {
+    pub peers: Vec<PeerStats>,
+}
+
+/// 单个 Peer 的状态快照。
+#[derive(Debug, Clone)]
+pub struct PeerStats {
+    pub public_key: [u8; 32],
+    pub endpoint: Option<SocketAddr>,
+    pub last_handshake: Option<Duration>,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
 }
 
 /// 引擎错误类型。
@@ -130,6 +149,8 @@ enum Command {
     Stop(oneshot::Sender<Result<(), EngineError>>),
     /// 查询状态（仅返回 Running/Stopped）。
     Status(oneshot::Sender<EngineStatus>),
+    /// 查询 gotatun 运行时统计信息。
+    Stats(oneshot::Sender<Result<EngineStats, EngineError>>),
 }
 
 impl Engine {
@@ -199,6 +220,18 @@ impl Engine {
             .blocking_recv()
             .map_err(|_| EngineError::ChannelClosed)
     }
+
+    /// 同步获取 gotatun 运行时统计信息。
+    pub fn stats(&self) -> Result<EngineStats, EngineError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.inner
+            .tx
+            .blocking_send(Command::Stats(reply_tx))
+            .map_err(|_| EngineError::ChannelClosed)?;
+        reply_rx
+            .blocking_recv()
+            .map_err(|_| EngineError::ChannelClosed)?
+    }
 }
 
 /// 后台线程维护的运行态状态。
@@ -226,9 +259,16 @@ impl EngineState {
             return Err(EngineError::AlreadyRunning);
         }
 
+        log_engine(format!(
+            "start: tun={} config_len={}",
+            request.tun_name,
+            request.config_text.len()
+        ));
+
         // 解析配置并映射为 gotatun 的 Set 请求。
         let parsed = config::parse_config(&request.config_text)?;
         let set_request = parsed.to_set_request().await?;
+        log_engine("config parsed".to_string());
 
         // 建立 gotatun 内部 API 通道。
         let (api_client, api_server) = ApiServer::new();
@@ -243,6 +283,7 @@ impl EngineState {
             config,
         )
         .await?;
+        log_engine("device created".to_string());
 
         // 配置 gotatun 设备；若返回 errno 需立即停止设备。
         let response = api_client
@@ -255,6 +296,7 @@ impl EngineState {
                 return Err(EngineError::ApiErrno(response.errno));
             }
         }
+        log_engine("device configured".to_string());
 
         // 应用系统网络配置；失败时回滚 gotatun 设备。
         let net_state = match platform::apply_network_config(
@@ -270,6 +312,7 @@ impl EngineState {
                 return Err(EngineError::Network(err));
             }
         };
+        log_engine("network configured".to_string());
 
         // 保存运行态状态，便于后续 stop/cleanup。
         self.device = Some(handle);
@@ -287,6 +330,8 @@ impl EngineState {
             return Err(EngineError::NotRunning);
         };
 
+        log_engine("stop requested".to_string());
+
         // 优先回滚系统网络配置，避免留下路由/DNS 污染。
         let cleanup_result = if let Some(state) = self.net_state.take() {
             platform::cleanup_network_config(state)
@@ -299,6 +344,7 @@ impl EngineState {
         // 停止 gotatun 设备。
         handle.stop().await;
         self.api = None;
+        log_engine("device stopped".to_string());
 
         // 若回滚失败，仍然返回错误以便上层提示。
         cleanup_result
@@ -312,6 +358,47 @@ impl EngineState {
             EngineStatus::Stopped
         }
     }
+
+    /// 获取 gotatun 运行时统计信息。
+    async fn stats(&self) -> Result<EngineStats, EngineError> {
+        let Some(api) = self.api.as_ref() else {
+            return Err(EngineError::NotRunning);
+        };
+
+        let response = api
+            .send(Get::default())
+            .await
+            .map_err(|err| EngineError::Api(err.to_string()))?;
+
+        let Response::Get(get) = response else {
+            return Err(EngineError::Api("unexpected api response".to_string()));
+        };
+
+        if get.errno != 0 {
+            return Err(EngineError::ApiErrno(get.errno));
+        }
+
+        let peers = get
+            .peers
+            .into_iter()
+            .map(|peer| PeerStats {
+                public_key: peer.peer.public_key.0,
+                endpoint: peer.peer.endpoint,
+                last_handshake: duration_from_parts(
+                    peer.last_handshake_time_sec,
+                    peer.last_handshake_time_nsec,
+                ),
+                rx_bytes: peer.rx_bytes.unwrap_or(0),
+                tx_bytes: peer.tx_bytes.unwrap_or(0),
+            })
+            .collect();
+
+        Ok(EngineStats { peers })
+    }
+}
+
+fn log_engine(message: String) {
+    log::log("engine", message);
 }
 
 /// 后台线程的主事件循环：
@@ -337,9 +424,23 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
                 // 状态查询：返回当前状态。
                 let _ = reply.send(state.status());
             }
+            Command::Stats(reply) => {
+                // 统计信息：返回运行态统计。
+                let result = state.stats().await;
+                let _ = reply.send(result);
+            }
         }
     }
 
     // 通道关闭，尝试优雅停止设备。
     let _ = state.stop().await;
+}
+
+fn duration_from_parts(sec: Option<u64>, nsec: Option<u32>) -> Option<Duration> {
+    match (sec, nsec) {
+        (None, None) => None,
+        (Some(sec), Some(nsec)) => Some(Duration::new(sec, nsec)),
+        (Some(sec), None) => Some(Duration::new(sec, 0)),
+        (None, Some(nsec)) => Some(Duration::new(0, nsec)),
+    }
 }
