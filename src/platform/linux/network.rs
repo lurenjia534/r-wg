@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use futures_util::stream::TryStreamExt;
 use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteHeader, RouteMessage};
-use rtnetlink::{new_connection, Handle, IpVersion};
+use rtnetlink::{new_connection, Handle, LinkMessageBuilder, LinkUnspec, RouteMessageBuilder};
 use tokio::process::Command;
 
 use crate::backend::wg::config::{AllowedIp, InterfaceAddress, InterfaceConfig, PeerConfig, RouteTable};
@@ -100,10 +100,18 @@ pub async fn apply_network_config(
     log_net(format!("link index: {link_index}"));
 
     if let Some(mtu) = interface.mtu {
-        handle.link().set(link_index).mtu(mtu.into()).execute().await?;
+        let message = LinkMessageBuilder::<LinkUnspec>::default()
+            .index(link_index)
+            .mtu(mtu.into())
+            .build();
+        handle.link().set(message).execute().await?;
     }
 
-    handle.link().set(link_index).up().execute().await?;
+    let message = LinkMessageBuilder::<LinkUnspec>::default()
+        .index(link_index)
+        .up()
+        .build();
+    handle.link().set(message).execute().await?;
 
     for address in &interface.addresses {
         log_net(format!("address: {}/{}", address.addr, address.cidr));
@@ -121,28 +129,22 @@ pub async fn apply_network_config(
             log_net(format!("route: {}/{}", route.addr, route.cidr));
             match route.addr {
                 IpAddr::V4(addr) => {
-                    let mut request = handle
-                        .route()
-                        .add()
-                        .v4()
+                    let mut request = RouteMessageBuilder::<Ipv4Addr>::default()
                         .destination_prefix(addr, route.cidr)
                         .output_interface(link_index);
                     if let Some(table) = table {
                         request = request.table_id(table);
                     }
-                    request.execute().await?;
+                    handle.route().add(request.build()).execute().await?;
                 }
                 IpAddr::V6(addr) => {
-                    let mut request = handle
-                        .route()
-                        .add()
-                        .v6()
+                    let mut request = RouteMessageBuilder::<Ipv6Addr>::default()
                         .destination_prefix(addr, route.cidr)
                         .output_interface(link_index);
                     if let Some(table) = table {
                         request = request.table_id(table);
                     }
-                    request.execute().await?;
+                    handle.route().add(request.build()).execute().await?;
                 }
             }
         }
@@ -379,11 +381,11 @@ async fn delete_route(
     route: &AllowedIp,
     table: Option<u32>,
 ) -> Result<(), NetworkError> {
-    let ip_version = match route.addr {
-        IpAddr::V4(_) => IpVersion::V4,
-        IpAddr::V6(_) => IpVersion::V6,
+    let filter = match route.addr {
+        IpAddr::V4(_) => RouteMessageBuilder::<Ipv4Addr>::default().build(),
+        IpAddr::V6(_) => RouteMessageBuilder::<Ipv6Addr>::default().build(),
     };
-    let mut routes = handle.route().get(ip_version).execute();
+    let mut routes = handle.route().get(filter).execute();
     while let Some(message) = routes.try_next().await? {
         if route_message_matches(&message, link_index, route, table) {
             handle.route().del(message).execute().await?;
