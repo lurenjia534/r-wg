@@ -4,16 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed" }
-editor = { git = "https://github.com/zed-industries/zed" }
-settings = { git = "https://github.com/zed-industries/zed" }
-theme = { git = "https://github.com/zed-industries/zed" }
+gpui = "0.2.2"
+gpui-component = "0.5.0"
 gotatun = { version = "0.1.2", features = ["device", "tun"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process"] }
 base64 = "0.22.1"
 futures-util = "0.3"
-rtnetlink = "0.14"
-netlink-packet-route = "0.19"
+rtnetlink = "0.20.0"
+netlink-packet-route = "0.28.0"
 # smallvec is included here for convenience, it is used by gpui when creating
 # components that can have children. uncomment this line or
 # use `cargo add smallvec` to add it to your project
