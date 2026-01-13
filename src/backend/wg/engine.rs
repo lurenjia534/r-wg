@@ -5,22 +5,28 @@
 use std::fmt;
 use std::sync::Arc;
 
-use gotatun::device::{self, api::ApiServer, DeviceConfig, DeviceHandle, DefaultDeviceTransports};
+use gotatun::device::{
+    self,
+    api::{command::Response, ApiServer},
+    DeviceConfig, DeviceHandle, DefaultDeviceTransports,
+};
 use gotatun::udp::socket::UdpSocketFactory;
 use tokio::sync::{mpsc, oneshot};
 
-/// 启动请求：只包含 TUN 设备名称。
-/// 后续可扩展为包含配置文件路径、日志等级等。
+use super::config::{self, ConfigError};
+/// 启动请求：包含 TUN 设备名称与配置文本。
 #[derive(Debug, Clone)]
 pub struct StartRequest {
     pub tun_name: String,
+    pub config_text: String,
 }
 
 impl StartRequest {
     /// 便捷构造器。
-    pub fn new(tun_name: impl Into<String>) -> Self {
+    pub fn new(tun_name: impl Into<String>, config_text: impl Into<String>) -> Self {
         Self {
             tun_name: tun_name.into(),
+            config_text: config_text.into(),
         }
     }
 }
@@ -44,6 +50,12 @@ pub enum EngineError {
     NotRunning,
     /// gotatun 设备层错误。
     Device(device::Error),
+    /// WireGuard 配置错误。
+    Config(ConfigError),
+    /// gotatun API 请求失败。
+    Api(String),
+    /// gotatun API 返回 errno。
+    ApiErrno(i32),
 }
 
 /// 将错误转换为可读文本。
@@ -54,6 +66,9 @@ impl fmt::Display for EngineError {
             EngineError::AlreadyRunning => write!(f, "backend already running"),
             EngineError::NotRunning => write!(f, "backend not running"),
             EngineError::Device(err) => write!(f, "device error: {err}"),
+            EngineError::Config(err) => write!(f, "config error: {err}"),
+            EngineError::Api(err) => write!(f, "api error: {err}"),
+            EngineError::ApiErrno(errno) => write!(f, "api errno: {errno}"),
         }
     }
 }
@@ -64,6 +79,12 @@ impl std::error::Error for EngineError {}
 impl From<device::Error> for EngineError {
     fn from(err: device::Error) -> Self {
         EngineError::Device(err)
+    }
+}
+
+impl From<ConfigError> for EngineError {
+    fn from(err: ConfigError) -> Self {
+        EngineError::Config(err)
     }
 }
 
@@ -168,6 +189,9 @@ impl EngineState {
             return Err(EngineError::AlreadyRunning);
         }
 
+        let parsed = config::parse_config(&request.config_text)?;
+        let set_request = parsed.to_set_request().await?;
+
         // 建立 gotatun 内部 API 通道。
         let (api_client, api_server) = ApiServer::new();
         let config = DeviceConfig {
@@ -181,6 +205,17 @@ impl EngineState {
             config,
         )
         .await?;
+
+        let response = api_client
+            .send(set_request)
+            .await
+            .map_err(|err| EngineError::Api(err.to_string()))?;
+        if let Response::Set(response) = response {
+            if response.errno != 0 {
+                handle.stop().await;
+                return Err(EngineError::ApiErrno(response.errno));
+            }
+        }
 
         // 保存运行态状态。
         self.device = Some(handle);
