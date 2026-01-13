@@ -90,6 +90,7 @@ impl PeerBuilder {
 /// - 键名大小写不敏感。
 /// - 多个 `[Peer]` 段会被追加到 peers 列表。
 pub fn parse_config(input: &str) -> Result<WireGuardConfig, ConfigError> {
+    let input = input.trim_start_matches('\u{feff}');
     let mut section: Option<Section> = None;
     let mut interface_builder = InterfaceBuilder::default();
     let mut interface_line: Option<usize> = None;

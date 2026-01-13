@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed" }
+editor = { git = "https://github.com/zed-industries/zed" }
+settings = { git = "https://github.com/zed-industries/zed" }
+theme = { git = "https://github.com/zed-industries/zed" }
 gotatun = { version = "0.1.2", features = ["device", "tun"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process"] }
 base64 = "0.22.1"
