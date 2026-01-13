@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use editor::{Editor, EditorElement, EditorStyle};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use gpui::*;
-use r_wg::backend::wg::{config, Engine, StartRequest};
-use settings as app_settings;
-use theme as app_theme;
+use gpui_component::input::{Input, InputState};
+use gpui_component::Root;
+use r_wg::backend::wg::{config, Engine, EngineStats, PeerStats, StartRequest};
 
 #[derive(Clone)]
 enum ConfigSource {
@@ -38,52 +40,15 @@ pub fn run() {
     let engine = Engine::new();
 
     Application::new().run(move |cx: &mut App| {
-        app_settings::init(cx);
-        app_theme::init(app_theme::LoadThemes::JustBase, cx);
-        bind_editor_keys(cx);
+        gpui_component::init(cx);
 
         let engine = engine.clone();
-        cx.open_window(WindowOptions::default(), move |_, cx| {
-            cx.new(|_cx| WgApp::new(engine))
+        cx.open_window(WindowOptions::default(), move |window, cx| {
+            let view = cx.new(|_cx| WgApp::new(engine));
+            cx.new(|cx| Root::new(view, window, cx))
         })
         .unwrap();
     });
-}
-
-fn bind_editor_keys(cx: &mut App) {
-    use editor::actions as editor_actions;
-
-    cx.bind_keys([
-        KeyBinding::new("backspace", editor_actions::Backspace, Some("Editor")),
-        KeyBinding::new("delete", editor_actions::Delete, Some("Editor")),
-        KeyBinding::new("left", editor_actions::MoveLeft, Some("Editor")),
-        KeyBinding::new("right", editor_actions::MoveRight, Some("Editor")),
-        KeyBinding::new("up", editor_actions::MoveUp, Some("Editor")),
-        KeyBinding::new("down", editor_actions::MoveDown, Some("Editor")),
-        KeyBinding::new("shift-left", editor_actions::SelectLeft, Some("Editor")),
-        KeyBinding::new("shift-right", editor_actions::SelectRight, Some("Editor")),
-        KeyBinding::new("shift-up", editor_actions::SelectUp, Some("Editor")),
-        KeyBinding::new("shift-down", editor_actions::SelectDown, Some("Editor")),
-        KeyBinding::new("enter", editor_actions::Newline, Some("Editor")),
-        KeyBinding::new("tab", editor_actions::Tab, Some("Editor")),
-        KeyBinding::new("shift-tab", editor_actions::Backtab, Some("Editor")),
-        KeyBinding::new("home", editor_actions::MoveToBeginning, Some("Editor")),
-        KeyBinding::new("end", editor_actions::MoveToEnd, Some("Editor")),
-        KeyBinding::new("pageup", editor_actions::PageUp, Some("Editor")),
-        KeyBinding::new("pagedown", editor_actions::PageDown, Some("Editor")),
-        KeyBinding::new("cmd-a", editor_actions::SelectAll, Some("Editor")),
-        KeyBinding::new("ctrl-a", editor_actions::SelectAll, Some("Editor")),
-        KeyBinding::new("cmd-c", editor_actions::Copy, Some("Editor")),
-        KeyBinding::new("ctrl-c", editor_actions::Copy, Some("Editor")),
-        KeyBinding::new("cmd-v", editor_actions::Paste, Some("Editor")),
-        KeyBinding::new("ctrl-v", editor_actions::Paste, Some("Editor")),
-        KeyBinding::new("cmd-x", editor_actions::Cut, Some("Editor")),
-        KeyBinding::new("ctrl-x", editor_actions::Cut, Some("Editor")),
-        KeyBinding::new("cmd-z", editor_actions::Undo, Some("Editor")),
-        KeyBinding::new("ctrl-z", editor_actions::Undo, Some("Editor")),
-        KeyBinding::new("cmd-shift-z", editor_actions::Redo, Some("Editor")),
-        KeyBinding::new("ctrl-shift-z", editor_actions::Redo, Some("Editor")),
-    ]);
 }
 
 #[cfg(target_os = "linux")]
@@ -137,12 +102,15 @@ struct WgApp {
     engine: Engine,
     configs: Vec<TunnelConfig>,
     selected: Option<usize>,
-    name_editor: Option<Entity<Editor>>,
-    config_editor: Option<Entity<Editor>>,
+    name_input: Option<Entity<InputState>>,
+    config_input: Option<Entity<InputState>>,
     status: SharedString,
     running: bool,
     busy: bool,
     running_name: Option<String>,
+    peer_stats: Vec<PeerStats>,
+    stats_note: SharedString,
+    stats_generation: u64,
 }
 
 impl WgApp {
@@ -151,43 +119,34 @@ impl WgApp {
             engine,
             configs: Vec::new(),
             selected: None,
-            name_editor: None,
-            config_editor: None,
+            name_input: None,
+            config_input: None,
             status: "Ready".into(),
             running: false,
             busy: false,
             running_name: None,
+            peer_stats: Vec::new(),
+            stats_note: "Peer stats unavailable".into(),
+            stats_generation: 0,
         }
     }
 
-    fn ensure_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.name_editor.is_none() {
-            let editor = cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Tunnel name", window, cx);
-                editor
-            });
-            self.name_editor = Some(editor);
+    fn ensure_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.name_input.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Tunnel name"));
+            self.name_input = Some(input);
         }
 
-        if self.config_editor.is_none() {
-            let editor = cx.new(|cx| {
-                let mut editor = Editor::multi_line(window, cx);
-                editor.set_placeholder_text(
-                    "[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = ...\nAllowedIPs = 0.0.0.0/0\nEndpoint = example.com:51820",
-                    window,
-                    cx,
-                );
-                editor
+        if self.config_input.is_none() {
+            let placeholder = "[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = ...\nAllowedIPs = 0.0.0.0/0\nEndpoint = example.com:51820";
+            let input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .multi_line(true)
+                    .rows(16)
+                    .placeholder(placeholder)
             });
-            self.config_editor = Some(editor);
+            self.config_input = Some(input);
         }
-    }
-
-    fn editor_style(window: &Window) -> EditorStyle {
-        let mut style = EditorStyle::default();
-        style.text = window.text_style();
-        style
     }
 
     fn upsert_config(
@@ -212,26 +171,77 @@ impl WgApp {
         };
 
         self.selected = Some(idx);
-        self.load_config_into_editors(idx, window, cx);
+        self.load_config_into_inputs(idx, window, cx);
     }
 
-    fn load_config_into_editors(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.ensure_editors(window, cx);
+    fn load_config_into_inputs(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_inputs(window, cx);
 
-        let Some(name_editor) = self.name_editor.as_ref() else {
+        let Some(name_input) = self.name_input.as_ref() else {
             return;
         };
-        let Some(config_editor) = self.config_editor.as_ref() else {
+        let Some(config_input) = self.config_input.as_ref() else {
             return;
         };
 
         let config = &self.configs[idx];
-        name_editor.update(cx, |editor, cx| {
-            editor.set_text(config.name.clone(), window, cx);
+        name_input.update(cx, |input, cx| {
+            input.set_value(config.name.clone(), window, cx);
         });
-        config_editor.update(cx, |editor, cx| {
-            editor.set_text(config.text.clone(), window, cx);
+        config_input.update(cx, |input, cx| {
+            input.set_value(config.text.clone(), window, cx);
         });
+    }
+
+    fn start_stats_polling(&mut self, cx: &mut Context<Self>) {
+        self.stats_generation = self.stats_generation.wrapping_add(1);
+        let generation = self.stats_generation;
+        let engine = self.engine.clone();
+        let poll_interval = Duration::from_secs(2);
+
+        cx.spawn(async move |view, cx| {
+            loop {
+                cx.background_executor().timer(poll_interval).await;
+                let engine = engine.clone();
+                let result = cx.background_spawn(async move { engine.stats() }).await;
+
+                let continue_polling = view
+                    .update(cx, |this, cx| {
+                        if !this.running || this.stats_generation != generation {
+                            return false;
+                        }
+
+                        match result {
+                            Ok(stats) => this.apply_stats(stats),
+                            Err(err) => {
+                                this.stats_note = format!("Stats failed: {err}").into();
+                            }
+                        }
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+
+                if !continue_polling {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn apply_stats(&mut self, stats: EngineStats) {
+        self.peer_stats = stats.peers;
+        if self.peer_stats.is_empty() {
+            self.stats_note = "No peers reported".into();
+        } else {
+            self.stats_note = format!("Peers: {}", self.peer_stats.len()).into();
+        }
+    }
+
+    fn clear_stats(&mut self) {
+        self.peer_stats.clear();
+        self.stats_note = "Peer stats unavailable".into();
     }
 
     fn start_import_from_path(
@@ -306,19 +316,16 @@ impl WgApp {
 
 impl Render for WgApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.ensure_editors(window, cx);
+        self.ensure_inputs(window, cx);
 
-        let name_editor = self
-            .name_editor
+        let name_input = self
+            .name_input
             .as_ref()
-            .expect("name editor should be initialized");
-        let config_editor = self
-            .config_editor
+            .expect("name input should be initialized");
+        let config_input = self
+            .config_input
             .as_ref()
-            .expect("config editor should be initialized");
-
-        let input_style = Self::editor_style(window);
-        let config_style = Self::editor_style(window);
+            .expect("config input should be initialized");
 
         let list_items = self
             .configs
@@ -339,7 +346,7 @@ impl Render for WgApp {
 
                 row = row.on_click(cx.listener(move |this, _event, window, cx| {
                     this.selected = Some(idx);
-                    this.load_config_into_editors(idx, window, cx);
+                    this.load_config_into_inputs(idx, window, cx);
                     this.set_status("Loaded tunnel");
                     cx.notify();
                 }));
@@ -364,6 +371,32 @@ impl Render for WgApp {
                 .children(list_items)
                 .into_any_element()
         };
+
+        let mut stats_items = Vec::new();
+        stats_items.push(
+            div()
+                .text_sm()
+                .text_color(rgb(0x8a939c))
+                .child(self.stats_note.clone())
+                .into_any_element(),
+        );
+        if self.peer_stats.is_empty() {
+            stats_items.push(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x8a939c))
+                    .child("No peer stats yet")
+                    .into_any_element(),
+            );
+        } else {
+            stats_items.extend(self.peer_stats.iter().map(|peer| {
+                div()
+                    .text_sm()
+                    .child(format_peer_line(peer))
+                    .into_any_element()
+            }));
+        }
+        let stats_block = div().flex().flex_col().gap_1().children(stats_items);
 
         let can_start = !self.busy && self.selected.is_some() && !self.running;
         let can_stop = !self.busy && self.running;
@@ -438,19 +471,19 @@ impl Render for WgApp {
             action_button("save-button", "Save From Paste", can_save, ButtonTone::Neutral);
         if can_save {
             save_button = save_button.on_click(cx.listener(|this, _event, window, cx| {
-                this.ensure_editors(window, cx);
-                let Some(name_editor) = this.name_editor.as_ref() else {
+                this.ensure_inputs(window, cx);
+                let Some(name_input) = this.name_input.as_ref() else {
                     this.set_status("Name input not ready");
                     cx.notify();
                     return;
                 };
-                let Some(config_editor) = this.config_editor.as_ref() else {
+                let Some(config_input) = this.config_input.as_ref() else {
                     this.set_status("Config input not ready");
                     cx.notify();
                     return;
                 };
 
-                let name = name_editor.read(cx).text(cx);
+                let name = name_input.read(cx).value().to_string();
                 let name = name.trim();
                 if name.is_empty() {
                     this.set_status("Tunnel name is required");
@@ -458,9 +491,9 @@ impl Render for WgApp {
                     return;
                 }
 
-                let text = config_editor.read(cx).text(cx);
+                let text = config_input.read(cx).value().to_string();
                 if text.trim().is_empty() {
-                    this.set_status("Config is empty");
+                    this.set_status("Config text is required");
                     cx.notify();
                     return;
                 }
@@ -534,6 +567,7 @@ impl Render for WgApp {
                                         this.running = false;
                                         this.running_name = None;
                                         this.set_status("Stopped");
+                                        this.clear_stats();
                                     }
                                     Err(err) => {
                                         this.set_status(format!("Stop failed: {err}"));
@@ -554,16 +588,18 @@ impl Render for WgApp {
                         let start_task = cx.background_spawn(async move { engine.start(request) });
                         let result = start_task.await;
                         view.update(cx, |this, cx| {
-                            this.busy = false;
-                            match result {
-                                Ok(()) => {
-                                    this.running = true;
-                                    this.running_name = Some(selected.name.clone());
-                                    this.set_status(format!("Running {}", selected.name));
-                                }
-                                Err(err) => {
-                                    this.set_status(format!("Start failed: {err}"));
-                                }
+                                this.busy = false;
+                                match result {
+                                    Ok(()) => {
+                                        this.running = true;
+                                        this.running_name = Some(selected.name.clone());
+                                        this.set_status(format!("Running {}", selected.name));
+                                        this.stats_note = "Fetching peer stats...".into();
+                                        this.start_stats_polling(cx);
+                                    }
+                                    Err(err) => {
+                                        this.set_status(format!("Start failed: {err}"));
+                                    }
                             }
                             cx.notify();
                         })
@@ -636,7 +672,7 @@ impl Render for WgApp {
                                     .py_1()
                                     .rounded_md()
                                     .bg(rgb(0x1a2026))
-                                    .child(EditorElement::new(name_editor, input_style)),
+                                    .child(Input::new(name_input)),
                             ),
                     )
                     .child(
@@ -654,7 +690,7 @@ impl Render for WgApp {
                                     .p_2()
                                     .rounded_md()
                                     .bg(rgb(0x1a2026))
-                                    .child(EditorElement::new(config_editor, config_style)),
+                                    .child(Input::new(config_input)),
                             ),
                     )
                     .child(
@@ -662,6 +698,14 @@ impl Render for WgApp {
                             .text_sm()
                             .text_color(rgb(0x8a939c))
                             .child(self.status.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_sm().text_color(rgb(0x8a939c)).child("Peer Stats"))
+                            .child(stats_block),
                     ),
             )
     }
@@ -696,6 +740,62 @@ fn action_button(id: &'static str, label: &str, enabled: bool, tone: ButtonTone)
     }
 
     button
+}
+
+fn format_peer_line(peer: &PeerStats) -> String {
+    let key = format_public_key(&peer.public_key);
+    let (handshake, handshake_suffix) = match peer.last_handshake {
+        Some(duration) => (format_duration(duration), " ago"),
+        None => ("never".to_string(), ""),
+    };
+    let rx = format_bytes(peer.rx_bytes);
+    let tx = format_bytes(peer.tx_bytes);
+    let endpoint = peer
+        .endpoint
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    format!(
+        "{key}  handshake: {handshake}{handshake_suffix}  rx: {rx}  tx: {tx}  endpoint: {endpoint}"
+    )
+}
+
+fn format_public_key(key: &[u8; 32]) -> String {
+    let encoded = STANDARD.encode(key);
+    let short = encoded.get(0..8).unwrap_or(&encoded);
+    format!("{short}...")
+}
+
+fn format_duration(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        let minutes = secs / 60;
+        let seconds = secs % 60;
+        format!("{minutes}m{seconds}s")
+    } else {
+        let hours = secs / 3600;
+        let minutes = (secs % 3600) / 60;
+        format!("{hours}h{minutes}m")
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * KB;
+    const GB: f64 = 1024.0 * MB;
+
+    let value = bytes as f64;
+    if value >= GB {
+        format!("{:.1}GiB", value / GB)
+    } else if value >= MB {
+        format!("{:.1}MiB", value / MB)
+    } else if value >= KB {
+        format!("{:.1}KiB", value / KB)
+    } else {
+        format!("{bytes}B")
+    }
 }
 
 fn name_from_path(path: &Path) -> String {
