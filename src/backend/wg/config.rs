@@ -25,6 +25,61 @@ pub struct InterfaceConfig {
     pub private_key: Key,
     pub listen_port: Option<u16>,
     pub fwmark: Option<u32>,
+    /// wg-quick: Address
+    pub addresses: Vec<InterfaceAddress>,
+    /// wg-quick: DNS 服务器
+    pub dns_servers: Vec<IpAddr>,
+    /// wg-quick: DNS 搜索域
+    pub dns_search: Vec<String>,
+    /// wg-quick: MTU
+    pub mtu: Option<u16>,
+    /// wg-quick: Table
+    pub table: Option<RouteTable>,
+}
+
+/// 接口地址，支持 `IP/CIDR`，若未提供 CIDR 则使用 /32 或 /128。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceAddress {
+    pub addr: IpAddr,
+    pub cidr: u8,
+}
+
+impl FromStr for InterfaceAddress {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim();
+        if value.is_empty() {
+            return Err("address is empty");
+        }
+
+        let (addr, cidr) = if let Some((addr_str, cidr_str)) = value.split_once('/') {
+            let addr = addr_str.parse::<IpAddr>().map_err(|_| "invalid ip")?;
+            let cidr = cidr_str.parse::<u8>().map_err(|_| "invalid cidr")?;
+            (addr, cidr)
+        } else {
+            let addr = value.parse::<IpAddr>().map_err(|_| "invalid ip")?;
+            let cidr = match addr {
+                IpAddr::V4(_) => 32,
+                IpAddr::V6(_) => 128,
+            };
+            (addr, cidr)
+        };
+
+        match addr {
+            IpAddr::V4(_) if cidr <= 32 => Ok(Self { addr, cidr }),
+            IpAddr::V6(_) if cidr <= 128 => Ok(Self { addr, cidr }),
+            _ => Err("invalid cidr for ip version"),
+        }
+    }
+}
+
+/// 路由表配置（wg-quick: Table）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteTable {
+    Auto,
+    Off,
+    Id(u32),
 }
 
 /// `[Peer]` 段配置。
@@ -295,6 +350,11 @@ struct InterfaceBuilder {
     private_key: Option<Key>,
     listen_port: Option<u16>,
     fwmark: Option<u32>,
+    addresses: Vec<InterfaceAddress>,
+    dns_servers: Vec<IpAddr>,
+    dns_search: Vec<String>,
+    mtu: Option<u16>,
+    table: Option<RouteTable>,
 }
 
 impl InterfaceBuilder {
@@ -307,6 +367,11 @@ impl InterfaceBuilder {
             private_key,
             listen_port: self.listen_port,
             fwmark: self.fwmark,
+            addresses: self.addresses,
+            dns_servers: self.dns_servers,
+            dns_search: self.dns_search,
+            mtu: self.mtu,
+            table: self.table,
         })
     }
 }
@@ -521,6 +586,33 @@ fn parse_interface_kv(
             }
             builder.fwmark = parse_fwmark(value, line_no)?;
         }
+        "address" => {
+            let addresses = parse_interface_addresses(value, line_no)?;
+            builder.addresses.extend(addresses);
+        }
+        "dns" => {
+            let (servers, search) = parse_dns_entries(value, line_no)?;
+            builder.dns_servers.extend(servers);
+            builder.dns_search.extend(search);
+        }
+        "mtu" => {
+            if builder.mtu.is_some() {
+                return Err(ConfigError::new(
+                    Some(line_no),
+                    "duplicate MTU in [Interface] section",
+                ));
+            }
+            builder.mtu = Some(parse_u16(value, line_no, "MTU")?);
+        }
+        "table" => {
+            if builder.table.is_some() {
+                return Err(ConfigError::new(
+                    Some(line_no),
+                    "duplicate Table in [Interface] section",
+                ));
+            }
+            builder.table = Some(parse_table(value, line_no)?);
+        }
         _ => {
             return Err(ConfigError::new(
                 Some(line_no),
@@ -621,6 +713,70 @@ fn parse_allowed_ips(value: &str, line_no: usize) -> Result<Vec<AllowedIp>, Conf
         ));
     }
     Ok(out)
+}
+
+/// 解析 Address，逗号分隔。
+fn parse_interface_addresses(
+    value: &str,
+    line_no: usize,
+) -> Result<Vec<InterfaceAddress>, ConfigError> {
+    let mut out = Vec::new();
+    for raw in value.split(',') {
+        let item = raw.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let addr = item.parse::<InterfaceAddress>().map_err(|err| {
+            ConfigError::new(Some(line_no), format!("invalid Address entry: {err}"))
+        })?;
+        out.push(addr);
+    }
+    if out.is_empty() {
+        return Err(ConfigError::new(
+            Some(line_no),
+            "Address must contain at least one entry",
+        ));
+    }
+    Ok(out)
+}
+
+/// 解析 DNS，逗号分隔。
+fn parse_dns_entries(
+    value: &str,
+    line_no: usize,
+) -> Result<(Vec<IpAddr>, Vec<String>), ConfigError> {
+    let mut servers = Vec::new();
+    let mut search = Vec::new();
+    for raw in value.split(',') {
+        let item = raw.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if let Ok(ip) = item.parse::<IpAddr>() {
+            servers.push(ip);
+        } else {
+            search.push(item.to_string());
+        }
+    }
+    if servers.is_empty() && search.is_empty() {
+        return Err(ConfigError::new(Some(line_no), "DNS must not be empty"));
+    }
+    Ok((servers, search))
+}
+
+/// 解析 Table，支持 auto/off/数字。
+fn parse_table(value: &str, line_no: usize) -> Result<RouteTable, ConfigError> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto") {
+        return Ok(RouteTable::Auto);
+    }
+    if value.eq_ignore_ascii_case("off") {
+        return Ok(RouteTable::Off);
+    }
+    let table = value.parse::<u32>().map_err(|_| {
+        ConfigError::new(Some(line_no), "invalid Table value")
+    })?;
+    Ok(RouteTable::Id(table))
 }
 
 /// 解析 u16 类型字段。
