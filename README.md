@@ -1,85 +1,82 @@
 # r-wg
 
-Created with Create GPUI App.
+r-wg is a Rust-based WireGuard client with a GPUI front end and a Rust backend (gotatun).
 
-- [`gpui`](https://www.gpui.rs/)
-- [GPUI documentation](https://github.com/zed-industries/zed/tree/main/crates/gpui/docs)
-- [GPUI examples](https://github.com/zed-industries/zed/tree/main/crates/gpui/examples)
+## Status
 
-## Usage
+- Linux: TUN device + address/route configuration via netlink, DNS via resolvectl/resolvconf.
+- macOS/Windows: scaffolding only (network configuration is a placeholder).
 
-- Ensure Rust is installed - [Rustup](https://rustup.rs/)
-- Run your app with `cargo run`
+## Features
 
-# Create GPUI App
+- Parse standard WireGuard `.conf` plus wg-quick style fields (Address, DNS, MTU, Table).
+- UI import or paste config, select a tunnel, start/stop.
+- Peer stats (handshake time and traffic counters) from the backend.
 
-Create a new [GPUI](https://www.gpui.rs/) app in a single command.
+## Requirements
 
-GPUI is a fast, productive UI framework for Rust from the creators of [Zed](https://zed.dev/).
+- Rust toolchain (rustup).
+- Linux: `cap_net_admin` to configure TUN and routes (or run as root).
+- Optional: `resolvectl` or `resolvconf` for DNS changes.
 
-## Quick Start
+## Build and Run
 
-```sh
-cargo install create-gpui-app
-create-gpui-app --name my-app
-cd my-app
-```
-
-## Creating an App
-
-**You'll need to have Rust and Cargo installed on your machine**. You can install Rust through [rustup](https://rustup.rs/).
-
-To create a new app, run:
+### Linux (non-root with capabilities)
 
 ```sh
-create-gpui-app --name my-app
-cd my-app
+scripts/build_with_cap.sh
+scripts/run_with_cap.sh
 ```
 
-By default this will output:
-
-```
-my-app
-├── src
-│   ├── main.rs
-├── Cargo.toml
-├── README.md
-```
-
-To set up your application as a workspace, run:
+To run with logs:
 
 ```sh
-create-gpui-app --workspace --name my-app
-cd my-app
+RWG_LOG=1 scripts/run_with_cap.sh
 ```
 
-This will output a directory structure like this:
+If you build manually, set the capability on the binary:
 
-```
-my-app
-├── Cargo.toml
-├── crates
-│   └── my-app
-│       ├── Cargo.toml
-│       └── src
-│           └── main.rs
-└── README.md
+```sh
+cargo build
+sudo setcap cap_net_admin+ep target/debug/r-wg
+./target/debug/r-wg
 ```
 
-`create-gpui-app` with no arguments will create a new app called `gpui-app`.
+### Release build
 
-### Running the App
+```sh
+scripts/build_with_cap.sh --release
+scripts/run_with_cap.sh --release
+```
 
-- During development: `cargo run`
-- For production/performance testing: `cargo build --release`
+## Configuration Format
 
-### Troubleshooting
-See the [zed development troubleshooting guide](https://github.com/zed-industries/zed/blob/main/docs/src/development/macos.md#troubleshooting) for assistance with common errors.
+Example:
 
-## Contributing
+```
+[Interface]
+PrivateKey = <base64>
+Address = 10.0.0.2/32
+DNS = 1.1.1.1, 8.8.8.8
+MTU = 1420
+Table = auto
 
-Your contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
+[Peer]
+PublicKey = <base64>
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = example.com:51820
+```
 
-## License
+## Project Layout
 
-`create-gpui-app` is open source software [licensed as MIT](LICENSE).
+- `src/backend/wg`: config parser and engine.
+- `src/platform/linux`: Linux network apply/cleanup via netlink.
+- `src/ui.rs`: GPUI UI and tunnel management.
+- `scripts/`: build/run helpers with `setcap`.
+
+## Dependency Note
+
+We currently patch `ashpd 0.11.0` locally because `zvariant >= 5.9` requires dict keys to implement
+`Basic`, which `ashpd 0.11.0` does not. The patch is applied through `[patch.crates-io]` in
+`Cargo.toml` and lives in `vendor/ashpd`. When upstream fixes the mismatch (for example via newer
+`gpui` or `ashpd`), remove `vendor/ashpd` and the patch block, then run `cargo update`.
