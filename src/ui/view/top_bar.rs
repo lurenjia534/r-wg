@@ -1,19 +1,24 @@
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Selectable, Sizable as _, StyledExt, button::{Button,
-    ButtonGroup, ButtonVariants},
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt,
+    button::{Button, ButtonGroup, ButtonVariants},
     h_flex, tag::Tag,
 };
 
+use super::data::ViewData;
 use super::super::state::WgApp;
 
 /// 顶部工具栏骨架：标题、配置切换、模式按钮、状态图标。
-pub(crate) fn render_top_bar(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
+pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
     let title = h_flex()
         .items_center()
         .gap_2()
         .child(Icon::new(IconName::LayoutDashboard).size_5())
         .child(div().text_lg().font_semibold().child("r-wg Dashboard"));
+
+    let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
+    let can_start = config_valid && !app.running && !app.busy;
+    let can_stop = app.running && !app.busy;
 
     let profile = h_flex()
         .items_center()
@@ -28,14 +33,47 @@ pub(crate) fn render_top_bar(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         .child("Work")
         .child(Icon::new(IconName::ChevronDown).size_3());
 
+    let on_tooltip = if config_valid {
+        "Start tunnel"
+    } else {
+        "Select a valid config first"
+    };
+    let off_tooltip = if app.running {
+        "Stop tunnel"
+    } else {
+        "Tunnel is not running"
+    };
+
     let modes = ButtonGroup::new("mode-group")
         .outline()
         .compact()
         .small()
-        .child(Button::new("mode-on").label("On").selected(true))
-        .child(Button::new("mode-off").label("Off"));
+        .child(
+            Button::new("mode-on")
+                .label("On")
+                .selected(app.running)
+                .disabled(!can_start)
+                .tooltip(on_tooltip)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_start_stop(window, cx);
+                })),
+        )
+        .child(
+            Button::new("mode-off")
+                .label("Off")
+                .selected(!app.running)
+                .disabled(!can_stop)
+                .tooltip(off_tooltip)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_start_stop(window, cx);
+                })),
+        );
 
-    let status_tag = Tag::success().small().rounded_full().child("On");
+    let status_tag = if app.running {
+        Tag::success().small().rounded_full().child("On")
+    } else {
+        Tag::secondary().small().rounded_full().child("Off")
+    };
 
     let tools = h_flex()
         .items_center()

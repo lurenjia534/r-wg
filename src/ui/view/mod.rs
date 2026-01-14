@@ -2,13 +2,14 @@
 mod center_panel;
 mod data;
 mod left_panel;
+mod overview;
 mod right_panel;
 mod top_bar;
 mod widgets;
 
 use gpui::*;
 
-use super::state::WgApp;
+use super::state::{SidebarItem, WgApp};
 use data::ViewData;
 
 impl Render for WgApp {
@@ -41,7 +42,28 @@ impl Render for WgApp {
             .text_color(rgb(0xe6e6e6))
             // 左侧：隧道列表 + 操作按钮
             .child(left_panel::render_left_panel(self, &data, cx))
-            .child(
+            .child({
+                let main_body = match self.sidebar_active {
+                    SidebarItem::Overview => {
+                        overview::render_overview(self, &data, cx).into_any_element()
+                    }
+                    SidebarItem::Configs => div()
+                        .flex()
+                        .flex_row()
+                        .gap_3()
+                        .flex_grow()
+                        .child(center_panel::render_center_panel(
+                            self,
+                            &data,
+                            &name_input,
+                            &config_input,
+                            cx,
+                        ))
+                        .child(right_panel::render_right_panel(self, &data, cx))
+                        .into_any_element(),
+                    _ => overview::render_placeholder(cx).into_any_element(),
+                };
+
                 div()
                     .flex()
                     .flex_col()
@@ -49,21 +71,8 @@ impl Render for WgApp {
                     .flex_grow()
                     .p_3()
                     // 顶部工具栏
-                    .child(top_bar::render_top_bar(self, cx))
-                    // 中间：配置编辑区 + 右侧：状态/日志面板
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_3()
-                            .flex_grow()
-                            .child(center_panel::render_center_panel(
-                                &data,
-                                &name_input,
-                                &config_input,
-                            ))
-                            .child(right_panel::render_right_panel(self, &data, cx)),
-                    ),
-            )
+                    .child(top_bar::render_top_bar(self, &data, cx))
+                    .child(main_body)
+            })
     }
 }

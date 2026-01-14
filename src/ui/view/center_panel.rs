@@ -1,16 +1,24 @@
 use gpui::*;
-use gpui_component::input::{Input, InputState};
+use gpui_component::{
+    Disableable as _, Icon, IconName, Sizable as _,
+    button::{Button, ButtonVariants},
+    h_flex, input::{Input, InputState}, v_flex,
+};
 
 use super::data::ViewData;
 use super::widgets::status_badge;
 use super::super::components::card;
+use super::super::state::WgApp;
 
 /// 中间配置面板：显示隧道名与配置内容输入框。
 pub(crate) fn render_center_panel(
+    app: &mut WgApp,
     data: &ViewData,
     name_input: &Entity<InputState>,
     config_input: &Entity<InputState>,
+    cx: &mut Context<WgApp>,
 ) -> Div {
+    let action_bar = config_action_bar(app, cx);
     div()
         .flex()
         .flex_col()
@@ -26,8 +34,14 @@ pub(crate) fn render_center_panel(
                 .flex()
                 .items_center()
                 .justify_between()
-                .child(div().text_xl().child("Configuration"))
-                .child(status_badge(data.config_status.as_ref())),
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_xl().child("Configuration"))
+                        .child(status_badge(data.config_status.as_ref())),
+                )
+                .child(action_bar),
         )
         .child(card(
             "Tunnel Name",
@@ -53,4 +67,100 @@ pub(crate) fn render_center_panel(
             )
             .flex_grow(),
         )
+}
+
+fn config_action_bar(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
+    let busy = app.busy;
+    let has_selection = app.selected.is_some();
+    let primary_actions = h_flex()
+        .gap_2()
+        .child(
+            Button::new("cfg-import")
+                .icon(Icon::new(IconName::FolderOpen).size_3())
+                .label("Import File")
+                .outline()
+                .small()
+                .compact()
+                .disabled(busy)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_import_click(window, cx);
+                })),
+        )
+        .child(
+            Button::new("cfg-paste")
+                .icon(Icon::new(IconName::Plus).size_3())
+                .label("Paste Config")
+                .outline()
+                .small()
+                .compact()
+                .disabled(busy)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_paste_click(window, cx);
+                })),
+        )
+        .child(
+            Button::new("cfg-save")
+                .icon(Icon::new(IconName::Check).size_3())
+                .label("Save Changes")
+                .success()
+                .small()
+                .compact()
+                .disabled(busy)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_save_click(window, cx);
+                })),
+        );
+
+    let secondary_actions = h_flex()
+        .gap_2()
+        .child(
+            Button::new("cfg-rename")
+                .icon(Icon::new(IconName::Replace).size_3())
+                .label("Rename")
+                .outline()
+                .small()
+                .compact()
+                .disabled(busy || !has_selection)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_rename_click(window, cx);
+                })),
+        )
+        .child(
+            Button::new("cfg-delete")
+                .icon(Icon::new(IconName::Delete).size_3())
+                .label("Delete")
+                .danger()
+                .small()
+                .compact()
+                .disabled(busy || !has_selection)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_delete_click(window, cx);
+                })),
+        )
+        .child(
+            Button::new("cfg-export")
+                .icon(Icon::new(IconName::ExternalLink).size_3())
+                .label("Export")
+                .outline()
+                .small()
+                .compact()
+                .disabled(busy || !has_selection)
+                .on_click(cx.listener(|this, _, _window, cx| {
+                    this.handle_export_click(cx);
+                })),
+        )
+        .child(
+            Button::new("cfg-copy")
+                .icon(Icon::new(IconName::Copy).size_3())
+                .label("Copy Config")
+                .outline()
+                .small()
+                .compact()
+                .disabled(busy || !has_selection)
+                .on_click(cx.listener(|this, _, _window, cx| {
+                    this.handle_copy_click(cx);
+                })),
+        );
+
+    v_flex().gap_2().child(primary_actions).child(secondary_actions)
 }
