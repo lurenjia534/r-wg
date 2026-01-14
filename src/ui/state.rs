@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use gpui::{Entity, SharedString};
-use gpui_component::input::InputState;
+use gpui_component::{IconName, input::InputState};
 use r_wg::backend::wg::{Engine, PeerStats};
 
 #[derive(Clone)]
@@ -38,6 +38,56 @@ pub(crate) enum RightTab {
     Logs,
 }
 
+/// 左侧导航栏的选中项。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarItem {
+    Overview,
+    TrafficStats,
+    Connections,
+    Logs,
+    Proxies,
+    Rules,
+    Providers,
+    Configs,
+    Advanced,
+    Topology,
+    RouteMap,
+}
+
+impl SidebarItem {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::TrafficStats => "Traffic Stats",
+            Self::Connections => "Connections",
+            Self::Logs => "Logs",
+            Self::Proxies => "Proxies",
+            Self::Rules => "Rules",
+            Self::Providers => "Providers",
+            Self::Configs => "Configs",
+            Self::Advanced => "Advanced",
+            Self::Topology => "Topology",
+            Self::RouteMap => "Route Map",
+        }
+    }
+
+    pub(crate) fn icon(self) -> IconName {
+        match self {
+            Self::Overview => IconName::LayoutDashboard,
+            Self::TrafficStats => IconName::ChartPie,
+            Self::Connections => IconName::Globe,
+            Self::Logs => IconName::SquareTerminal,
+            Self::Proxies => IconName::Globe,
+            Self::Rules => IconName::Menu,
+            Self::Providers => IconName::Building2,
+            Self::Configs => IconName::File,
+            Self::Advanced => IconName::Settings2,
+            Self::Topology => IconName::Frame,
+            Self::RouteMap => IconName::Map,
+        }
+    }
+}
+
 pub(crate) struct WgApp {
     pub(crate) engine: Engine,
     pub(crate) configs: Vec<TunnelConfig>,
@@ -53,6 +103,7 @@ pub(crate) struct WgApp {
     pub(crate) stats_note: SharedString,
     pub(crate) stats_generation: u64,
     pub(crate) right_tab: RightTab,
+    pub(crate) sidebar_active: SidebarItem,
 }
 
 impl WgApp {
@@ -72,6 +123,7 @@ impl WgApp {
             stats_note: "Peer stats unavailable".into(),
             stats_generation: 0,
             right_tab: RightTab::Status,
+            sidebar_active: SidebarItem::Overview,
         }
     }
 }

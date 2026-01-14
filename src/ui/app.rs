@@ -1,5 +1,6 @@
 use gpui::*;
 use gpui_component::Root;
+use gpui_component_assets::Assets;
 use gpui_component::theme::{Theme, ThemeMode};
 use r_wg::backend::wg::Engine;
 
@@ -8,7 +9,7 @@ use super::state::WgApp;
 pub fn run() {
     let engine = Engine::new();
 
-    Application::new().run(move |cx: &mut App| {
+    Application::new().with_assets(Assets).run(move |cx: &mut App| {
         gpui_component::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
 
