@@ -1,8 +1,8 @@
 use gpui::*;
 
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, sidebar::{Sidebar, SidebarFooter, SidebarGroup,
-    SidebarHeader, SidebarMenu, SidebarMenuItem},
+    ActiveTheme as _, Icon, IconName, sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader,
+    SidebarMenu, SidebarMenuItem},
     h_flex, v_flex,
 };
 
