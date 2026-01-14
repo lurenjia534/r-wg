@@ -1,0 +1,77 @@
+use std::path::PathBuf;
+
+use gpui::{Entity, SharedString};
+use gpui_component::input::InputState;
+use r_wg::backend::wg::{Engine, PeerStats};
+
+#[derive(Clone)]
+pub(crate) enum ConfigSource {
+    File(PathBuf),
+    Paste,
+}
+
+#[derive(Clone)]
+pub(crate) struct TunnelConfig {
+    pub(crate) name: String,
+    pub(crate) text: String,
+    pub(crate) source: ConfigSource,
+}
+
+impl TunnelConfig {
+    pub(crate) fn label(&self) -> String {
+        match &self.source {
+            ConfigSource::File(path) => {
+                let file = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("file");
+                format!("{} ({})", self.name, file)
+            }
+            ConfigSource::Paste => format!("{} (pasted)", self.name),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RightTab {
+    Status,
+    Logs,
+}
+
+pub(crate) struct WgApp {
+    pub(crate) engine: Engine,
+    pub(crate) configs: Vec<TunnelConfig>,
+    pub(crate) selected: Option<usize>,
+    pub(crate) name_input: Option<Entity<InputState>>,
+    pub(crate) config_input: Option<Entity<InputState>>,
+    pub(crate) status: SharedString,
+    pub(crate) last_error: Option<SharedString>,
+    pub(crate) running: bool,
+    pub(crate) busy: bool,
+    pub(crate) running_name: Option<String>,
+    pub(crate) peer_stats: Vec<PeerStats>,
+    pub(crate) stats_note: SharedString,
+    pub(crate) stats_generation: u64,
+    pub(crate) right_tab: RightTab,
+}
+
+impl WgApp {
+    pub(crate) fn new(engine: Engine) -> Self {
+        Self {
+            engine,
+            configs: Vec::new(),
+            selected: None,
+            name_input: None,
+            config_input: None,
+            status: "Ready".into(),
+            last_error: None,
+            running: false,
+            busy: false,
+            running_name: None,
+            peer_stats: Vec::new(),
+            stats_note: "Peer stats unavailable".into(),
+            stats_generation: 0,
+            right_tab: RightTab::Status,
+        }
+    }
+}
