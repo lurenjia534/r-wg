@@ -1,19 +1,18 @@
 use std::net::{IpAddr, SocketAddr};
 
-use gotatun::device::api::command::{Peer as ApiPeer, Set, SetPeer, SetUnset};
-use gotatun::device::peer::AllowedIP as ApiAllowedIp;
+use gotatun::device::Peer as DevicePeer;
+use gotatun::x25519::{PublicKey, StaticSecret};
+use ipnetwork::IpNetwork;
 use tokio::net::lookup_host;
 
 use super::types::{AllowedIp, ConfigError, Endpoint, PeerConfig, WireGuardConfig};
 
-/// 把解析后的 AllowedIp 转成 gotatun 使用的 AllowedIP。
-impl From<&AllowedIp> for ApiAllowedIp {
-    fn from(value: &AllowedIp) -> Self {
-        ApiAllowedIp {
-            addr: value.addr,
-            cidr: value.cidr,
-        }
-    }
+/// gotatun 设备配置（对应解析后的 WireGuard 配置）。
+pub struct DeviceSettings {
+    pub private_key: StaticSecret,
+    pub listen_port: Option<u16>,
+    pub fwmark: Option<u32>,
+    pub peers: Vec<DevicePeer>,
 }
 
 impl Endpoint {
@@ -46,53 +45,52 @@ impl Endpoint {
 }
 
 impl WireGuardConfig {
-    /// 将解析后的配置映射到 gotatun 的 Set/SetPeer 请求。
+    /// 将解析后的配置映射到 gotatun 的 DeviceSettings。
     ///
-    /// - 默认使用 `replace_peers = true`，保证配置是权威的。
     /// - 域名 Endpoint 会进行 DNS 解析，优先选择 IPv4。
-    pub async fn to_set_request(&self) -> Result<Set, ConfigError> {
+    pub async fn to_device_settings(&self) -> Result<DeviceSettings, ConfigError> {
         let mut peers = Vec::with_capacity(self.peers.len());
         for peer in &self.peers {
-            peers.push(peer.to_set_peer().await?);
+            peers.push(peer.to_device_peer().await?);
         }
 
-        let mut set = Set::default();
-        set.private_key = Some((*self.interface.private_key.as_bytes()).into());
-        set.listen_port = self.interface.listen_port;
-        set.fwmark = self.interface.fwmark;
-        set.replace_peers = true;
-        set.protocol_version = None;
-        set.peers = peers;
+        let private_key = StaticSecret::from(*self.interface.private_key.as_bytes());
 
-        Ok(set)
+        Ok(DeviceSettings {
+            private_key,
+            listen_port: self.interface.listen_port,
+            fwmark: self.interface.fwmark,
+            peers,
+        })
     }
 }
 
 impl PeerConfig {
-    /// 将单个 Peer 配置映射为 gotatun 的 SetPeer。
-    async fn to_set_peer(&self) -> Result<SetPeer, ConfigError> {
+    /// 将单个 Peer 配置映射为 gotatun 的 Peer。
+    async fn to_device_peer(&self) -> Result<DevicePeer, ConfigError> {
         let endpoint = match &self.endpoint {
             Some(endpoint) => Some(endpoint.resolve_socket_addr().await?),
             None => None,
         };
 
-        let allowed_ip = self.allowed_ips.iter().map(ApiAllowedIp::from).collect();
+        let allowed_ips = self
+            .allowed_ips
+            .iter()
+            .map(allowed_ip_to_network)
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let mut peer = ApiPeer::builder()
-            .public_key(*self.public_key.as_bytes())
-            .allowed_ip(allowed_ip)
-            .build();
-
-        peer.preshared_key = self
-            .preshared_key
-            .as_ref()
-            .map(|key| SetUnset::Set((*key.as_bytes()).into()));
+        let public_key = PublicKey::from(*self.public_key.as_bytes());
+        let mut peer = DevicePeer::new(public_key);
         peer.endpoint = endpoint;
-        peer.persistent_keepalive_interval = self.persistent_keepalive;
+        peer.allowed_ips = allowed_ips;
+        peer.preshared_key = self.preshared_key.as_ref().map(|key| *key.as_bytes());
+        peer.keepalive = self.persistent_keepalive;
 
-        let mut set_peer = SetPeer::builder().peer(peer).build();
-        set_peer.replace_allowed_ips = true;
-
-        Ok(set_peer)
+        Ok(peer)
     }
+}
+
+fn allowed_ip_to_network(allowed: &AllowedIp) -> Result<IpNetwork, ConfigError> {
+    IpNetwork::new(allowed.addr, allowed.cidr)
+        .map_err(|_| ConfigError::new(None, "invalid allowed ip"))
 }

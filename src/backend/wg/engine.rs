@@ -7,12 +7,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gotatun::device::{
-    self,
-    api::{command::{Get, Response}, ApiServer},
-    DeviceConfig, DeviceHandle, DefaultDeviceTransports,
-};
-use gotatun::udp::socket::UdpSocketFactory;
+use gotatun::device::{self, Device, DefaultDeviceTransports};
 use tokio::sync::{mpsc, oneshot};
 
 use super::config::{self, ConfigError};
@@ -83,10 +78,6 @@ pub enum EngineError {
     Config(ConfigError),
     /// 系统网络配置错误（地址/路由/DNS 应用失败）。
     Network(platform::NetworkError),
-    /// gotatun API 请求失败（请求未成功发送或返回失败）。
-    Api(String),
-    /// gotatun API 返回 errno（gotatun 内部错误码）。
-    ApiErrno(i32),
 }
 
 /// 将错误转换为可读文本，便于上层日志与提示。
@@ -99,8 +90,6 @@ impl fmt::Display for EngineError {
             EngineError::Device(err) => write!(f, "device error: {err}"),
             EngineError::Config(err) => write!(f, "config error: {err}"),
             EngineError::Network(err) => write!(f, "network error: {err}"),
-            EngineError::Api(err) => write!(f, "api error: {err}"),
-            EngineError::ApiErrno(errno) => write!(f, "api errno: {errno}"),
         }
     }
 }
@@ -240,9 +229,7 @@ impl Engine {
 #[derive(Default)]
 struct EngineState {
     /// gotatun 设备句柄；存在则代表已启动。
-    device: Option<DeviceHandle<DefaultDeviceTransports>>,
-    /// gotatun 内部 API 客户端（用于后续配置/查询）。
-    api: Option<gotatun::device::api::ApiClient>,
+    device: Option<Device<DefaultDeviceTransports>>,
     /// 系统网络配置状态，用于停止时回滚。
     net_state: Option<platform::NetworkState>,
 }
@@ -250,9 +237,8 @@ struct EngineState {
 impl EngineState {
     /// 启动设备：
     /// - 解析配置并转换为 gotatun Set 请求。
-    /// - 创建 gotatun API 通道（内部用，不暴露 UAPI socket）。
     /// - 创建 TUN 并绑定 UDP socket。
-    /// - 发送 Set 请求，若失败则停止设备。
+    /// - 写入私钥/端口/peer 配置，若失败则停止设备。
     /// - 应用系统网络配置，失败则停止设备并返回错误。
     async fn start(&mut self, request: StartRequest) -> Result<(), EngineError> {
         if self.device.is_some() {
@@ -265,36 +251,39 @@ impl EngineState {
             request.config_text.len()
         ));
 
-        // 解析配置并映射为 gotatun 的 Set 请求。
+        // 解析配置并映射为 gotatun 的 DeviceSettings。
         let parsed = config::parse_config(&request.config_text)?;
-        let set_request = parsed.to_set_request().await?;
+        let settings = parsed.to_device_settings().await?;
         log_engine("config parsed".to_string());
 
-        // 建立 gotatun 内部 API 通道。
-        let (api_client, api_server) = ApiServer::new();
-        let config = DeviceConfig {
-            api: Some(api_server),
-        };
-        // 使用默认 UDP 工厂 + TUN 设备实现。
-        let udp_factory = UdpSocketFactory;
-        let handle = DeviceHandle::<DefaultDeviceTransports>::from_tun_name(
-            udp_factory,
-            &request.tun_name,
-            config,
-        )
-        .await?;
+        // 使用 DeviceBuilder 创建 gotatun 设备。
+        let handle = device::build()
+            .with_default_udp()
+            .create_tun(&request.tun_name)?
+            .build()
+            .await?;
         log_engine("device created".to_string());
 
-        // 配置 gotatun 设备；若返回 errno 需立即停止设备。
-        let response = api_client
-            .send(set_request)
+        // 配置 gotatun 设备；失败则立即停止设备。
+        let config_result = handle
+            .write(async |device| {
+                device.set_private_key(settings.private_key).await;
+                if let Some(port) = settings.listen_port {
+                    device.set_listen_port(port);
+                }
+                #[cfg(target_os = "linux")]
+                if let Some(fwmark) = settings.fwmark {
+                    device.set_fwmark(fwmark)?;
+                }
+                device.clear_peers();
+                device.add_peers(settings.peers);
+                Ok::<_, device::Error>(())
+            })
             .await
-            .map_err(|err| EngineError::Api(err.to_string()))?;
-        if let Response::Set(response) = response {
-            if response.errno != 0 {
-                handle.stop().await;
-                return Err(EngineError::ApiErrno(response.errno));
-            }
+            .and_then(|result| result);
+        if let Err(err) = config_result {
+            handle.stop().await;
+            return Err(EngineError::Device(err));
         }
         log_engine("device configured".to_string());
 
@@ -316,7 +305,6 @@ impl EngineState {
 
         // 保存运行态状态，便于后续 stop/cleanup。
         self.device = Some(handle);
-        self.api = Some(api_client);
         self.net_state = Some(net_state);
 
         Ok(())
@@ -343,7 +331,6 @@ impl EngineState {
 
         // 停止 gotatun 设备。
         handle.stop().await;
-        self.api = None;
         log_engine("device stopped".to_string());
 
         // 若回滚失败，仍然返回错误以便上层提示。
@@ -361,35 +348,20 @@ impl EngineState {
 
     /// 获取 gotatun 运行时统计信息。
     async fn stats(&self) -> Result<EngineStats, EngineError> {
-        let Some(api) = self.api.as_ref() else {
+        let Some(device) = self.device.as_ref() else {
             return Err(EngineError::NotRunning);
         };
 
-        let response = api
-            .send(Get::default())
+        let peers = device
+            .read(async |device| device.peers().await)
             .await
-            .map_err(|err| EngineError::Api(err.to_string()))?;
-
-        let Response::Get(get) = response else {
-            return Err(EngineError::Api("unexpected api response".to_string()));
-        };
-
-        if get.errno != 0 {
-            return Err(EngineError::ApiErrno(get.errno));
-        }
-
-        let peers = get
-            .peers
             .into_iter()
             .map(|peer| PeerStats {
-                public_key: peer.peer.public_key.0,
+                public_key: peer.peer.public_key.to_bytes(),
                 endpoint: peer.peer.endpoint,
-                last_handshake: duration_from_parts(
-                    peer.last_handshake_time_sec,
-                    peer.last_handshake_time_nsec,
-                ),
-                rx_bytes: peer.rx_bytes.unwrap_or(0),
-                tx_bytes: peer.tx_bytes.unwrap_or(0),
+                last_handshake: peer.stats.last_handshake,
+                rx_bytes: peer.stats.rx_bytes as u64,
+                tx_bytes: peer.stats.tx_bytes as u64,
             })
             .collect();
 
@@ -434,13 +406,4 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
 
     // 通道关闭，尝试优雅停止设备。
     let _ = state.stop().await;
-}
-
-fn duration_from_parts(sec: Option<u64>, nsec: Option<u32>) -> Option<Duration> {
-    match (sec, nsec) {
-        (None, None) => None,
-        (Some(sec), Some(nsec)) => Some(Duration::new(sec, nsec)),
-        (Some(sec), None) => Some(Duration::new(sec, 0)),
-        (None, Some(nsec)) => Some(Duration::new(0, nsec)),
-    }
 }
