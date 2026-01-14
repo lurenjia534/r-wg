@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 use std::time::Duration;
 
 use gpui::{AppContext, ClipboardItem, Context, PathPromptOptions, SharedString, Window};
@@ -492,6 +493,7 @@ impl WgApp {
                             Ok(()) => {
                                 this.running = false;
                                 this.running_name = None;
+                                this.started_at = None;
                                 this.set_status("Stopped");
                                 this.clear_stats();
                             }
@@ -537,6 +539,7 @@ impl WgApp {
                         Ok(()) => {
                             this.running = true;
                             this.running_name = Some(selected.name.clone());
+                            this.started_at = Some(Instant::now());
                             this.set_status(format!("Running {}", selected.name));
                             this.stats_note = "Fetching peer stats...".into();
                             // 启动成功后开始轮询统计。

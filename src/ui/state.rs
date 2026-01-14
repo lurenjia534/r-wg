@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use gpui::{Entity, SharedString};
 use gpui_component::{IconName, input::InputState};
@@ -104,6 +105,7 @@ pub(crate) struct WgApp {
     pub(crate) stats_generation: u64,
     pub(crate) right_tab: RightTab,
     pub(crate) sidebar_active: SidebarItem,
+    pub(crate) started_at: Option<Instant>,
 }
 
 impl WgApp {
@@ -124,6 +126,7 @@ impl WgApp {
             stats_generation: 0,
             right_tab: RightTab::Status,
             sidebar_active: SidebarItem::Overview,
+            started_at: None,
         }
     }
 }
