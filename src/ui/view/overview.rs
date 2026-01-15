@@ -142,63 +142,37 @@ fn running_status_card(
             None,
             cx,
         ))
-        .child(
-            h_flex()
-                .gap_4()
-                .items_start()
-                .child(metric_cell(
-                    IconName::LoaderCircle,
-                    "Uptime",
-                    uptime,
-                    rgb(0x3a8bd6),
-                    cx,
-                ))
-                .child(vertical_rule(cx))
-                .child(metric_cell(
-                    IconName::ArrowDown,
-                    "RX",
-                    rx,
-                    rgb(0xf59e0b),
-                    cx,
-                ))
-                .child(vertical_rule(cx))
-                .child(metric_cell(
-                    IconName::ArrowUp,
-                    "TX",
-                    tx,
-                    rgb(0x2dd4bf),
-                    cx,
-                )),
-        )
-        .child(Divider::horizontal().color(cx.theme().border))
-        .child(
-            h_flex()
-                .gap_4()
-                .items_start()
-                .child(status_item(
+        .child(two_row_grid(
+            [
+                metric_cell(IconName::LoaderCircle, "Uptime", uptime, rgb(0x3a8bd6), cx),
+                metric_cell(IconName::ArrowDown, "RX", rx, rgb(0xf59e0b), cx),
+                metric_cell(IconName::ArrowUp, "TX", tx, rgb(0x2dd4bf), cx),
+            ],
+            [
+                status_item(
                     IconName::CircleCheck,
                     "Status",
                     status_text,
                     status_color,
                     cx,
-                ))
-                .child(vertical_rule(cx))
-                .child(status_item(
+                ),
+                status_item(
                     IconName::CircleUser,
                     "Peers",
                     peers,
                     rgb(0x60a5fa),
                     cx,
-                ))
-                .child(vertical_rule(cx))
-                .child(status_item(
+                ),
+                status_item(
                     IconName::ExternalLink,
                     "Handshake",
                     handshake,
                     rgb(0xa3a3a3),
                     cx,
-                )),
-        )
+                ),
+            ],
+            cx,
+        ))
 }
 
 fn network_status_card(
@@ -218,63 +192,49 @@ fn network_status_card(
             Some(IconName::Redo),
             cx,
         ))
-        .child(
-            h_flex()
-                .gap_4()
-                .items_start()
-                .child(metric_cell(
+        .child(two_row_grid(
+            [
+                metric_cell(
                     IconName::ArrowUp,
                     "Local IP",
                     local_ip,
                     rgb(0x22c55e),
                     cx,
-                ))
-                .child(vertical_rule(cx))
-                .child(metric_cell(
-                    IconName::Search,
-                    "DNS",
-                    dns,
-                    rgb(0x22c55e),
-                    cx,
-                ))
-                .child(vertical_rule(cx))
-                .child(metric_cell(
+                ),
+                metric_cell(IconName::Search, "DNS", dns, rgb(0x22c55e), cx),
+                metric_cell(
                     IconName::Globe,
                     "Endpoint",
                     endpoint,
                     rgb(0x22c55e),
                     cx,
-                )),
-        )
-        .child(Divider::horizontal().color(cx.theme().border))
-        .child(
-            h_flex()
-                .gap_4()
-                .items_start()
-                .child(status_item(
+                ),
+            ],
+            [
+                status_item(
                     IconName::Globe,
                     "Network",
                     network_name,
                     rgb(0x38bdf8),
                     cx,
-                ))
-                .child(vertical_rule(cx))
-                .child(status_item(
+                ),
+                status_item(
                     IconName::Map,
                     "Route",
                     route_table,
                     rgb(0x60a5fa),
                     cx,
-                ))
-                .child(vertical_rule(cx))
-                .child(status_item(
+                ),
+                status_item(
                     IconName::SortAscending,
                     "Allowed IPs",
                     allowed,
                     rgb(0x22c55e),
                     cx,
-                )),
-    )
+                ),
+            ],
+            cx,
+        ))
 }
 
 fn traffic_stats_card(
@@ -374,7 +334,7 @@ fn card_title(
             h_flex()
                 .items_center()
                 .gap_2()
-                .child(Icon::new(icon).size_4().text_color(cx.theme().accent))
+                .child(Icon::new(icon).size_4().text_color(cx.theme().accent_foreground))
                 .child(div().text_base().font_semibold().child(label.to_string())),
         )
         .when_some(trailing_icon, |this, icon| {
@@ -396,12 +356,17 @@ fn metric_cell(
     let color: Hsla = color.into();
     v_flex()
         .gap_1()
+        .flex_grow()
+        .min_w(px(0.0))
+        .px_4()
+        .py_2()
         .child(
             h_flex()
                 .items_center()
                 .gap_2()
                 .text_sm()
-                .text_color(cx.theme().muted_foreground)
+                .font_semibold()
+                .text_color(cx.theme().foreground)
                 .child(Icon::new(icon).size_4().text_color(color))
                 .child(label.to_string()),
         )
@@ -424,22 +389,57 @@ fn status_item(
     let color: Hsla = color.into();
     v_flex()
         .gap_1()
+        .flex_grow()
+        .min_w(px(0.0))
+        .px_4()
+        .py_2()
         .child(
             h_flex()
                 .items_center()
                 .gap_2()
                 .text_sm()
-                .text_color(cx.theme().muted_foreground)
+                .font_semibold()
+                .text_color(cx.theme().foreground)
                 .child(Icon::new(icon).size_3().text_color(color))
                 .child(label.to_string()),
         )
         .child(
             div()
                 .text_base()
-                .font_medium()
+                .font_semibold()
                 .text_color(cx.theme().foreground)
                 .child(value.to_string()),
         )
+}
+
+fn two_row_grid(
+    top: [Div; 3],
+    bottom: [Div; 3],
+    cx: &mut Context<WgApp>,
+) -> Div {
+    let [top_left, top_mid, top_right] = top;
+    let [bottom_left, bottom_mid, bottom_right] = bottom;
+    let border = cx.theme().border;
+    div()
+        .grid()
+        .grid_cols(3)
+        .gap_0()
+        .child(top_left.border_r_1().border_color(border))
+        .child(top_mid.border_r_1().border_color(border))
+        .child(top_right)
+        .child(
+            bottom_left
+                .border_r_1()
+                .border_t_1()
+                .border_color(border),
+        )
+        .child(
+            bottom_mid
+                .border_r_1()
+                .border_t_1()
+                .border_color(border),
+        )
+        .child(bottom_right.border_t_1().border_color(border))
 }
 
 fn vertical_rule(cx: &mut Context<WgApp>) -> Div {
