@@ -13,6 +13,8 @@ use tokio::sync::{mpsc, oneshot};
 use super::config::{self, ConfigError};
 use crate::log;
 use crate::platform;
+
+const DEFAULT_FWMARK: u32 = 0x5257;
 /// 启动请求：包含 TUN 设备名称与配置文本。
 ///
 /// 之所以传入完整配置文本，是为了让引擎在后台线程内完成解析与应用，
@@ -252,7 +254,11 @@ impl EngineState {
         ));
 
         // 解析配置并映射为 gotatun 的 DeviceSettings。
-        let parsed = config::parse_config(&request.config_text)?;
+        let mut parsed = config::parse_config(&request.config_text)?;
+        if wants_full_tunnel(&parsed.peers) && parsed.interface.fwmark.is_none() {
+            parsed.interface.fwmark = Some(DEFAULT_FWMARK);
+            log_engine(format!("auto fwmark: 0x{DEFAULT_FWMARK:x}"));
+        }
         let settings = parsed.to_device_settings().await?;
         log_engine("config parsed".to_string());
 
@@ -371,6 +377,14 @@ impl EngineState {
 
 fn log_engine(message: String) {
     log::log("engine", message);
+}
+
+fn wants_full_tunnel(peers: &[config::PeerConfig]) -> bool {
+    peers.iter().any(|peer| {
+        peer.allowed_ips.iter().any(|allowed| {
+            allowed.addr.is_unspecified() && allowed.cidr == 0
+        })
+    })
 }
 
 /// 后台线程的主事件循环：
