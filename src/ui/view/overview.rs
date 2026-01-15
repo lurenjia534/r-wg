@@ -5,6 +5,8 @@ use gpui_component::{
     ActiveTheme as _, Icon, IconName, StyledExt as _, divider::Divider,
     group_box::{GroupBox, GroupBoxVariants},
     h_flex, v_flex,
+    plot::{StrokeStyle, shape::Line},
+    PixelsExt,
 };
 
 use super::data::ViewData;
@@ -21,6 +23,13 @@ pub(crate) fn render_overview(
     let tx = super::super::format::format_bytes(data.peer_summary.tx_bytes);
     let peers = data.peer_summary.peer_count.to_string();
     let handshake = data.last_handshake.clone();
+    let (upload_speed, download_speed) = format_speeds(app, data);
+    let upload_total = super::super::format::format_bytes(data.peer_summary.tx_bytes);
+    let download_total = super::super::format::format_bytes(data.peer_summary.rx_bytes);
+    let upload_series: Vec<f32> = app.tx_rate_history.iter().copied().collect();
+    let download_series: Vec<f32> = app.rx_rate_history.iter().copied().collect();
+    let upload_sparkline = Sparkline::new(&upload_series, rgb(0x6366f1), rgb(0xf8fafc));
+    let download_sparkline = Sparkline::new(&download_series, rgb(0x22d3ee), rgb(0xf8fafc));
 
     let local_ip = format_local_ip(data);
     let dns = format_dns(data);
@@ -78,6 +87,25 @@ pub(crate) fn render_overview(
                     )
                     .flex_grow(),
                 ),
+        )
+        .child(
+            h_flex()
+                .w_full()
+                .gap_3()
+                .items_start()
+                .child(
+                    traffic_stats_card(
+                        cx,
+                        &upload_speed,
+                        &download_speed,
+                        &upload_total,
+                        &download_total,
+                        upload_sparkline,
+                        download_sparkline,
+                    )
+                    .w(relative(0.5)),
+                )
+                .child(div().w(relative(0.5))),
         )
 }
 
@@ -246,6 +274,90 @@ fn network_status_card(
                     rgb(0x22c55e),
                     cx,
                 )),
+    )
+}
+
+fn traffic_stats_card(
+    cx: &mut Context<WgApp>,
+    upload_speed: &str,
+    download_speed: &str,
+    upload_total: &str,
+    download_total: &str,
+    upload_sparkline: Sparkline,
+    download_sparkline: Sparkline,
+) -> GroupBox {
+    GroupBox::new()
+        .fill()
+        .title(card_title(IconName::ChartPie, "Traffic Stats", None, cx))
+        .child(Divider::horizontal().color(cx.theme().border))
+        .child(
+            h_flex()
+                .gap_6()
+                .items_start()
+                .child(traffic_column(
+                    IconName::ArrowUp,
+                    "Upload Speed",
+                    "Upload",
+                    upload_speed,
+                    upload_total,
+                    rgb(0x6366f1),
+                    upload_sparkline,
+                    cx,
+                ))
+                .child(vertical_rule(cx).h(px(160.0)))
+                .child(traffic_column(
+                    IconName::ArrowDown,
+                    "Download Speed",
+                    "Download",
+                    download_speed,
+                    download_total,
+                    rgb(0x22d3ee),
+                    download_sparkline,
+                    cx,
+                )),
+        )
+}
+
+fn traffic_column(
+    icon: IconName,
+    label: &str,
+    footer_label: &str,
+    speed: &str,
+    total: &str,
+    color: impl Into<Hsla>,
+    sparkline: Sparkline,
+    cx: &mut Context<WgApp>,
+) -> Div {
+    let color: Hsla = color.into();
+    let icon_small = icon.clone();
+    v_flex()
+        .gap_2()
+        .flex_grow()
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(Icon::new(icon).size_4().text_color(color))
+                .child(label.to_string()),
+        )
+        .child(
+            div()
+                .text_3xl()
+                .font_semibold()
+                .text_color(color)
+                .child(speed.to_string()),
+        )
+        .child(div().h(px(140.0)).w_full().child(sparkline))
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(Icon::new(icon_small).size_3().text_color(color))
+                .child(format!("{footer_label} {total}")),
         )
 }
 
@@ -335,6 +447,178 @@ fn vertical_rule(cx: &mut Context<WgApp>) -> Div {
         .w(px(1.0))
         .h(px(64.0))
         .bg(cx.theme().border)
+}
+
+fn format_speeds(app: &WgApp, _data: &ViewData) -> (String, String) {
+    if !app.running {
+        return ("0.0 KB/s".to_string(), "0.0 KB/s".to_string());
+    }
+    let upload = app.tx_rate_bps;
+    let download = app.rx_rate_bps;
+    (format_speed(upload), format_speed(download))
+}
+
+fn format_speed(bytes_per_sec: f64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * KB;
+    if bytes_per_sec >= MB {
+        format!("{:.1} MB/s", bytes_per_sec / MB)
+    } else if bytes_per_sec >= KB {
+        format!("{:.1} KB/s", bytes_per_sec / KB)
+    } else {
+        format!("{:.0} B/s", bytes_per_sec)
+    }
+}
+
+struct Sparkline {
+    data: Vec<f32>,
+    stroke: Hsla,
+    dot_fill: Hsla,
+    dot_stroke: Hsla,
+    stroke_width: f32,
+}
+
+impl Sparkline {
+    fn new(data: &[f32], stroke: impl Into<Hsla>, dot_stroke: impl Into<Hsla>) -> Self {
+        let stroke = stroke.into();
+        Self {
+            data: data.to_vec(),
+            stroke,
+            dot_fill: stroke,
+            dot_stroke: dot_stroke.into(),
+            stroke_width: 2.5,
+        }
+    }
+}
+
+impl IntoElement for Sparkline {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for Sparkline {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let style = Style {
+            size: Size::full(),
+            ..Default::default()
+        };
+        (window.request_layout(style, None, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Self::PrepaintState {
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        window: &mut Window,
+        _cx: &mut App,
+    ) {
+        if self.data.len() < 2 {
+            return;
+        }
+
+        let width = bounds.size.width.as_f32();
+        let height = bounds.size.height.as_f32();
+        let padding = 6.0;
+        let available = (height - padding * 2.0).max(1.0);
+
+        let min = self
+            .data
+            .iter()
+            .cloned()
+            .fold(f32::INFINITY, f32::min);
+        let max = self
+            .data
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let range = if (max - min).abs() < f32::EPSILON {
+            1.0
+        } else {
+            max - min
+        };
+
+        let len = self.data.len();
+        let points: Vec<(f32, f32)> = self
+            .data
+            .iter()
+            .enumerate()
+            .map(|(idx, value)| {
+                let x = if len == 1 {
+                    width / 2.0
+                } else {
+                    (idx as f32 / (len - 1) as f32) * width
+                };
+                let y = height - padding - ((value - min) / range) * available;
+                (x, y)
+            })
+            .collect();
+
+        let line = Line::new()
+            .data(points.clone())
+            .x(|point| Some(point.0))
+            .y(|point| Some(point.1))
+            .stroke(self.stroke)
+            .stroke_width(self.stroke_width)
+            .stroke_style(StrokeStyle::Linear);
+        line.paint(&bounds, window);
+
+        if let Some((x, y)) = points.last().copied() {
+            let dot_size = px(12.0);
+            let dot_radius = dot_size.as_f32() / 2.0;
+            let origin_x = bounds.origin.x.as_f32();
+            let origin_y = bounds.origin.y.as_f32();
+            let dot_bounds = gpui::bounds(
+                point(
+                    px(origin_x + x - dot_radius),
+                    px(origin_y + y - dot_radius),
+                ),
+                size(dot_size, dot_size),
+            );
+            let dot = quad(
+                dot_bounds,
+                dot_radius,
+                self.dot_fill,
+                px(2.0),
+                self.dot_stroke,
+                BorderStyle::default(),
+            );
+            window.paint_quad(dot);
+        }
+    }
 }
 
 fn format_uptime(app: &WgApp) -> String {

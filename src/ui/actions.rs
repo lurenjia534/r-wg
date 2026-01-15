@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Instant;
 use std::time::Duration;
@@ -10,7 +11,7 @@ use r_wg::backend::wg::{config, EngineStats, StartRequest};
 
 use super::format::{name_from_path, sanitize_file_stem};
 use super::permissions::start_permission_message;
-use super::state::{ConfigSource, TunnelConfig, WgApp};
+use super::state::{ConfigSource, TunnelConfig, WgApp, SPARKLINE_SAMPLES};
 
 impl WgApp {
     /// 初始化输入控件（按需创建，避免在构造阶段依赖窗口）。
@@ -161,6 +162,8 @@ impl WgApp {
         self.last_stats_at = Some(Instant::now());
         self.last_rx_bytes = total_rx;
         self.last_tx_bytes = total_tx;
+        push_rate_sample(&mut self.rx_rate_history, self.rx_rate_bps);
+        push_rate_sample(&mut self.tx_rate_history, self.tx_rate_bps);
 
         self.peer_stats = stats.peers;
         if self.peer_stats.is_empty() {
@@ -212,6 +215,7 @@ impl WgApp {
         self.last_tx_bytes = 0;
         self.rx_rate_bps = 0.0;
         self.tx_rate_bps = 0.0;
+        self.reset_rate_history();
         self.stats_idle_samples = 0;
         self.last_iface_rx_bytes = 0;
         self.last_iface_tx_bytes = 0;
@@ -628,6 +632,7 @@ impl WgApp {
                             this.last_tx_bytes = 0;
                             this.rx_rate_bps = 0.0;
                             this.tx_rate_bps = 0.0;
+                            this.reset_rate_history();
                             this.stats_idle_samples = 0;
                             this.last_iface_rx_bytes = 0;
                             this.last_iface_tx_bytes = 0;
@@ -740,6 +745,15 @@ impl WgApp {
         }
     }
 
+    fn reset_rate_history(&mut self) {
+        self.rx_rate_history.clear();
+        self.tx_rate_history.clear();
+        for _ in 0..SPARKLINE_SAMPLES {
+            self.rx_rate_history.push_back(0.0);
+            self.tx_rate_history.push_back(0.0);
+        }
+    }
+
     pub(crate) fn next_config_name(&self, base: &str) -> String {
         // 生成不冲突的配置名（pasted-2 / pasted-3 ...）。
         if !self.configs.iter().any(|cfg| cfg.name == base) {
@@ -762,4 +776,16 @@ fn read_interface_stats(tun: &str) -> Option<(u64, u64)> {
     let rx = rx.trim().parse::<u64>().ok()?;
     let tx = tx.trim().parse::<u64>().ok()?;
     Some((rx, tx))
+}
+
+fn push_rate_sample(history: &mut VecDeque<f32>, value: f64) {
+    let value = if value.is_finite() && value > 0.0 {
+        value as f32
+    } else {
+        0.0
+    };
+    if history.len() >= SPARKLINE_SAMPLES {
+        history.pop_front();
+    }
+    history.push_back(value);
 }

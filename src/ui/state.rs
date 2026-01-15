@@ -1,9 +1,12 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use gpui::{Entity, SharedString};
 use gpui_component::{IconName, input::InputState};
 use r_wg::backend::wg::{Engine, PeerStats};
+
+pub(crate) const SPARKLINE_SAMPLES: usize = 24;
 
 #[derive(Clone)]
 pub(crate) enum ConfigSource {
@@ -111,6 +114,8 @@ pub(crate) struct WgApp {
     pub(crate) last_tx_bytes: u64,
     pub(crate) rx_rate_bps: f64,
     pub(crate) tx_rate_bps: f64,
+    pub(crate) rx_rate_history: VecDeque<f32>,
+    pub(crate) tx_rate_history: VecDeque<f32>,
     pub(crate) stats_idle_samples: u8,
     pub(crate) last_iface_rx_bytes: u64,
     pub(crate) last_iface_tx_bytes: u64,
@@ -142,6 +147,8 @@ impl WgApp {
             last_tx_bytes: 0,
             rx_rate_bps: 0.0,
             tx_rate_bps: 0.0,
+            rx_rate_history: init_rate_history(),
+            tx_rate_history: init_rate_history(),
             stats_idle_samples: 0,
             last_iface_rx_bytes: 0,
             last_iface_tx_bytes: 0,
@@ -149,4 +156,12 @@ impl WgApp {
             iface_tx_rate_bps: 0.0,
         }
     }
+}
+
+fn init_rate_history() -> VecDeque<f32> {
+    let mut history = VecDeque::with_capacity(SPARKLINE_SAMPLES);
+    for _ in 0..SPARKLINE_SAMPLES {
+        history.push_back(0.0);
+    }
+    history
 }
