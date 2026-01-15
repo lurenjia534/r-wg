@@ -106,6 +106,16 @@ pub(crate) struct WgApp {
     pub(crate) right_tab: RightTab,
     pub(crate) sidebar_active: SidebarItem,
     pub(crate) started_at: Option<Instant>,
+    pub(crate) last_stats_at: Option<Instant>,
+    pub(crate) last_rx_bytes: u64,
+    pub(crate) last_tx_bytes: u64,
+    pub(crate) rx_rate_bps: f64,
+    pub(crate) tx_rate_bps: f64,
+    pub(crate) stats_idle_samples: u8,
+    pub(crate) last_iface_rx_bytes: u64,
+    pub(crate) last_iface_tx_bytes: u64,
+    pub(crate) iface_rx_rate_bps: f64,
+    pub(crate) iface_tx_rate_bps: f64,
 }
 
 impl WgApp {
@@ -127,6 +137,16 @@ impl WgApp {
             right_tab: RightTab::Status,
             sidebar_active: SidebarItem::Overview,
             started_at: None,
+            last_stats_at: None,
+            last_rx_bytes: 0,
+            last_tx_bytes: 0,
+            rx_rate_bps: 0.0,
+            tx_rate_bps: 0.0,
+            stats_idle_samples: 0,
+            last_iface_rx_bytes: 0,
+            last_iface_tx_bytes: 0,
+            iface_rx_rate_bps: 0.0,
+            iface_tx_rate_bps: 0.0,
         }
     }
 }

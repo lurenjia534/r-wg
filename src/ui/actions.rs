@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 use std::time::Duration;
 
+use r_wg::log;
+
 use gpui::{AppContext, ClipboardItem, Context, PathPromptOptions, SharedString, Window};
 use gpui_component::input::InputState;
 use r_wg::backend::wg::{config, EngineStats, StartRequest};
@@ -122,11 +124,82 @@ impl WgApp {
 
     pub(crate) fn apply_stats(&mut self, stats: EngineStats) {
         // 聚合统计，用于右侧状态卡片展示。
+        let total_rx: u64 = stats.peers.iter().map(|peer| peer.rx_bytes).sum();
+        let total_tx: u64 = stats.peers.iter().map(|peer| peer.tx_bytes).sum();
+
+        let mut rx_delta = 0u64;
+        let mut tx_delta = 0u64;
+        let mut elapsed_secs = None;
+        if let Some(last_at) = self.last_stats_at {
+            let elapsed = last_at.elapsed().as_secs_f64();
+            if elapsed > 0.1 {
+                rx_delta = total_rx.saturating_sub(self.last_rx_bytes);
+                tx_delta = total_tx.saturating_sub(self.last_tx_bytes);
+                self.rx_rate_bps = rx_delta as f64 / elapsed;
+                self.tx_rate_bps = tx_delta as f64 / elapsed;
+                elapsed_secs = Some(elapsed);
+            }
+        }
+
+        let mut iface_rx = None;
+        let mut iface_tx = None;
+        if let Some(name) = self.running_name.as_deref() {
+            if let Some((rx, tx)) = read_interface_stats(name) {
+                iface_rx = Some(rx);
+                iface_tx = Some(tx);
+                if let Some(elapsed) = elapsed_secs {
+                    let rx_delta = rx.saturating_sub(self.last_iface_rx_bytes);
+                    let tx_delta = tx.saturating_sub(self.last_iface_tx_bytes);
+                    self.iface_rx_rate_bps = rx_delta as f64 / elapsed;
+                    self.iface_tx_rate_bps = tx_delta as f64 / elapsed;
+                }
+                self.last_iface_rx_bytes = rx;
+                self.last_iface_tx_bytes = tx;
+            }
+        }
+
+        self.last_stats_at = Some(Instant::now());
+        self.last_rx_bytes = total_rx;
+        self.last_tx_bytes = total_tx;
+
         self.peer_stats = stats.peers;
         if self.peer_stats.is_empty() {
             self.stats_note = "No peers reported".into();
         } else {
-            self.stats_note = format!("Peers: {}", self.peer_stats.len()).into();
+            if rx_delta + tx_delta < 1024 {
+                self.stats_idle_samples = self.stats_idle_samples.saturating_add(1);
+            } else {
+                self.stats_idle_samples = 0;
+            }
+            if self.stats_idle_samples >= 3 {
+                self.stats_note = "No tunnel traffic detected".into();
+            } else {
+                self.stats_note = format!("Peers: {}", self.peer_stats.len()).into();
+            }
+        }
+
+        if log::enabled() {
+            let name = self
+                .running_name
+                .as_deref()
+                .unwrap_or("-");
+            let elapsed_text = elapsed_secs
+                .map(|value| format!("{value:.2}s"))
+                .unwrap_or_else(|| "-".to_string());
+            let iface_text = match (iface_rx, iface_tx) {
+                (Some(rx), Some(tx)) => format!(
+                    "iface_rx={rx} iface_tx={tx} iface_rx_rate={:.0}B/s iface_tx_rate={:.0}B/s",
+                    self.iface_rx_rate_bps, self.iface_tx_rate_bps
+                ),
+                _ => "iface_stats=unavailable".to_string(),
+            };
+            log::log(
+                "stats",
+                format!(
+                    "tun={name} elapsed={elapsed_text} rx_total={total_rx} tx_total={total_tx} rx_delta={rx_delta} tx_delta={tx_delta} rx_rate={:.0}B/s tx_rate={:.0}B/s {iface_text}",
+                    self.rx_rate_bps, self.tx_rate_bps
+                ),
+            );
         }
     }
 
@@ -134,6 +207,16 @@ impl WgApp {
     pub(crate) fn clear_stats(&mut self) {
         self.peer_stats.clear();
         self.stats_note = "Peer stats unavailable".into();
+        self.last_stats_at = None;
+        self.last_rx_bytes = 0;
+        self.last_tx_bytes = 0;
+        self.rx_rate_bps = 0.0;
+        self.tx_rate_bps = 0.0;
+        self.stats_idle_samples = 0;
+        self.last_iface_rx_bytes = 0;
+        self.last_iface_tx_bytes = 0;
+        self.iface_rx_rate_bps = 0.0;
+        self.iface_tx_rate_bps = 0.0;
     }
 
     /// 选中指定隧道并加载到输入框。
@@ -540,6 +623,16 @@ impl WgApp {
                             this.running = true;
                             this.running_name = Some(selected.name.clone());
                             this.started_at = Some(Instant::now());
+                            this.last_stats_at = None;
+                            this.last_rx_bytes = 0;
+                            this.last_tx_bytes = 0;
+                            this.rx_rate_bps = 0.0;
+                            this.tx_rate_bps = 0.0;
+                            this.stats_idle_samples = 0;
+                            this.last_iface_rx_bytes = 0;
+                            this.last_iface_tx_bytes = 0;
+                            this.iface_rx_rate_bps = 0.0;
+                            this.iface_tx_rate_bps = 0.0;
                             this.set_status(format!("Running {}", selected.name));
                             this.stats_note = "Fetching peer stats...".into();
                             // 启动成功后开始轮询统计。
@@ -660,4 +753,13 @@ impl WgApp {
         }
         format!("{base}-{}", self.configs.len() + 1)
     }
+}
+
+fn read_interface_stats(tun: &str) -> Option<(u64, u64)> {
+    let base = format!("/sys/class/net/{tun}/statistics");
+    let rx = std::fs::read_to_string(format!("{base}/rx_bytes")).ok()?;
+    let tx = std::fs::read_to_string(format!("{base}/tx_bytes")).ok()?;
+    let rx = rx.trim().parse::<u64>().ok()?;
+    let tx = tx.trim().parse::<u64>().ok()?;
+    Some((rx, tx))
 }
