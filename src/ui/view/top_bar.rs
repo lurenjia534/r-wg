@@ -4,6 +4,7 @@ use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex, tag::Tag,
 };
+use gpui_component::theme::{Theme, ThemeMode};
 
 use super::data::ViewData;
 use super::super::state::WgApp;
@@ -20,18 +21,31 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
     let can_start = config_valid && !app.running && !app.busy;
     let can_stop = app.running && !app.busy;
 
-    let profile = h_flex()
-        .items_center()
-        .gap_1()
-        .px_3()
-        .py_1()
-        .rounded_full()
-        .border_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().secondary)
-        .text_color(cx.theme().foreground)
-        .child("Work")
-        .child(Icon::new(IconName::ChevronDown).size_3());
+    let is_dark = cx.theme().is_dark();
+    let theme_toggle = ButtonGroup::new("theme-group")
+        .outline()
+        .compact()
+        .small()
+        .child(
+            Button::new("theme-light")
+                .icon(Icon::new(IconName::Sun).size_4())
+                .label("Light")
+                .selected(!is_dark)
+                .tooltip("Switch to light mode")
+                .on_click(cx.listener(|_, _, window, cx| {
+                    Theme::change(ThemeMode::Light, Some(window), cx);
+                })),
+        )
+        .child(
+            Button::new("theme-dark")
+                .icon(Icon::new(IconName::Moon).size_4())
+                .label("Dark")
+                .selected(is_dark)
+                .tooltip("Switch to dark mode")
+                .on_click(cx.listener(|_, _, window, cx| {
+                    Theme::change(ThemeMode::Dark, Some(window), cx);
+                })),
+        );
 
     let on_tooltip = if config_valid {
         "Start tunnel"
@@ -97,7 +111,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
             h_flex()
                 .items_center()
                 .gap_3()
-                .child(profile)
+                .child(theme_toggle)
                 .child(modes),
         )
         .child(
