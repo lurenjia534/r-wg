@@ -2,6 +2,7 @@
 mod center_panel;
 mod data;
 mod left_panel;
+mod logs;
 mod overview;
 mod right_panel;
 mod top_bar;
@@ -62,6 +63,7 @@ impl Render for WgApp {
                         ))
                         .child(right_panel::render_right_panel(self, &data, cx))
                         .into_any_element(),
+                    SidebarItem::Logs => logs::render_logs(self, window, cx).into_any_element(),
                     _ => overview::render_placeholder(cx).into_any_element(),
                 };
 
