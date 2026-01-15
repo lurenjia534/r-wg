@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 gpui = "0.2.2"
-gpui-component = "0.5.0"
+gpui-component = { version = "0.5.0", features = ["tree-sitter-languages"] }
 gpui-component-assets = "0.5.0"
 gotatun = { version = "0.2.0", features = ["device", "tun"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process"] }
