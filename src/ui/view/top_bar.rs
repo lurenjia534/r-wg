@@ -13,9 +13,36 @@ use super::super::state::WgApp;
 pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
     let title = h_flex()
         .items_center()
-        .gap_2()
-        .child(Icon::new(IconName::LayoutDashboard).size_5())
-        .child(div().text_lg().font_semibold().child("r-wg Dashboard"));
+        .gap_3()
+        .child(
+            div()
+                .size(px(36.0))
+                .rounded_md()
+                .bg(cx.theme().secondary)
+                .border_1()
+                .border_color(cx.theme().border)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    Icon::new(IconName::LayoutDashboard)
+                        .size_5()
+                        .text_color(cx.theme().accent),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_lg().font_semibold().child("r-wg"))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Dashboard"),
+                ),
+        );
 
     let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
     let can_start = config_valid && !app.running && !app.busy;
@@ -29,7 +56,6 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .child(
             Button::new("theme-light")
                 .icon(Icon::new(IconName::Sun).size_4())
-                .label("Light")
                 .selected(!is_dark)
                 .tooltip("Switch to light mode")
                 .on_click(cx.listener(|_, _, window, cx| {
@@ -39,7 +65,6 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .child(
             Button::new("theme-dark")
                 .icon(Icon::new(IconName::Moon).size_4())
-                .label("Dark")
                 .selected(is_dark)
                 .tooltip("Switch to dark mode")
                 .on_click(cx.listener(|_, _, window, cx| {
@@ -84,9 +109,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         );
 
     let status_tag = if app.running {
-        Tag::success().small().rounded_full().child("On")
+        Tag::success().small().rounded_full().child("Connected")
     } else {
-        Tag::secondary().small().rounded_full().child("Off")
+        Tag::secondary().small().rounded_full().child("Idle")
     };
 
     let tools = h_flex()
@@ -99,7 +124,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
     h_flex()
         .items_center()
         .justify_between()
-        .gap_4()
+        .gap_6()
         .px_3()
         .py_2()
         .rounded_lg()
@@ -110,8 +135,26 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .child(
             h_flex()
                 .items_center()
-                .gap_3()
-                .child(theme_toggle)
+                .gap_2()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Theme"),
+                        )
+                        .child(theme_toggle),
+                )
+                .child(vertical_divider(cx))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Tunnel"),
+                )
                 .child(modes),
         )
         .child(
@@ -128,4 +171,11 @@ fn icon_button(id: &'static str, icon: IconName) -> Button {
         .ghost()
         .xsmall()
         .icon(Icon::new(icon).size_4())
+}
+
+fn vertical_divider(cx: &mut Context<WgApp>) -> Div {
+    div()
+        .w(px(1.0))
+        .h(px(20.0))
+        .bg(cx.theme().border)
 }
