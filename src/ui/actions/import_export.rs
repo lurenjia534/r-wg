@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::process::Command;
+use std::io::ErrorKind;
 
 use gpui::{AppContext, Context, PathPromptOptions, Window};
 use r_wg::backend::wg::config;
@@ -37,8 +39,47 @@ impl WgApp {
                         return;
                     }
                     Ok(Err(err)) => {
+                        let message = err.to_string();
+                        if portal_missing_message(&message) {
+                            view.update(cx, |this, cx| {
+                                this.set_status("File dialog unavailable, trying fallback...");
+                                cx.notify();
+                            })
+                            .ok();
+
+                            let fallback = cx
+                                .background_spawn(async move {
+                                    pick_file_fallback("Import WireGuard Config")
+                                })
+                                .await;
+
+                            match fallback {
+                                Ok(Some(path)) => {
+                                    view.update_in(cx, |this, window, cx| {
+                                        this.start_import_from_path(path, window, cx);
+                                    })
+                                    .ok();
+                                }
+                                Ok(None) => {
+                                    view.update(cx, |this, cx| {
+                                        this.set_status("Import canceled");
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                                Err(err) => {
+                                    view.update(cx, |this, cx| {
+                                        this.set_error(err);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                            }
+                            return;
+                        }
+
                         view.update(cx, |this, cx| {
-                            this.set_error(format!("File dialog failed: {err}"));
+                            this.set_error(format!("File dialog failed: {message}"));
                             cx.notify();
                         })
                         .ok();
@@ -221,4 +262,58 @@ impl WgApp {
         })
         .detach();
     }
+}
+
+fn portal_missing_message(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("xdg-desktop-portal")
+        || lower.contains("portal request failed")
+        || lower.contains("org.freedesktop.portal")
+        || lower.contains("portalnotfound")
+        || lower.contains("portal not found")
+}
+
+fn pick_file_fallback(prompt: &str) -> Result<Option<PathBuf>, String> {
+    // 先尝试 zenity，再尝试 kdialog，避免强依赖某一种桌面环境。
+    if let Some(path) = pick_with_zenity(prompt)? {
+        return Ok(Some(path));
+    }
+    if let Some(path) = pick_with_kdialog(prompt)? {
+        return Ok(Some(path));
+    }
+    Err("No file picker available (xdg-desktop-portal/zenity/kdialog)".to_string())
+}
+
+fn pick_with_zenity(prompt: &str) -> Result<Option<PathBuf>, String> {
+    let title = format!("--title={prompt}");
+    pick_with_command("zenity", &["--file-selection", &title])
+}
+
+fn pick_with_kdialog(prompt: &str) -> Result<Option<PathBuf>, String> {
+    let title = format!("--title={prompt}");
+    pick_with_command("kdialog", &["--getopenfilename", ".", &title])
+}
+
+fn pick_with_command(command: &str, args: &[&str]) -> Result<Option<PathBuf>, String> {
+    let output = match Command::new(command).args(args).output() {
+        Ok(output) => output,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(format!("{command} failed: {err}"));
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Ok(None);
+        }
+        return Err(format!("{command} failed: {stderr}"));
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(PathBuf::from(path)))
 }
