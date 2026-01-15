@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::ActiveTheme as _;
 
 use super::data::ViewData;
 use super::widgets::tab_button;
@@ -56,15 +57,16 @@ pub(crate) fn render_right_panel(
             .unwrap_or_else(|| "-".to_string());
 
         card(
+            cx.theme(),
             "Network",
             div()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(info_row("Local Address", addresses))
-                .child(info_row("DNS", dns))
-                .child(info_row("Route Table", route_table))
-                .child(info_row("Allowed IPs", routes)),
+                .child(info_row(cx.theme(), "Local Address", addresses))
+                .child(info_row(cx.theme(), "DNS", dns))
+                .child(info_row(cx.theme(), "Route Table", route_table))
+                .child(info_row(cx.theme(), "Allowed IPs", routes)),
         )
     };
 
@@ -83,17 +85,18 @@ pub(crate) fn render_right_panel(
             data.peer_summary.peer_count.to_string()
         };
         card(
+            cx.theme(),
             "Connection",
             div()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(info_row("Status", connection_state))
-                .child(info_row("Tunnel", active_tunnel))
-                .child(info_row("Peers", peers))
-                .child(info_row("Handshake", data.last_handshake.clone()))
-                .child(info_row("RX", rx))
-                .child(info_row("TX", tx)),
+                .child(info_row(cx.theme(), "Status", connection_state))
+                .child(info_row(cx.theme(), "Tunnel", active_tunnel))
+                .child(info_row(cx.theme(), "Peers", peers))
+                .child(info_row(cx.theme(), "Handshake", data.last_handshake.clone()))
+                .child(info_row(cx.theme(), "RX", rx))
+                .child(info_row(cx.theme(), "TX", tx)),
         )
     };
 
@@ -103,7 +106,7 @@ pub(crate) fn render_right_panel(
         stats_items.push(
             div()
                 .text_sm()
-                .text_color(rgb(0x8a939c))
+                .text_color(cx.theme().muted_foreground)
                 .child(app.stats_note.clone())
                 .into_any_element(),
         );
@@ -111,7 +114,7 @@ pub(crate) fn render_right_panel(
             stats_items.push(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x8a939c))
+                    .text_color(cx.theme().muted_foreground)
                     .child("No peer stats yet")
                     .into_any_element(),
             );
@@ -123,7 +126,11 @@ pub(crate) fn render_right_panel(
                     .into_any_element()
             }));
         }
-        card("Peers", div().flex().flex_col().gap_1().children(stats_items))
+        card(
+            cx.theme(),
+            "Peers",
+            div().flex().flex_col().gap_1().children(stats_items),
+        )
     };
 
     // Logs 卡片：集中显示最近状态与错误信息。
@@ -134,14 +141,15 @@ pub(crate) fn render_right_panel(
             .unwrap_or_else(|| "None".into());
         let parse_state = data.parse_error.clone().unwrap_or_else(|| "None".to_string());
         card(
+            cx.theme(),
             "Logs",
             div()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(info_row("Latest Status", app.status.to_string()))
-                .child(info_row("Last Error", last_error.to_string()))
-                .child(info_row("Parse Error", parse_state)),
+                .child(info_row(cx.theme(), "Latest Status", app.status.to_string()))
+                .child(info_row(cx.theme(), "Last Error", last_error.to_string()))
+                .child(info_row(cx.theme(), "Parse Error", parse_state)),
         )
     };
 
@@ -166,9 +174,9 @@ pub(crate) fn render_right_panel(
         .gap_3()
         .p_3()
         .rounded_lg()
-        .bg(rgb(0x141b22))
+        .bg(cx.theme().tiles)
         .border_1()
-        .border_color(rgb(0x202a33))
+        .border_color(cx.theme().border)
         .child(div().text_lg().child("Status"))
         .child(right_tab_row)
         .child(right_body)

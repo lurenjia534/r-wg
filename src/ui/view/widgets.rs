@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::ActiveTheme as _;
 
 use super::data::ConfigStatus;
 use super::super::state::WgApp;
@@ -30,8 +31,16 @@ pub(crate) fn tab_button(
         .py_1()
         .rounded_full()
         .text_sm()
-        .bg(if active { rgb(0x2b6f55) } else { rgb(0x22272e) })
-        .text_color(if active { rgb(0xe6e6e6) } else { rgb(0x8a939c) })
+        .bg(if active {
+            cx.theme().tab_active
+        } else {
+            cx.theme().tab
+        })
+        .text_color(if active {
+            cx.theme().tab_active_foreground
+        } else {
+            cx.theme().tab_foreground
+        })
         .child(label)
         .id(label);
 

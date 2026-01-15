@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::theme::Theme;
 
 #[derive(Clone, Copy)]
 pub enum ButtonTone {
@@ -32,7 +33,7 @@ pub fn action_button(id: &'static str, label: &str, enabled: bool, tone: ButtonT
     button
 }
 
-pub fn card(title: impl Into<String>, body: impl IntoElement) -> Div {
+pub fn card(theme: &Theme, title: impl Into<String>, body: impl IntoElement) -> Div {
     let title = SharedString::new(title.into());
     div()
         .flex()
@@ -40,25 +41,35 @@ pub fn card(title: impl Into<String>, body: impl IntoElement) -> Div {
         .gap_2()
         .rounded_lg()
         .border_1()
-        .border_color(rgb(0x202a33))
-        .bg(rgb(0x171d23))
+        .border_color(theme.border)
+        .bg(theme.group_box)
         .p_3()
-        .child(div().text_sm().text_color(rgb(0x8a939c)).child(title))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(title),
+        )
         .child(body)
 }
 
-pub fn info_row(label: impl Into<String>, value: impl Into<String>) -> Div {
+pub fn info_row(theme: &Theme, label: impl Into<String>, value: impl Into<String>) -> Div {
     let label = SharedString::new(label.into());
     let value = SharedString::new(value.into());
     div()
         .flex()
         .justify_between()
         .gap_3()
-        .child(div().text_sm().text_color(rgb(0x8a939c)).child(label))
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0xe6e6e6))
+                .text_color(theme.muted_foreground)
+                .child(label),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
                 .child(value),
         )
 }

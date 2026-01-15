@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_component::{
-    Disableable as _, Icon, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants},
     h_flex, input::{Input, InputState}, v_flex,
 };
@@ -26,9 +26,9 @@ pub(crate) fn render_center_panel(
         .flex_grow()
         .p_3()
         .rounded_lg()
-        .bg(rgb(0x141b22))
+        .bg(cx.theme().tiles)
         .border_1()
-        .border_color(rgb(0x202a33))
+        .border_color(cx.theme().border)
         .child(
             div()
                 .flex()
@@ -44,17 +44,19 @@ pub(crate) fn render_center_panel(
                 .child(action_bar),
         )
         .child(card(
+            cx.theme(),
             "Tunnel Name",
             div()
                 .w_full()
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(0x1a2026))
+                .bg(cx.theme().secondary)
                 .child(Input::new(name_input).appearance(false).bordered(false)),
         ))
         .child(
             card(
+                cx.theme(),
                 "Config",
                 div()
                     .w_full()
@@ -62,7 +64,7 @@ pub(crate) fn render_center_panel(
                     .min_h(px(320.0))
                     .p_2()
                     .rounded_md()
-                    .bg(rgb(0x1a2026))
+                    .bg(cx.theme().secondary)
                     .child(Input::new(config_input).appearance(false).bordered(false).h_full()),
             )
             .flex_grow(),

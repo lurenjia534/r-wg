@@ -8,6 +8,7 @@ mod top_bar;
 mod widgets;
 
 use gpui::*;
+use gpui_component::ActiveTheme as _;
 
 use super::state::{SidebarItem, WgApp};
 use data::ViewData;
@@ -36,10 +37,10 @@ impl Render for WgApp {
             .flex_row()
             .bg(linear_gradient(
                 130.0,
-                linear_color_stop(rgb(0x0e1318), 0.0),
-                linear_color_stop(rgb(0x121a21), 1.0),
+                linear_color_stop(cx.theme().background, 0.0),
+                linear_color_stop(cx.theme().muted, 1.0),
             ))
-            .text_color(rgb(0xe6e6e6))
+            .text_color(cx.theme().foreground)
             // 左侧：隧道列表 + 操作按钮
             .child(left_panel::render_left_panel(self, &data, cx))
             .child({
