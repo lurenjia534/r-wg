@@ -2,14 +2,23 @@ use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::fs;
 
 use futures_util::stream::TryStreamExt;
 use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteHeader, RouteMessage};
-use rtnetlink::{new_connection, Handle, LinkMessageBuilder, LinkUnspec, RouteMessageBuilder};
+use netlink_packet_route::rule::{RuleAction, RuleAttribute, RuleFlags, RuleMessage};
+use rtnetlink::{
+    new_connection, Handle, IpVersion, LinkMessageBuilder, LinkUnspec, RouteMessageBuilder,
+};
 use tokio::process::Command;
 
 use crate::backend::wg::config::{AllowedIp, InterfaceAddress, InterfaceConfig, PeerConfig, RouteTable};
 use crate::log;
+
+const DEFAULT_POLICY_TABLE: u32 = 200;
+const RULE_PRIORITY_FWMARK: u32 = 10000;
+const RULE_PRIORITY_TUNNEL: u32 = 10001;
+const RULE_PRIORITY_SUPPRESS: u32 = 10002;
 
 #[derive(Debug)]
 pub struct AppliedNetworkState {
@@ -18,6 +27,7 @@ pub struct AppliedNetworkState {
     routes: Vec<AllowedIp>,
     table: Option<RouteTable>,
     dns: Option<DnsState>,
+    policy: Option<PolicyRoutingState>,
 }
 
 #[derive(Debug)]
@@ -31,6 +41,7 @@ pub enum NetworkError {
     },
     DnsNotSupported,
     LinkNotFound(String),
+    MissingFwmark,
 }
 
 impl std::fmt::Display for NetworkError {
@@ -48,6 +59,7 @@ impl std::fmt::Display for NetworkError {
             NetworkError::DnsNotSupported => write!(f, "no supported DNS backend found"),
             NetworkError::Netlink(err) => write!(f, "netlink error: {err}"),
             NetworkError::LinkNotFound(name) => write!(f, "link not found: {name}"),
+            NetworkError::MissingFwmark => write!(f, "missing fwmark for policy routing"),
         }
     }
 }
@@ -77,6 +89,14 @@ enum DnsBackend {
     Resolvconf,
 }
 
+#[derive(Debug)]
+struct PolicyRoutingState {
+    table_id: u32,
+    fwmark: u32,
+    v4: bool,
+    v6: bool,
+}
+
 /// 应用 Linux 网络配置。
 ///
 /// 只负责系统地址/路由/DNS，WireGuard 隧道本身由 gotatun 负责。
@@ -98,6 +118,9 @@ pub async fn apply_network_config(
     let handle = netlink_handle()?;
     let link_index = link_index(&handle, tun_name).await?;
     log_net(format!("link index: {link_index}"));
+    if let Err(err) = cleanup_stale_default_routes(&handle, tun_name, link_index).await {
+        log_net(format!("stale default route cleanup failed: {err}"));
+    }
 
     if let Some(mtu) = interface.mtu {
         let message = LinkMessageBuilder::<LinkUnspec>::default()
@@ -123,10 +146,31 @@ pub async fn apply_network_config(
     }
 
     let routes = collect_allowed_routes(peers);
+    let (full_v4, full_v6) = detect_full_tunnel(&routes);
+    let policy = if interface.table != Some(RouteTable::Off) && (full_v4 || full_v6) {
+        let table_id = match interface.table {
+            Some(RouteTable::Id(value)) => value,
+            _ => DEFAULT_POLICY_TABLE,
+        };
+        let fwmark = interface.fwmark.ok_or(NetworkError::MissingFwmark)?;
+        if let Err(err) = cleanup_policy_rules(&handle, true, true).await {
+            log_net(format!("stale policy rule cleanup failed: {err}"));
+        }
+        apply_policy_rules(&handle, fwmark, table_id, full_v4, full_v6).await?;
+        Some(PolicyRoutingState {
+            table_id,
+            fwmark,
+            v4: full_v4,
+            v6: full_v6,
+        })
+    } else {
+        None
+    };
+
     if interface.table != Some(RouteTable::Off) {
-        let table = route_table_id(interface.table);
         for route in &routes {
-            log_net(format!("route: {}/{}", route.addr, route.cidr));
+            let table = route_table_for(route, interface.table, policy.as_ref(), full_v4, full_v6);
+            log_net(format!("route: {}/{} table={:?}", route.addr, route.cidr, table));
             match route.addr {
                 IpAddr::V4(addr) => {
                     let mut request = RouteMessageBuilder::<Ipv4Addr>::default()
@@ -150,6 +194,8 @@ pub async fn apply_network_config(
         }
     }
 
+    log_default_routes();
+
     let dns = if interface.dns_servers.is_empty() && interface.dns_search.is_empty() {
         None
     } else {
@@ -158,7 +204,13 @@ pub async fn apply_network_config(
             interface.dns_servers.len(),
             interface.dns_search.len()
         ));
-        Some(apply_dns(tun_name, &interface.dns_servers, &interface.dns_search).await?)
+        match apply_dns(tun_name, &interface.dns_servers, &interface.dns_search).await {
+            Ok(state) => Some(state),
+            Err(err) => {
+                log_net(format!("dns apply failed: {err}"));
+                None
+            }
+        }
     };
 
     Ok(AppliedNetworkState {
@@ -167,6 +219,7 @@ pub async fn apply_network_config(
         routes,
         table: interface.table,
         dns,
+        policy,
     })
 }
 
@@ -197,9 +250,13 @@ pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), Ne
     }
 
     if state.table != Some(RouteTable::Off) {
-        let table = route_table_id(state.table);
+        let policy = state.policy.as_ref();
+        let (full_v4, full_v6) = policy
+            .map(|state| (state.v4, state.v6))
+            .unwrap_or((false, false));
         for route in &state.routes {
-            log_net(format!("route del: {}/{}", route.addr, route.cidr));
+            let table = route_table_for(route, state.table, policy, full_v4, full_v6);
+            log_net(format!("route del: {}/{} table={:?}", route.addr, route.cidr, table));
             if let Err(err) = delete_route(&handle, link_index, route, table).await {
                 log_net(format!("route del failed: {err}"));
             }
@@ -209,6 +266,12 @@ pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), Ne
     if let Some(dns) = state.dns {
         log_net("dns revert".to_string());
         let _ = cleanup_dns(state.tun_name.as_str(), dns).await;
+    }
+
+    if let Some(policy) = state.policy {
+        if let Err(err) = cleanup_policy_rules(&handle, policy.v4, policy.v6).await {
+            log_net(format!("policy rule cleanup failed: {err}"));
+        }
     }
 
     Ok(())
@@ -229,6 +292,36 @@ fn collect_allowed_routes(peers: &[PeerConfig]) -> Vec<AllowedIp> {
         }
     }
     routes
+}
+
+fn detect_full_tunnel(routes: &[AllowedIp]) -> (bool, bool) {
+    let mut v4 = false;
+    let mut v6 = false;
+    for route in routes {
+        match route.addr {
+            IpAddr::V4(addr) if addr.is_unspecified() && route.cidr == 0 => v4 = true,
+            IpAddr::V6(addr) if addr.is_unspecified() && route.cidr == 0 => v6 = true,
+            _ => {}
+        }
+    }
+    (v4, v6)
+}
+
+fn route_table_for(
+    route: &AllowedIp,
+    table: Option<RouteTable>,
+    policy: Option<&PolicyRoutingState>,
+    full_v4: bool,
+    full_v6: bool,
+) -> Option<u32> {
+    if let Some(policy) = policy {
+        match route.addr {
+            IpAddr::V4(_) if full_v4 => return Some(policy.table_id),
+            IpAddr::V6(_) if full_v6 => return Some(policy.table_id),
+            _ => {}
+        }
+    }
+    route_table_id(table)
 }
 
 /// 从 RouteTable 生成 netlink 路由表 ID。
@@ -335,8 +428,344 @@ fn resolve_command(program: &str) -> Option<PathBuf> {
     None
 }
 
+async fn apply_policy_rules(
+    handle: &Handle,
+    fwmark: u32,
+    table_id: u32,
+    v4: bool,
+    v6: bool,
+) -> Result<(), NetworkError> {
+    if v4 {
+        apply_policy_rules_family(handle, false, fwmark, table_id).await?;
+    }
+    if v6 {
+        apply_policy_rules_family(handle, true, fwmark, table_id).await?;
+    }
+    Ok(())
+}
+
+async fn apply_policy_rules_family(
+    handle: &Handle,
+    v6: bool,
+    fwmark: u32,
+    table_id: u32,
+) -> Result<(), NetworkError> {
+    let rule = handle.rule();
+    let main_table = RouteHeader::RT_TABLE_MAIN as u32;
+
+    if v6 {
+        log_net(format!(
+            "policy rule add: v6 fwmark=0x{fwmark:x} table=main pref={RULE_PRIORITY_FWMARK}"
+        ));
+        rule.add()
+            .v6()
+            .fw_mark(fwmark)
+            .action(RuleAction::ToTable)
+            .priority(RULE_PRIORITY_FWMARK)
+            .table_id(main_table)
+            .execute()
+            .await?;
+
+        log_net(format!(
+            "policy rule add: v6 not fwmark=0x{fwmark:x} table={table_id} pref={RULE_PRIORITY_TUNNEL}"
+        ));
+        let mut tunnel_rule = rule
+            .add()
+            .v6()
+            .fw_mark(fwmark)
+            .action(RuleAction::ToTable)
+            .priority(RULE_PRIORITY_TUNNEL)
+            .table_id(table_id);
+        tunnel_rule.message_mut().header.flags |= RuleFlags::Invert;
+        tunnel_rule.execute().await?;
+
+        log_net(format!(
+            "policy rule add: v6 suppress main pref={RULE_PRIORITY_SUPPRESS}"
+        ));
+        let mut suppress_rule = rule
+            .add()
+            .v6()
+            .action(RuleAction::ToTable)
+            .priority(RULE_PRIORITY_SUPPRESS)
+            .table_id(main_table);
+        suppress_rule
+            .message_mut()
+            .attributes
+            .push(RuleAttribute::SuppressPrefixLen(0));
+        suppress_rule.execute().await?;
+    } else {
+        log_net(format!(
+            "policy rule add: v4 fwmark=0x{fwmark:x} table=main pref={RULE_PRIORITY_FWMARK}"
+        ));
+        rule.add()
+            .v4()
+            .fw_mark(fwmark)
+            .action(RuleAction::ToTable)
+            .priority(RULE_PRIORITY_FWMARK)
+            .table_id(main_table)
+            .execute()
+            .await?;
+
+        log_net(format!(
+            "policy rule add: v4 not fwmark=0x{fwmark:x} table={table_id} pref={RULE_PRIORITY_TUNNEL}"
+        ));
+        let mut tunnel_rule = rule
+            .add()
+            .v4()
+            .fw_mark(fwmark)
+            .action(RuleAction::ToTable)
+            .priority(RULE_PRIORITY_TUNNEL)
+            .table_id(table_id);
+        tunnel_rule.message_mut().header.flags |= RuleFlags::Invert;
+        tunnel_rule.execute().await?;
+
+        log_net(format!(
+            "policy rule add: v4 suppress main pref={RULE_PRIORITY_SUPPRESS}"
+        ));
+        let mut suppress_rule = rule
+            .add()
+            .v4()
+            .action(RuleAction::ToTable)
+            .priority(RULE_PRIORITY_SUPPRESS)
+            .table_id(main_table);
+        suppress_rule
+            .message_mut()
+            .attributes
+            .push(RuleAttribute::SuppressPrefixLen(0));
+        suppress_rule.execute().await?;
+    }
+
+    Ok(())
+}
+
+async fn cleanup_policy_rules(
+    handle: &Handle,
+    v4: bool,
+    v6: bool,
+) -> Result<(), NetworkError> {
+    if v4 {
+        cleanup_policy_rules_family(handle, IpVersion::V4).await?;
+    }
+    if v6 {
+        cleanup_policy_rules_family(handle, IpVersion::V6).await?;
+    }
+    Ok(())
+}
+
+async fn cleanup_policy_rules_family(
+    handle: &Handle,
+    ip_version: IpVersion,
+) -> Result<(), NetworkError> {
+    let mut rules = handle.rule().get(ip_version).execute();
+    while let Some(rule) = rules.try_next().await? {
+        if is_policy_rule(&rule) {
+            handle.rule().del(rule).execute().await?;
+        }
+    }
+    Ok(())
+}
+
+fn is_policy_rule(rule: &RuleMessage) -> bool {
+    match rule_priority(rule) {
+        Some(priority)
+            if priority == RULE_PRIORITY_FWMARK
+                || priority == RULE_PRIORITY_TUNNEL
+                || priority == RULE_PRIORITY_SUPPRESS =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn rule_priority(rule: &RuleMessage) -> Option<u32> {
+    rule.attributes.iter().find_map(|attr| match attr {
+        RuleAttribute::Priority(value) => Some(*value),
+        _ => None,
+    })
+}
+
+async fn cleanup_stale_default_routes(
+    handle: &Handle,
+    tun_name: &str,
+    tun_index: u32,
+) -> Result<(), NetworkError> {
+    cleanup_stale_default_routes_v4(handle, tun_name, tun_index).await?;
+    cleanup_stale_default_routes_v6(handle, tun_name, tun_index).await?;
+    Ok(())
+}
+
+
+async fn cleanup_stale_default_routes_v4(
+    handle: &Handle,
+    tun_name: &str,
+    tun_index: u32,
+) -> Result<(), NetworkError> {
+    let filter = RouteMessageBuilder::<Ipv4Addr>::default().build();
+    cleanup_stale_default_routes_family(handle, tun_name, tun_index, filter).await
+}
+
+async fn cleanup_stale_default_routes_v6(
+    handle: &Handle,
+    tun_name: &str,
+    tun_index: u32,
+) -> Result<(), NetworkError> {
+    let filter = RouteMessageBuilder::<Ipv6Addr>::default().build();
+    cleanup_stale_default_routes_family(handle, tun_name, tun_index, filter).await
+}
+
+async fn cleanup_stale_default_routes_family(
+    handle: &Handle,
+    tun_name: &str,
+    tun_index: u32,
+    filter: RouteMessage,
+) -> Result<(), NetworkError> {
+    let mut routes = handle.route().get(filter).execute();
+    while let Some(message) = routes.try_next().await? {
+        if message.header.destination_prefix_length != 0 {
+            continue;
+        }
+        if route_message_table_id(&message) != RouteHeader::RT_TABLE_MAIN as u32 {
+            continue;
+        }
+        let Some(oif) = route_message_oif(&message) else {
+            continue;
+        };
+        if oif == tun_index {
+            continue;
+        }
+        let Some(name) = interface_name_by_index(oif) else {
+            continue;
+        };
+        if name == tun_name {
+            continue;
+        }
+        if !is_tun_interface(&name) {
+            continue;
+        }
+        log_net(format!("stale default route del: iface={name}"));
+        handle.route().del(message).execute().await?;
+    }
+    Ok(())
+}
+
+fn interface_name_by_index(index: u32) -> Option<String> {
+    let entries = fs::read_dir("/sys/class/net").ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = format!("/sys/class/net/{name}/ifindex");
+        let value = fs::read_to_string(path).ok()?;
+        if value.trim().parse::<u32>().ok()? == index {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn is_tun_interface(name: &str) -> bool {
+    let path = format!("/sys/class/net/{name}/type");
+    let value = fs::read_to_string(path).ok();
+    let Some(value) = value else {
+        return false;
+    };
+    value.trim().parse::<u32>().ok() == Some(65534)
+}
+
 fn log_net(message: String) {
     log::log("net", message);
+}
+
+fn log_default_routes() {
+    if !log::enabled() {
+        return;
+    }
+
+    match std::fs::read_to_string("/proc/net/route") {
+        Ok(contents) => {
+            let mut found = false;
+            for (idx, line) in contents.lines().enumerate() {
+                if idx == 0 {
+                    continue;
+                }
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() < 8 {
+                    continue;
+                }
+                let iface = parts[0];
+                let destination = parts[1];
+                let gateway = parts[2];
+                let metric = parts[6];
+                if destination == "00000000" {
+                    let gw = parse_ipv4_hex_le(gateway)
+                        .map(|addr| addr.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    log_net(format!(
+                        "default route v4: iface={iface} gw={gw} metric={metric}"
+                    ));
+                    found = true;
+                }
+            }
+            if !found {
+                log_net("default route v4: not found".to_string());
+            }
+        }
+        Err(err) => {
+            log_net(format!("default route v4 read failed: {err}"));
+        }
+    }
+
+    match std::fs::read_to_string("/proc/net/ipv6_route") {
+        Ok(contents) => {
+            let mut found = false;
+            for line in contents.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() < 10 {
+                    continue;
+                }
+                let destination = parts[0];
+                let prefix = parts[1];
+                let gateway = parts[4];
+                let metric = parts[5];
+                let iface = parts[9];
+                if destination == "00000000000000000000000000000000" && prefix == "00000000" {
+                    let gw = parse_ipv6_hex(gateway)
+                        .map(|addr| addr.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    let metric = u32::from_str_radix(metric, 16)
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|_| metric.to_string());
+                    log_net(format!(
+                        "default route v6: iface={iface} gw={gw} metric={metric}"
+                    ));
+                    found = true;
+                }
+            }
+            if !found {
+                log_net("default route v6: not found".to_string());
+            }
+        }
+        Err(err) => {
+            log_net(format!("default route v6 read failed: {err}"));
+        }
+    }
+}
+
+fn parse_ipv4_hex_le(hex: &str) -> Option<Ipv4Addr> {
+    let value = u32::from_str_radix(hex, 16).ok()?;
+    Some(Ipv4Addr::from(value.to_le_bytes()))
+}
+
+fn parse_ipv6_hex(hex: &str) -> Option<Ipv6Addr> {
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut bytes = [0u8; 16];
+    for idx in 0..16 {
+        let start = idx * 2;
+        let chunk = &hex[start..start + 2];
+        bytes[idx] = u8::from_str_radix(chunk, 16).ok()?;
+    }
+    Some(Ipv6Addr::from(bytes))
 }
 
 fn log_command(program: &Path, args: &[String]) {
