@@ -47,6 +47,7 @@ pub enum NetworkError {
         status: Option<i32>,
         stderr: String,
     },
+    DnsVerifyFailed(String),
     DnsNotSupported,
     LinkNotFound(String),
     MissingFwmark,
@@ -64,6 +65,9 @@ impl std::fmt::Display for NetworkError {
                 f,
                 "command failed: {command} (status={status:?}) {stderr}"
             ),
+            NetworkError::DnsVerifyFailed(message) => {
+                write!(f, "dns verification failed: {message}")
+            }
             NetworkError::DnsNotSupported => write!(f, "no supported DNS backend found"),
             NetworkError::Netlink(err) => write!(f, "netlink error: {err}"),
             NetworkError::LinkNotFound(name) => write!(f, "link not found: {name}"),
@@ -193,32 +197,35 @@ pub async fn apply_network_config(
     // 输出当前默认路由，便于诊断主表/策略表走向。
     log_default_routes();
 
-    // DNS 失败不阻断启动，由上层决定是否视为致命错误。
-    let dns = if interface.dns_servers.is_empty() && interface.dns_search.is_empty() {
-        None
-    } else {
+    let mut state = AppliedNetworkState {
+        tun_name: tun_name.to_string(),
+        addresses: interface.addresses.clone(),
+        routes,
+        table: interface.table,
+        policy,
+        dns: None,
+    };
+
+    // DNS 失败视为致命错误，避免全隧道场景出现 DNS 泄漏。
+    if !interface.dns_servers.is_empty() || !interface.dns_search.is_empty() {
         log_net(format!(
             "dns: servers={} search={}",
             interface.dns_servers.len(),
             interface.dns_search.len()
         ));
         match apply_dns(tun_name, &interface.dns_servers, &interface.dns_search).await {
-            Ok(state) => Some(state),
+            Ok(dns_state) => {
+                state.dns = Some(dns_state);
+            }
             Err(err) => {
                 log_net(format!("dns apply failed: {err}"));
-                None
+                let _ = cleanup_network_config(state).await;
+                return Err(err);
             }
         }
-    };
+    }
 
-    Ok(AppliedNetworkState {
-        tun_name: tun_name.to_string(),
-        addresses: interface.addresses.clone(),
-        routes,
-        table: interface.table,
-        dns,
-        policy,
-    })
+    Ok(state)
 }
 
 /// 清理之前应用的网络配置。
