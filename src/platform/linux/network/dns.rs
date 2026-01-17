@@ -1,9 +1,11 @@
 //! DNS 配置与回滚逻辑。
 //!
 //! 设计目标：
-//! - 优先使用系统原生后端（systemd-resolved），再尝试兼容后端（resolvconf）。
-//! - 只处理“对接口生效”的 DNS 设置，不直接修改全局 resolv.conf。
-//! - 一旦设置失败，向上抛错，由上层决定是否允许“带警告启动”。
+//! - 优先使用系统原生后端（systemd-resolved / resolvconf / NetworkManager），最后兜底写入 `/etc/resolv.conf`。
+//! - 能按“接口级 DNS”处理时不改全局文件；仅当 resolv.conf 是普通文件时才会备份并写入。
+//! - 严格验证解析器配置，避免多余 DNS（例如 RDNSS 注入）导致泄漏。
+//! - NM 路径在必要时触发 down/up 重连以清掉残留 DNS。
+//! - 失败向上抛错，由上层决定是否允许继续启动。
 
 use std::net::IpAddr;
 use std::collections::HashSet;
@@ -19,14 +21,19 @@ use super::NetworkError;
 
 #[derive(Debug)]
 pub(super) struct DnsState {
+    /// 记录本次使用的 DNS 后端与其回滚信息，供 stop/cleanup 时撤销。
     backend: DnsBackend,
 }
 
 #[derive(Debug)]
 enum DnsBackend {
+    /// systemd-resolved: 对接口设置 DNS，可通过 resolvectl revert 回滚。
     Resolved,
+    /// resolvconf/openresolv: 写入接口条目，可通过 resolvconf -d 回滚。
     Resolvconf,
+    /// NetworkManager: 保存连接原状态，失败或停止时恢复。
     NetworkManager { connections: Vec<NmConnectionState> },
+    /// 直接写 /etc/resolv.conf（仅当是普通文件）。
     ResolvConf { path: PathBuf, original: String },
 }
 
@@ -65,15 +72,22 @@ impl DnsBackendKind {
 
 #[derive(Debug)]
 struct ResolvConfInfo {
+    /// /etc/resolv.conf 路径（固定）。
     path: PathBuf,
+    /// 是否为符号链接，用于判断是系统管理还是手写文件。
     is_symlink: bool,
+    /// 若为符号链接，记录目标，帮助识别后端类型。
     target: Option<PathBuf>,
+    /// 读取内容用于启发式判断（比如 systemd-resolved/NetworkManager 标记）。
     contents: Option<String>,
 }
 
 /// 应用 DNS 配置。
 ///
-/// 优先使用 `resolvectl`，否则使用 `resolvconf`。
+/// 逻辑说明：
+/// 1) 先检测 resolv.conf 当前状态，推断“优先后端”。
+/// 2) 依序尝试 resolved/resolvconf/nmcli/直接写文件。
+/// 3) 任一后端成功则返回；失败则记录并继续下一后端。
 pub(super) async fn apply_dns(
     tun_name: &str,
     servers: &[IpAddr],
@@ -146,13 +160,15 @@ pub(super) async fn apply_dns(
                     }
                 }
             }
-            DnsBackendKind::ResolvConf => match apply_resolv_conf_file(&info, servers, search) {
-                Ok(state) => return Ok(state),
-                Err(err) => {
-                    log_net(format!("dns resolv.conf failed: {err}"));
-                    last_error = Some(err);
+            DnsBackendKind::ResolvConf => {
+                match apply_resolv_conf_file(&info, servers, search) {
+                    Ok(state) => return Ok(state),
+                    Err(err) => {
+                        log_net(format!("dns resolv.conf failed: {err}"));
+                        last_error = Some(err);
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -161,6 +177,8 @@ pub(super) async fn apply_dns(
 }
 
 /// 清理 DNS 配置。
+///
+/// 注意：必须与 apply_dns 使用的后端匹配，避免误删或破坏用户系统配置。
 pub(super) async fn cleanup_dns(tun_name: &str, state: DnsState) -> Result<(), NetworkError> {
     match state.backend {
         DnsBackend::Resolved => {
@@ -199,6 +217,8 @@ pub(super) async fn cleanup_dns(tun_name: &str, state: DnsState) -> Result<(), N
 }
 
 /// 解析命令路径，优先使用 PATH，其次尝试常见系统目录。
+///
+/// 避免硬编码路径，同时确保在 PATH 缺失时仍可找到系统工具。
 fn resolve_command(program: &str) -> Option<PathBuf> {
     if program.contains('/') {
         let path = PathBuf::from(program);
@@ -227,6 +247,8 @@ fn resolve_command(program: &str) -> Option<PathBuf> {
 }
 
 /// 执行命令并检查返回码。
+///
+/// 仅当命令返回非 0 时抛错并带上 stderr，便于定位系统调用失败原因。
 async fn run_cmd(program: &Path, args: &[String]) -> Result<(), NetworkError> {
     // 将实际执行的命令记录到日志，便于排查系统调用失败。
     log_command(program, args);
@@ -248,6 +270,8 @@ async fn run_cmd(program: &Path, args: &[String]) -> Result<(), NetworkError> {
 }
 
 /// 执行命令并通过 stdin 写入内容。
+///
+/// 适用于 resolvconf 这类需要从 stdin 接收配置内容的命令。
 async fn run_cmd_with_input(
     program: &Path,
     args: &[String],
@@ -285,6 +309,8 @@ fn log_command(program: &Path, args: &[String]) {
 }
 
 /// 组装可读的命令文本用于错误提示。
+///
+/// 注意：仅用于日志/错误，不进行 shell 转义。
 fn format_command(program: &Path, args: &[String]) -> String {
     let mut command = program.display().to_string();
     for arg in args {
@@ -300,6 +326,7 @@ async fn apply_resolved(
     servers: &[IpAddr],
     search: &[String],
 ) -> Result<(), NetworkError> {
+    // systemd-resolved 的 per-link DNS：仅作用于指定接口。
     if !servers.is_empty() {
         let mut args = vec!["dns".to_string(), tun_name.to_string()];
         for server in servers {
@@ -309,6 +336,7 @@ async fn apply_resolved(
     }
 
     if !servers.is_empty() || !search.is_empty() {
+        // 追加 ~. 代表全局路由域，确保默认走该接口解析。
         let mut domain_args = vec!["domain".to_string(), tun_name.to_string()];
         domain_args.extend(search.iter().cloned());
         if !servers.is_empty() && !search.iter().any(|domain| domain == "~.") {
@@ -326,6 +354,7 @@ async fn apply_resolvconf(
     servers: &[IpAddr],
     search: &[String],
 ) -> Result<(), NetworkError> {
+    // resolvconf/openresolv 通过 stdin 写入临时接口条目。
     let mut content = String::new();
     for server in servers {
         content.push_str("nameserver ");
@@ -343,6 +372,7 @@ async fn apply_resolvconf(
 }
 
 fn read_resolv_conf_info() -> ResolvConfInfo {
+    // 读取 resolv.conf 的符号链接与内容，用于推断系统 DNS 管理器。
     let path = PathBuf::from("/etc/resolv.conf");
     let metadata = fs::symlink_metadata(&path);
     let is_symlink = metadata
@@ -379,6 +409,7 @@ fn log_resolv_conf_info(info: &ResolvConfInfo) {
 }
 
 fn dns_backend_order(info: &ResolvConfInfo) -> Vec<DnsBackendKind> {
+    // 默认顺序：系统后端优先，手写 resolv.conf 作为最终兜底。
     let mut order = vec![
         DnsBackendKind::Resolved,
         DnsBackendKind::Resolvconf,
@@ -396,6 +427,7 @@ fn dns_backend_order(info: &ResolvConfInfo) -> Vec<DnsBackendKind> {
 }
 
 fn detect_preferred_backend(info: &ResolvConfInfo) -> Option<DnsBackendKind> {
+    // 通过 symlink 目标与内容标识判断当前实际生效的 DNS 管理器。
     let target = info
         .target
         .as_ref()
@@ -430,6 +462,7 @@ async fn apply_network_manager(
     servers: &[IpAddr],
     search: &[String],
 ) -> Result<DnsState, NetworkError> {
+    // 只处理 NM 管理的“活动”连接；无活动连接则认为不可用。
     let connections = nmcli_active_connections(nmcli).await?;
     if connections.is_empty() {
         return Err(NetworkError::DnsNotSupported);
@@ -440,6 +473,7 @@ async fn apply_network_manager(
     let v6_dns = v6_dns.join(",");
     let search_value = search.join(",");
 
+    // 逐个连接应用 DNS，并保存原状态用于回滚。
     let mut touched = Vec::new();
     for conn in connections {
         let state = read_nm_connection_state(nmcli, &conn.name, &conn.device).await?;
@@ -462,11 +496,45 @@ async fn apply_network_manager(
         touched.push(state);
     }
 
+    // 记录 NM 与 resolv.conf 的即时状态，便于判断是否成功写入。
+    log_nmcli_dns_snapshot(nmcli, &touched, "post-apply").await;
+    log_resolv_conf_snapshot(Path::new("/etc/resolv.conf"), "post-apply");
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    log_nmcli_dns_snapshot(nmcli, &touched, "after-wait").await;
+    log_resolv_conf_snapshot(Path::new("/etc/resolv.conf"), "after-wait");
+
     if let Err(err) = wait_for_resolv_conf_servers(Path::new("/etc/resolv.conf"), servers).await {
+        let mut final_err = err;
+        if matches!(final_err, NetworkError::DnsVerifyFailed(_)) {
+            // reapply 有时无法清掉 RDNSS 注入（如 fe80::1），尝试 down/up 强制刷新。
+            log_net("dns nmcli verify failed, attempting reconnect".to_string());
+            if let Err(err) = nmcli_reconnect(nmcli, &touched).await {
+                log_net(format!("dns nmcli reconnect failed: {err}"));
+            } else {
+                // 重新连接后再次采样并验证，确认是否仍残留意外 DNS。
+                log_nmcli_dns_snapshot(nmcli, &touched, "post-reconnect").await;
+                log_resolv_conf_snapshot(Path::new("/etc/resolv.conf"), "post-reconnect");
+                tokio::time::sleep(Duration::from_millis(1200)).await;
+                log_nmcli_dns_snapshot(nmcli, &touched, "after-reconnect-wait").await;
+                log_resolv_conf_snapshot(Path::new("/etc/resolv.conf"), "after-reconnect-wait");
+                match wait_for_resolv_conf_servers(Path::new("/etc/resolv.conf"), servers).await {
+                    Ok(()) => {
+                        return Ok(DnsState {
+                            backend: DnsBackend::NetworkManager {
+                                connections: touched,
+                            },
+                        });
+                    }
+                    Err(err) => {
+                        final_err = err;
+                    }
+                }
+            }
+        }
         for restored in touched.iter().rev() {
             let _ = restore_nm_connection(nmcli, restored).await;
         }
-        return Err(err);
+        return Err(final_err);
     }
 
     Ok(DnsState {
@@ -475,6 +543,7 @@ async fn apply_network_manager(
 }
 
 async fn nmcli_active_connections(nmcli: &Path) -> Result<Vec<NmConnection>, NetworkError> {
+    // 只筛选 activated 且非 loopback/tun/vpn 的连接，避免误改隧道自身。
     let args = vec![
         "-t".to_string(),
         "-f".to_string(),
@@ -523,6 +592,7 @@ async fn read_nm_connection_state(
     name: &str,
     device: &str,
 ) -> Result<NmConnectionState, NetworkError> {
+    // 读取连接现有 DNS 设置，供失败时回滚。
     let ipv4_dns = nmcli_get(nmcli, name, "ipv4.dns").await?;
     let ipv4_ignore_auto = normalize_nmcli_bool(nmcli_get(nmcli, name, "ipv4.ignore-auto-dns").await?);
     let ipv4_search = nmcli_get(nmcli, name, "ipv4.dns-search").await?;
@@ -579,6 +649,7 @@ async fn apply_nm_connection(
     v6_dns: &str,
     search: &str,
 ) -> Result<(), NetworkError> {
+    // ignore-auto-dns=yes + dns-priority=-42 让 NM 以手动 DNS 为“独占”优先级。
     let args = vec![
         "connection".to_string(),
         "modify".to_string(),
@@ -608,6 +679,7 @@ async fn restore_nm_connection(
     nmcli: &Path,
     state: &NmConnectionState,
 ) -> Result<(), NetworkError> {
+    // 用之前保存的值还原，尽量避免破坏用户网络配置。
     let args = vec![
         "connection".to_string(),
         "modify".to_string(),
@@ -634,6 +706,7 @@ async fn restore_nm_connection(
 }
 
 async fn nmcli_reapply(nmcli: &Path, device: &str) -> Result<(), NetworkError> {
+    // reapply 不会完全断网，但某些情况下不会清掉 RA 注入的 DNS。
     let args = vec![
         "device".to_string(),
         "reapply".to_string(),
@@ -642,11 +715,35 @@ async fn nmcli_reapply(nmcli: &Path, device: &str) -> Result<(), NetworkError> {
     run_cmd(nmcli, &args).await
 }
 
+async fn nmcli_reconnect(nmcli: &Path, connections: &[NmConnectionState]) -> Result<(), NetworkError> {
+    // down/up 会短暂断网，但可强制 NM 重新应用连接设置。
+    for conn in connections {
+        let args = vec![
+            "connection".to_string(),
+            "down".to_string(),
+            conn.name.clone(),
+        ];
+        run_cmd(nmcli, &args).await?;
+    }
+    for conn in connections {
+        let args = vec![
+            "connection".to_string(),
+            "up".to_string(),
+            conn.name.clone(),
+            "ifname".to_string(),
+            conn.device.clone(),
+        ];
+        run_cmd(nmcli, &args).await?;
+    }
+    Ok(())
+}
+
 fn apply_resolv_conf_file(
     info: &ResolvConfInfo,
     servers: &[IpAddr],
     search: &[String],
 ) -> Result<DnsState, NetworkError> {
+    // 仅允许在 resolv.conf 是普通文件时写入，避免与系统管理器冲突。
     if info.is_symlink {
         log_net("dns resolv.conf skipped: symlink".to_string());
         return Err(NetworkError::DnsNotSupported);
@@ -655,6 +752,7 @@ fn apply_resolv_conf_file(
     let original = fs::read_to_string(&info.path)?;
     let content = build_resolv_conf_contents(servers, search);
     write_resolv_conf(&info.path, &content)?;
+    // 写入后必须验证，防止部分系统立即覆盖导致“误判成功”。
     if let Err(err) = verify_resolv_conf_servers(&info.path, servers) {
         let _ = write_resolv_conf(&info.path, &original);
         return Err(err);
@@ -669,6 +767,7 @@ fn apply_resolv_conf_file(
 }
 
 fn build_resolv_conf_contents(servers: &[IpAddr], search: &[String]) -> String {
+    // 生成最小 resolv.conf，仅包含 search 与 nameserver。
     let mut content = String::from("# Generated by r-wg\n");
     if !search.is_empty() {
         content.push_str("search ");
@@ -685,6 +784,7 @@ fn build_resolv_conf_contents(servers: &[IpAddr], search: &[String]) -> String {
 
 fn write_resolv_conf(path: &Path, contents: &str) -> Result<(), NetworkError> {
     use std::io::Write;
+    // 直接截断写入，失败则抛出 io error。
     let mut file = fs::OpenOptions::new()
         .write(true)
         .truncate(true)
@@ -694,6 +794,7 @@ fn write_resolv_conf(path: &Path, contents: &str) -> Result<(), NetworkError> {
 }
 
 fn split_dns_servers(servers: &[IpAddr]) -> (Vec<String>, Vec<String>) {
+    // 分离 IPv4/IPv6，便于 nmcli 字段写入。
     let mut v4 = Vec::new();
     let mut v6 = Vec::new();
     for server in servers {
@@ -706,6 +807,7 @@ fn split_dns_servers(servers: &[IpAddr]) -> (Vec<String>, Vec<String>) {
 }
 
 async fn run_cmd_capture(program: &Path, args: &[String]) -> Result<String, NetworkError> {
+    // 需要 stdout 的命令，用于 nmcli 查询/调试。
     log_command(program, args);
     let output = Command::new(program).args(args).output().await?;
     if output.status.success() {
@@ -721,6 +823,7 @@ async fn run_cmd_capture(program: &Path, args: &[String]) -> Result<String, Netw
 }
 
 fn verify_resolv_conf_servers(path: &Path, servers: &[IpAddr]) -> Result<(), NetworkError> {
+    // 严格模式：不允许出现“额外的” DNS，避免泄漏或旁路解析。
     let expected_v4: HashSet<IpAddr> = servers
         .iter()
         .filter(|addr| matches!(addr, IpAddr::V4(_)))
@@ -793,6 +896,7 @@ async fn wait_for_resolv_conf_servers(
     path: &Path,
     servers: &[IpAddr],
 ) -> Result<(), NetworkError> {
+    // 允许系统异步写入（如 NM reapply/RA），短暂重试等待稳定态。
     let mut last_error: Option<NetworkError> = None;
     for _ in 0..5 {
         match verify_resolv_conf_servers(path, servers) {
@@ -809,7 +913,59 @@ async fn wait_for_resolv_conf_servers(
     )))
 }
 
+async fn log_nmcli_dns_snapshot(nmcli: &Path, connections: &[NmConnectionState], label: &str) {
+    // 辅助日志：用于判断 NM 是否已写入期望 DNS。
+    for state in connections {
+        let args = vec![
+            "-f".to_string(),
+            "IP4.DNS,IP6.DNS,IP4.DOMAIN,IP6.DOMAIN".to_string(),
+            "device".to_string(),
+            "show".to_string(),
+            state.device.clone(),
+        ];
+        match run_cmd_capture(nmcli, &args).await {
+            Ok(output) => {
+                let output = output.trim();
+                if output.is_empty() {
+                    log_net(format!(
+                        "dns nmcli {label}: device={} (empty)",
+                        state.device
+                    ));
+                } else {
+                    log_net(format!(
+                        "dns nmcli {label}: device={}\n{}",
+                        state.device, output
+                    ));
+                }
+            }
+            Err(err) => {
+                log_net(format!(
+                    "dns nmcli {label} failed: device={} err={err}",
+                    state.device
+                ));
+            }
+        }
+    }
+}
+
+fn log_resolv_conf_snapshot(path: &Path, label: &str) {
+    // resolv.conf 里的 nameserver 可能包含 zone index（%eth0），读时剥离。
+    match read_resolv_conf_servers(path) {
+        Ok((v4, v6)) => {
+            log_net(format!(
+                "dns resolv.conf {label}: v4=[{}] v6=[{}]",
+                format_ip_list(&v4),
+                format_ip_list(&v6)
+            ));
+        }
+        Err(err) => {
+            log_net(format!("dns resolv.conf {label} read failed: {err}"));
+        }
+    }
+}
+
 fn read_resolv_conf_servers(path: &Path) -> Result<(Vec<IpAddr>, Vec<IpAddr>), NetworkError> {
+    // 只解析 nameserver 行；忽略注释与空行。
     let contents = fs::read_to_string(path)?;
     let mut v4 = Vec::new();
     let mut v6 = Vec::new();
@@ -827,6 +983,7 @@ fn read_resolv_conf_servers(path: &Path) -> Result<(Vec<IpAddr>, Vec<IpAddr>), N
         let Some(value) = parts.next() else {
             continue;
         };
+        // IPv6 可能带有 scope（如 fe80::1%enp0s3），需去掉 % 后再解析。
         let ip_str = value.split('%').next().unwrap_or(value);
         let Ok(addr) = ip_str.parse::<IpAddr>() else {
             return Err(NetworkError::DnsVerifyFailed(format!(
