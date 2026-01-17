@@ -8,6 +8,11 @@ use r_wg::backend::wg::config;
 use super::super::format::{name_from_path, sanitize_file_stem};
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
 
+enum ImportOutcome {
+    Ok { name: String, text: String, path: PathBuf },
+    Err { path: PathBuf, message: String },
+}
+
 impl WgApp {
     /// 点击导入按钮后的处理。
     ///
@@ -20,7 +25,7 @@ impl WgApp {
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
-            multiple: false,
+            multiple: true,
             prompt: Some("Import WireGuard Config".into()),
         });
 
@@ -95,17 +100,18 @@ impl WgApp {
                     }
                 };
 
-                let Some(path) = paths.into_iter().next() else {
+                let paths: Vec<PathBuf> = paths.into_iter().collect();
+                if paths.is_empty() {
                     view.update(cx, |this, cx| {
                         this.set_error("No file selected");
                         cx.notify();
                     })
                     .ok();
                     return;
-                };
+                }
 
                 view.update_in(cx, |this, window, cx| {
-                    this.start_import_from_path(path, window, cx);
+                    this.start_import_from_paths(paths, window, cx);
                 })
                 .ok();
             })
@@ -121,59 +127,104 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // 从给定路径导入配置，读取与解析都在后台执行。
+        self.start_import_from_paths(vec![path], window, cx);
+    }
+
+    /// 从多个路径导入配置。
+    ///
+    /// 说明：读取与解析放到后台线程，完成后再回到 UI 线程写入模型并更新状态。
+    pub(crate) fn start_import_from_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            self.set_error("No file selected");
+            cx.notify();
+            return;
+        }
+
         self.busy = true;
-        self.set_status(format!("Loading {}", path.display()));
+        self.set_status(format!("Loading {} files...", paths.len()));
         cx.notify();
 
         let view = cx.weak_entity();
         window
             .spawn(cx, async move |cx| {
                 let read_task = cx.background_spawn(async move {
-                    let name = name_from_path(&path);
-                    let text = std::fs::read_to_string(&path)?;
-                    Ok::<_, std::io::Error>((name, text, path))
+                    let mut outcomes = Vec::new();
+                    for path in paths {
+                        let name = name_from_path(&path);
+                        match std::fs::read_to_string(&path) {
+                            Ok(text) => {
+                                if let Err(err) = config::parse_config(&text) {
+                                    outcomes.push(ImportOutcome::Err {
+                                        path,
+                                        message: format!("Invalid config: {err}"),
+                                    });
+                                } else {
+                                    outcomes.push(ImportOutcome::Ok { name, text, path });
+                                }
+                            }
+                            Err(err) => {
+                                outcomes.push(ImportOutcome::Err {
+                                    path,
+                                    message: format!("Read failed: {err}"),
+                                });
+                            }
+                        }
+                    }
+                    outcomes
                 });
 
-                let read_result = read_task.await;
-                match read_result {
-                    Ok((name, text, path)) => {
-                        // 先校验配置格式，失败时不写入列表。
-                        if let Err(err) = config::parse_config(&text) {
-                            view.update(cx, |this, cx| {
-                                this.busy = false;
-                                this.set_error(format!("Invalid config: {err}"));
-                                cx.notify();
-                            })
-                            .ok();
-                            return;
-                        }
+                let outcomes = read_task.await;
+                view.update_in(cx, |this, window, cx| {
+                    let mut imported = 0usize;
+                    let mut failed = 0usize;
+                    let mut last_error = None;
 
-                        view.update_in(cx, |this, window, cx| {
-                            this.busy = false;
-                            this.upsert_config(
-                                TunnelConfig {
-                                    name: name.clone(),
-                                    text,
-                                    source: ConfigSource::File(path),
-                                },
-                                window,
-                                cx,
-                            );
-                            this.set_status(format!("Imported {name}"));
-                            cx.notify();
-                        })
-                        .ok();
+                    for outcome in outcomes {
+                        match outcome {
+                            ImportOutcome::Ok { name, text, path } => {
+                                let name = if this.configs.iter().any(|cfg| cfg.name == name) {
+                                    this.next_config_name(&name)
+                                } else {
+                                    name
+                                };
+                                this.upsert_config(
+                                    TunnelConfig {
+                                        name: name.clone(),
+                                        text,
+                                        source: ConfigSource::File(path),
+                                    },
+                                    window,
+                                    cx,
+                                );
+                                imported += 1;
+                            }
+                            ImportOutcome::Err { path, message } => {
+                                failed += 1;
+                                last_error = Some(format!("{message} ({})", path.display()));
+                            }
+                        }
                     }
-                    Err(err) => {
-                        view.update(cx, |this, cx| {
-                            this.busy = false;
-                            this.set_error(format!("Read failed: {err}"));
-                            cx.notify();
-                        })
-                        .ok();
+
+                    this.busy = false;
+                    if imported == 0 && failed > 0 {
+                        this.set_error(
+                            last_error.unwrap_or_else(|| "Import failed".to_string()),
+                        );
+                    } else if failed > 0 {
+                        this.set_status(format!(
+                            "Imported {imported} configs, {failed} failed"
+                        ));
+                    } else {
+                        this.set_status(format!("Imported {imported} configs"));
                     }
-                }
+                    cx.notify();
+                })
+                .ok();
             })
             .detach();
     }

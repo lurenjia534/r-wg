@@ -3,8 +3,8 @@ use gpui::prelude::FluentBuilder;
 use gpui_component::{
     ActiveTheme as _, Selectable, Sizable as _, StyledExt as _,
     Icon, IconName,
-    button::{Button, ButtonGroup, ButtonVariants},
-    group_box::{GroupBox, GroupBoxVariants},
+    button::{Button, ButtonGroup},
+    group_box::GroupBox,
     h_flex, scroll::ScrollableElement, tag::Tag, v_flex,
 };
 

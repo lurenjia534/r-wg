@@ -10,8 +10,8 @@ use super::widgets::status_badge;
 use super::super::components::card;
 use super::super::state::WgApp;
 
-/// 中间配置面板：显示隧道名与配置内容输入框。
-pub(crate) fn render_center_panel(
+/// Configs 页面：显示隧道名与配置内容输入框。
+pub(crate) fn render_configs_editor(
     app: &mut WgApp,
     data: &ViewData,
     name_input: &Entity<InputState>,
@@ -68,7 +68,7 @@ pub(crate) fn render_center_panel(
                     .child(Input::new(config_input).appearance(false).bordered(false).h_full()),
             )
             .flex_grow(),
-        )
+    )
 }
 
 fn config_action_bar(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
