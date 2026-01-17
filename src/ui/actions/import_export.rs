@@ -1,6 +1,7 @@
+use std::collections::HashSet;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::Command;
-use std::io::ErrorKind;
 
 use gpui::{AppContext, Context, PathPromptOptions, Window};
 use r_wg::backend::wg::config;
@@ -183,24 +184,38 @@ impl WgApp {
                     let mut imported = 0usize;
                     let mut failed = 0usize;
                     let mut last_error = None;
+                    let mut last_imported_idx = None;
+                    let mut names_in_use: HashSet<String> = this
+                        .configs
+                        .iter()
+                        .map(|cfg| cfg.name.clone())
+                        .collect();
+                    let mut unique_name = |base: &str| {
+                        if !names_in_use.contains(base) {
+                            names_in_use.insert(base.to_string());
+                            return base.to_string();
+                        }
+                        for idx in 2..1000 {
+                            let candidate = format!("{base}-{idx}");
+                            if names_in_use.insert(candidate.clone()) {
+                                return candidate;
+                            }
+                        }
+                        let candidate = format!("{base}-{}", names_in_use.len() + 1);
+                        names_in_use.insert(candidate.clone());
+                        candidate
+                    };
 
                     for outcome in outcomes {
                         match outcome {
                             ImportOutcome::Ok { name, text, path } => {
-                                let name = if this.configs.iter().any(|cfg| cfg.name == name) {
-                                    this.next_config_name(&name)
-                                } else {
-                                    name
-                                };
-                                this.upsert_config(
-                                    TunnelConfig {
-                                        name: name.clone(),
-                                        text,
-                                        source: ConfigSource::File(path),
-                                    },
-                                    window,
-                                    cx,
-                                );
+                                let name = unique_name(&name);
+                                this.configs.push(TunnelConfig {
+                                    name: name.clone(),
+                                    text,
+                                    source: ConfigSource::File(path),
+                                });
+                                last_imported_idx = Some(this.configs.len() - 1);
                                 imported += 1;
                             }
                             ImportOutcome::Err { path, message } => {
@@ -210,6 +225,10 @@ impl WgApp {
                         }
                     }
 
+                    if let Some(idx) = last_imported_idx {
+                        this.selected = Some(idx);
+                        this.load_config_into_inputs(idx, window, cx);
+                    }
                     this.busy = false;
                     if imported == 0 && failed > 0 {
                         this.set_error(
