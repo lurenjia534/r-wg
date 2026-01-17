@@ -59,9 +59,9 @@ impl WgApp {
                                 .await;
 
                             match fallback {
-                                Ok(Some(path)) => {
+                                Ok(Some(paths)) => {
                                     view.update_in(cx, |this, window, cx| {
-                                        this.start_import_from_path(path, window, cx);
+                                        this.start_import_from_paths(paths, window, cx);
                                     })
                                     .ok();
                                 }
@@ -324,28 +324,31 @@ fn portal_missing_message(message: &str) -> bool {
         || lower.contains("portal not found")
 }
 
-fn pick_file_fallback(prompt: &str) -> Result<Option<PathBuf>, String> {
+fn pick_file_fallback(prompt: &str) -> Result<Option<Vec<PathBuf>>, String> {
     // 先尝试 zenity，再尝试 kdialog，避免强依赖某一种桌面环境。
-    if let Some(path) = pick_with_zenity(prompt)? {
-        return Ok(Some(path));
+    if let Some(paths) = pick_with_zenity(prompt)? {
+        return Ok(Some(paths));
     }
-    if let Some(path) = pick_with_kdialog(prompt)? {
-        return Ok(Some(path));
+    if let Some(paths) = pick_with_kdialog(prompt)? {
+        return Ok(Some(paths));
     }
     Err("No file picker available (xdg-desktop-portal/zenity/kdialog)".to_string())
 }
 
-fn pick_with_zenity(prompt: &str) -> Result<Option<PathBuf>, String> {
+fn pick_with_zenity(prompt: &str) -> Result<Option<Vec<PathBuf>>, String> {
     let title = format!("--title={prompt}");
-    pick_with_command("zenity", &["--file-selection", &title])
+    pick_with_command("zenity", &["--file-selection", "--multiple", "--separator=|", &title])
 }
 
-fn pick_with_kdialog(prompt: &str) -> Result<Option<PathBuf>, String> {
+fn pick_with_kdialog(prompt: &str) -> Result<Option<Vec<PathBuf>>, String> {
     let title = format!("--title={prompt}");
-    pick_with_command("kdialog", &["--getopenfilename", ".", &title])
+    pick_with_command(
+        "kdialog",
+        &["--getopenfilename", ".", "--multiple", "--separate-output", &title],
+    )
 }
 
-fn pick_with_command(command: &str, args: &[&str]) -> Result<Option<PathBuf>, String> {
+fn pick_with_command(command: &str, args: &[&str]) -> Result<Option<Vec<PathBuf>>, String> {
     let output = match Command::new(command).args(args).output() {
         Ok(output) => output,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
@@ -362,9 +365,28 @@ fn pick_with_command(command: &str, args: &[&str]) -> Result<Option<PathBuf>, St
         return Err(format!("{command} failed: {stderr}"));
     }
 
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let raw = stdout.trim();
+    if raw.is_empty() {
         return Ok(None);
     }
-    Ok(Some(PathBuf::from(path)))
+
+    let parts: Vec<&str> = if raw.contains('\n') {
+        raw.lines().collect()
+    } else if raw.contains('|') {
+        raw.split('|').collect()
+    } else {
+        vec![raw]
+    };
+
+    let paths: Vec<PathBuf> = parts
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .map(PathBuf::from)
+        .collect();
+
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(paths))
 }
