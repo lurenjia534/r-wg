@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use gpui::{AppContext, Context, Window};
 use r_wg::backend::wg::StartRequest;
+use r_wg::dns::DnsSelection;
 
 use super::super::permissions::start_permission_message;
 use super::super::state::WgApp;
@@ -66,9 +67,14 @@ impl WgApp {
 
         let engine = self.engine.clone();
         let view = cx.weak_entity();
+        let dns_selection = DnsSelection::new(self.dns_mode, self.dns_preset);
         window
             .spawn(cx, async move |cx| {
-                let request = StartRequest::new(selected.name.clone(), selected.text.clone());
+                let request = StartRequest::new(
+                    selected.name.clone(),
+                    selected.text.clone(),
+                    dns_selection,
+                );
                 let start_task = cx.background_spawn(async move { engine.start(request) });
                 let result = start_task.await;
                 view.update(cx, |this, cx| {

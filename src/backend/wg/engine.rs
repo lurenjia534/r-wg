@@ -10,6 +10,7 @@ use std::time::Duration;
 use gotatun::device::{self, Device, DefaultDeviceTransports};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::dns::{apply_dns_selection, DnsSelection};
 use super::config::{self, ConfigError};
 use crate::log;
 use crate::platform;
@@ -25,14 +26,21 @@ pub struct StartRequest {
     pub tun_name: String,
     /// WireGuard 配置文本（含 wg-quick 兼容字段）。
     pub config_text: String,
+    /// DNS 选择（全局 UI 状态传入）。
+    pub dns: DnsSelection,
 }
 
 impl StartRequest {
     /// 便捷构造器。
-    pub fn new(tun_name: impl Into<String>, config_text: impl Into<String>) -> Self {
+    pub fn new(
+        tun_name: impl Into<String>,
+        config_text: impl Into<String>,
+        dns: DnsSelection,
+    ) -> Self {
         Self {
             tun_name: tun_name.into(),
             config_text: config_text.into(),
+            dns,
         }
     }
 }
@@ -255,6 +263,11 @@ impl EngineState {
 
         // 解析配置并映射为 gotatun 的 DeviceSettings。
         let mut parsed = config::parse_config(&request.config_text)?;
+        apply_dns_selection(
+            &mut parsed.interface.dns_servers,
+            &mut parsed.interface.dns_search,
+            request.dns,
+        );
         if wants_full_tunnel(&parsed.peers) && parsed.interface.fwmark.is_none() {
             parsed.interface.fwmark = Some(DEFAULT_FWMARK);
             log_engine(format!("auto fwmark: 0x{DEFAULT_FWMARK:x}"));

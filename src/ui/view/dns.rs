@@ -8,7 +8,8 @@ use gpui_component::{
     h_flex, scroll::ScrollableElement, tag::Tag, v_flex,
 };
 
-use super::super::state::{DnsMode, DnsPreset, WgApp};
+use super::super::state::WgApp;
+use r_wg::dns::{DnsMode, DnsPreset};
 
 /// DNS 页面：模式选择 + 预设 DNS 卡片。
 pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
@@ -109,39 +110,9 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                     .grid()
                     .grid_cols(2)
                     .gap_3()
-                    .child(dns_card(
-                        app,
-                        cx,
-                        DnsCardData {
-                            preset: DnsPreset::CloudflareStandard,
-                            title: "Standard",
-                            note: "No filtering",
-                            ipv4: &["1.1.1.1", "1.0.0.1"],
-                            ipv6: &["2606:4700:4700::1111", "2606:4700:4700::1001"],
-                        },
-                    ))
-                    .child(dns_card(
-                        app,
-                        cx,
-                        DnsCardData {
-                            preset: DnsPreset::CloudflareMalware,
-                            title: "Malware Blocking",
-                            note: "Families - Malware",
-                            ipv4: &["1.1.1.2", "1.0.0.2"],
-                            ipv6: &["2606:4700:4700::1112", "2606:4700:4700::1002"],
-                        },
-                    ))
-                    .child(dns_card(
-                        app,
-                        cx,
-                        DnsCardData {
-                            preset: DnsPreset::CloudflareMalwareAdult,
-                            title: "Malware + Adult",
-                            note: "Families - Malware + Adult",
-                            ipv4: &["1.1.1.3", "1.0.0.3"],
-                            ipv6: &["2606:4700:4700::1113", "2606:4700:4700::1003"],
-                        },
-                    )),
+                    .child(dns_card(app, cx, DnsPreset::CloudflareStandard))
+                    .child(dns_card(app, cx, DnsPreset::CloudflareMalware))
+                    .child(dns_card(app, cx, DnsPreset::CloudflareMalwareAdult)),
             );
 
         let adguard_cards = v_flex()
@@ -152,39 +123,9 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                     .grid()
                     .grid_cols(2)
                     .gap_3()
-                    .child(dns_card(
-                        app,
-                        cx,
-                        DnsCardData {
-                            preset: DnsPreset::AdguardDefault,
-                            title: "Default",
-                            note: "Ads/trackers blocked",
-                            ipv4: &["94.140.14.14", "94.140.15.15"],
-                            ipv6: &["2a10:50c0::ad1:ff", "2a10:50c0::ad2:ff"],
-                        },
-                    ))
-                    .child(dns_card(
-                        app,
-                        cx,
-                        DnsCardData {
-                            preset: DnsPreset::AdguardUnfiltered,
-                            title: "Unfiltered",
-                            note: "No filtering",
-                            ipv4: &["94.140.14.140", "94.140.14.141"],
-                            ipv6: &["2a10:50c0::1:ff", "2a10:50c0::2:ff"],
-                        },
-                    ))
-                    .child(dns_card(
-                        app,
-                        cx,
-                        DnsCardData {
-                            preset: DnsPreset::AdguardFamily,
-                            title: "Family",
-                            note: "Ads/trackers/adult blocked",
-                            ipv4: &["94.140.14.15", "94.140.15.16"],
-                            ipv6: &["2a10:50c0::bad1:ff", "2a10:50c0::bad2:ff"],
-                        },
-                    )),
+                    .child(dns_card(app, cx, DnsPreset::AdguardDefault))
+                    .child(dns_card(app, cx, DnsPreset::AdguardUnfiltered))
+                    .child(dns_card(app, cx, DnsPreset::AdguardFamily)),
             );
 
         content = content.child(cloudflare_cards).child(adguard_cards);
@@ -221,14 +162,6 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         )
 }
 
-struct DnsCardData {
-    preset: DnsPreset,
-    title: &'static str,
-    note: &'static str,
-    ipv4: &'static [&'static str],
-    ipv6: &'static [&'static str],
-}
-
 fn dns_section_title(title: &'static str, subtitle: &'static str) -> Div {
     h_flex()
         .items_center()
@@ -237,8 +170,9 @@ fn dns_section_title(title: &'static str, subtitle: &'static str) -> Div {
         .child(Tag::secondary().small().child(subtitle))
 }
 
-fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, data: DnsCardData) -> Stateful<Div> {
-    let selected = app.dns_preset == data.preset;
+fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stateful<Div> {
+    let info = preset.info();
+    let selected = app.dns_preset == preset;
     let border_color = if selected {
         cx.theme().accent
     } else {
@@ -266,7 +200,7 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, data: DnsCardData) -> Stat
         .bg(background)
         .cursor_pointer()
         .relative()
-        .id(dns_preset_id(data.preset))
+        .id(dns_preset_id(preset))
         .child(
             h_flex()
                 .items_center()
@@ -274,12 +208,12 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, data: DnsCardData) -> Stat
                 .child(
                     v_flex()
                         .gap_1()
-                        .child(div().text_sm().text_color(title_color).child(data.title))
+                        .child(div().text_sm().text_color(title_color).child(info.title))
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(data.note),
+                                .child(info.note),
                         ),
                 )
                 .child(if selected {
@@ -301,8 +235,8 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, data: DnsCardData) -> Stat
                     div().into_any_element()
                 }),
         )
-        .child(dns_address_block("IPv4", data.ipv4, cx))
-        .child(dns_address_block("IPv6", data.ipv6, cx));
+        .child(dns_address_block("IPv4", info.ipv4, cx))
+        .child(dns_address_block("IPv6", info.ipv6, cx));
 
     if selected {
         card = card.child(
@@ -318,7 +252,7 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, data: DnsCardData) -> Stat
     }
 
     card.on_click(cx.listener(move |this, _, _, cx| {
-        this.dns_preset = data.preset;
+        this.dns_preset = preset;
         cx.notify();
     }))
 }

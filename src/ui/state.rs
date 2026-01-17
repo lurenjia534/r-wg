@@ -5,6 +5,7 @@ use std::time::Instant;
 use gpui::{Entity, SharedString};
 use gpui_component::{IconName, input::InputState};
 use r_wg::backend::wg::{Engine, PeerStats};
+use r_wg::dns::{DnsMode, DnsPreset};
 
 /// 速度曲线采样点数量（固定窗口）。
 pub(crate) const SPARKLINE_SAMPLES: usize = 24;
@@ -43,37 +44,6 @@ impl TunnelConfig {
 pub(crate) enum RightTab {
     Status,
     Logs,
-}
-
-/// DNS 页面模式（仅 UI 状态，后续可接后端）。
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DnsMode {
-    FollowConfig,
-    UseSystemDns,
-    AutoFillMissingFamilies,
-    OverrideAll,
-}
-
-impl DnsMode {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::FollowConfig => "Follow Config",
-            Self::UseSystemDns => "System dns",
-            Self::AutoFillMissingFamilies => "Auto Fill Missing Families",
-            Self::OverrideAll => "Override All",
-        }
-    }
-}
-
-/// DNS 预设提供商（仅 UI 选择，后续可接后端）。
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DnsPreset {
-    CloudflareStandard,
-    CloudflareMalware,
-    CloudflareMalwareAdult,
-    AdguardDefault,
-    AdguardUnfiltered,
-    AdguardFamily,
 }
 
 /// 左侧导航栏的选中项。
