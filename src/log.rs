@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
 
+use chrono::Local;
+
 const MAX_LOG_LINES: usize = 2000;
 
 #[derive(Default)]
@@ -22,7 +24,8 @@ pub fn enabled() -> bool {
 }
 
 pub fn log(scope: &str, message: String) {
-    let line = format!("[r-wg][{scope}] {message}");
+    let timestamp = format_timestamp();
+    let line = format!("[{timestamp}][r-wg][{scope}] {message}");
     if let Ok(mut buffer) = buffer().lock() {
         if buffer.lines.len() >= MAX_LOG_LINES {
             buffer.lines.pop_front();
@@ -45,4 +48,9 @@ pub fn clear() {
     if let Ok(mut buffer) = buffer().lock() {
         buffer.lines.clear();
     }
+}
+
+fn format_timestamp() -> String {
+    // Local timestamp for human-readable logs.
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
