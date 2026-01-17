@@ -1,6 +1,7 @@
 // UI 视图入口：负责把三栏布局拼装起来，并将派生数据交给各面板渲染。
 mod center_panel;
 mod data;
+mod dns;
 mod left_panel;
 mod logs;
 mod overview;
@@ -64,6 +65,7 @@ impl Render for WgApp {
                         .child(right_panel::render_right_panel(self, &data, cx))
                         .into_any_element(),
                     SidebarItem::Logs => logs::render_logs(self, window, cx).into_any_element(),
+                    SidebarItem::Dns => dns::render_dns(self, cx).into_any_element(),
                     _ => overview::render_placeholder(cx).into_any_element(),
                 };
 
@@ -72,10 +74,18 @@ impl Render for WgApp {
                     .flex_col()
                     .gap_3()
                     .flex_grow()
+                    .min_h(px(0.0))
                     .p_3()
                     // 顶部工具栏
                     .child(top_bar::render_top_bar(self, &data, cx))
-                    .child(main_body)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .child(main_body),
+                    )
             })
     }
 }

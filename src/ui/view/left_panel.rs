@@ -66,6 +66,7 @@ pub(crate) fn render_left_panel(
             &[
                 SidebarItem::Proxies,
                 SidebarItem::Rules,
+                SidebarItem::Dns,
                 SidebarItem::Providers,
             ],
             app,

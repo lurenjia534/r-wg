@@ -6,14 +6,17 @@ use gpui::{Entity, SharedString};
 use gpui_component::{IconName, input::InputState};
 use r_wg::backend::wg::{Engine, PeerStats};
 
+/// 速度曲线采样点数量（固定窗口）。
 pub(crate) const SPARKLINE_SAMPLES: usize = 24;
 
+/// 配置来源：文件或粘贴文本。
 #[derive(Clone)]
 pub(crate) enum ConfigSource {
     File(PathBuf),
     Paste,
 }
 
+/// 隧道配置条目：用于配置列表与编辑器。
 #[derive(Clone)]
 pub(crate) struct TunnelConfig {
     pub(crate) name: String,
@@ -42,6 +45,37 @@ pub(crate) enum RightTab {
     Logs,
 }
 
+/// DNS 页面模式（仅 UI 状态，后续可接后端）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DnsMode {
+    FollowConfig,
+    UseSystemDns,
+    AutoFillMissingFamilies,
+    OverrideAll,
+}
+
+impl DnsMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::FollowConfig => "Follow Config",
+            Self::UseSystemDns => "System dns",
+            Self::AutoFillMissingFamilies => "Auto Fill Missing Families",
+            Self::OverrideAll => "Override All",
+        }
+    }
+}
+
+/// DNS 预设提供商（仅 UI 选择，后续可接后端）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DnsPreset {
+    CloudflareStandard,
+    CloudflareMalware,
+    CloudflareMalwareAdult,
+    AdguardDefault,
+    AdguardUnfiltered,
+    AdguardFamily,
+}
+
 /// 左侧导航栏的选中项。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SidebarItem {
@@ -51,6 +85,7 @@ pub(crate) enum SidebarItem {
     Logs,
     Proxies,
     Rules,
+    Dns,
     Providers,
     Configs,
     Advanced,
@@ -67,6 +102,7 @@ impl SidebarItem {
             Self::Logs => "Logs",
             Self::Proxies => "Proxies",
             Self::Rules => "Rules",
+            Self::Dns => "DNS",
             Self::Providers => "Providers",
             Self::Configs => "Configs",
             Self::Advanced => "Advanced",
@@ -83,6 +119,7 @@ impl SidebarItem {
             Self::Logs => IconName::SquareTerminal,
             Self::Proxies => IconName::Globe,
             Self::Rules => IconName::Menu,
+            Self::Dns => IconName::Search,
             Self::Providers => IconName::Building2,
             Self::Configs => IconName::File,
             Self::Advanced => IconName::Settings2,
@@ -93,23 +130,32 @@ impl SidebarItem {
 }
 
 pub(crate) struct WgApp {
+    // 后端与配置列表。
     pub(crate) engine: Engine,
     pub(crate) configs: Vec<TunnelConfig>,
     pub(crate) selected: Option<usize>,
+    // 输入控件句柄（懒创建，避免提前绑定窗口上下文）。
     pub(crate) name_input: Option<Entity<InputState>>,
     pub(crate) config_input: Option<Entity<InputState>>,
     pub(crate) log_input: Option<Entity<InputState>>,
+    // 日志状态与提示。
     pub(crate) log_auto_follow: bool,
     pub(crate) status: SharedString,
     pub(crate) last_error: Option<SharedString>,
+    // 运行与连接状态。
     pub(crate) running: bool,
     pub(crate) busy: bool,
     pub(crate) running_name: Option<String>,
     pub(crate) peer_stats: Vec<PeerStats>,
+    // 统计展示（用于右侧面板与图表）。
     pub(crate) stats_note: SharedString,
     pub(crate) stats_generation: u64,
+    // 页面选择与模式开关。
     pub(crate) right_tab: RightTab,
+    pub(crate) dns_mode: DnsMode,
+    pub(crate) dns_preset: DnsPreset,
     pub(crate) sidebar_active: SidebarItem,
+    // 速率/流量采样窗口。
     pub(crate) started_at: Option<Instant>,
     pub(crate) last_stats_at: Option<Instant>,
     pub(crate) last_rx_bytes: u64,
@@ -144,6 +190,8 @@ impl WgApp {
             stats_note: "Peer stats unavailable".into(),
             stats_generation: 0,
             right_tab: RightTab::Status,
+            dns_mode: DnsMode::FollowConfig,
+            dns_preset: DnsPreset::CloudflareStandard,
             sidebar_active: SidebarItem::Overview,
             started_at: None,
             last_stats_at: None,
@@ -163,6 +211,7 @@ impl WgApp {
 }
 
 fn init_rate_history() -> VecDeque<f32> {
+    // 预填充 0，保持曲线长度稳定。
     let mut history = VecDeque::with_capacity(SPARKLINE_SAMPLES);
     for _ in 0..SPARKLINE_SAMPLES {
         history.push_back(0.0);
