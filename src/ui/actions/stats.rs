@@ -5,7 +5,7 @@ use gpui::{AppContext, Context};
 use r_wg::backend::wg::EngineStats;
 use r_wg::log;
 
-use super::super::state::{WgApp, SPARKLINE_SAMPLES};
+use super::super::state::{SidebarItem, WgApp, SPARKLINE_SAMPLES};
 
 impl WgApp {
     /// 启动统计轮询。
@@ -19,14 +19,42 @@ impl WgApp {
         let generation = self.stats_generation;
         let engine = self.engine.clone();
         let poll_interval = Duration::from_secs(2);
+        // Proxies 列表在滚动时非常敏感，降低轮询频率并跳过统计刷新，
+        // 避免每次 notify 触发大列表重建造成卡顿。
+        let proxies_interval = Duration::from_secs(6);
 
         // 异步轮询 peer 统计，避免阻塞 UI。
         cx.spawn(async move |view, cx| {
             loop {
-                cx.background_executor().timer(poll_interval).await;
+                // 先在 UI 线程读取状态，避免在后台线程里直接访问视图数据。
+                let (should_continue, in_proxies) = view
+                    .update(cx, |this, _| {
+                        if !this.running || this.stats_generation != generation {
+                            return (false, false);
+                        }
+                        (true, this.sidebar_active == SidebarItem::Proxies)
+                    })
+                    .unwrap_or((false, false));
+                if !should_continue {
+                    break;
+                }
+
+                // Proxies 页面：降频并跳过 stats 拉取与 notify。
+                let interval = if in_proxies {
+                    proxies_interval
+                } else {
+                    poll_interval
+                };
+                cx.background_executor().timer(interval).await;
+                if in_proxies {
+                    // 直接进入下一轮等待，避免触发统计刷新和 UI 重绘。
+                    continue;
+                }
+
                 let engine = engine.clone();
                 let result = cx.background_spawn(async move { engine.stats() }).await;
 
+                // 将统计结果回写 UI 状态并 notify，触发依赖 stats 的视图刷新。
                 let continue_polling = view
                     .update(cx, |this, cx| {
                         if !this.running || this.stats_generation != generation {

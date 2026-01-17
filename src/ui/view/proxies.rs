@@ -1,27 +1,111 @@
+use std::rc::Rc;
+
 use gpui::*;
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
-    button::{Button, ButtonVariants},
-    h_flex, scroll::ScrollableElement, tag::Tag, v_flex,
+    VirtualListScrollHandle, button::{Button, ButtonVariants},
+    h_flex, scroll::Scrollbar, tag::Tag, v_virtual_list,
 };
 
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
 
+// 卡片固定尺寸用于虚拟化行高计算与渲染稳定性。
+const PROXIES_CARD_WIDTH: f32 = 240.0;
+const PROXIES_CARD_HEIGHT: f32 = 72.0;
+const PROXIES_CARD_GAP: f32 = 8.0;
+// 估算内容区宽度：减去左侧导航与主内容内边距。
+const PROXIES_SIDEBAR_WIDTH: f32 = 230.0;
+const PROXIES_HORIZONTAL_PADDING: f32 = 48.0;
+// 复用滚动状态，避免每次重建滚动位置丢失。
+const PROXIES_SCROLL_STATE_ID: &str = "proxies-scroll";
+
+fn proxies_columns(window: &Window) -> usize {
+    let viewport_width = window.viewport_size().width;
+    // 可用宽度的估算值：窗口宽度减去左侧栏与内边距。
+    let available_width =
+        viewport_width - px(PROXIES_SIDEBAR_WIDTH + PROXIES_HORIZONTAL_PADDING);
+    let available_width = available_width.max(px(PROXIES_CARD_WIDTH));
+    let card_width = px(PROXIES_CARD_WIDTH);
+    let gap = px(PROXIES_CARD_GAP);
+    // 根据卡片宽度 + 间距估算列数，至少 1 列。
+    ((available_width + gap) / (card_width + gap))
+        .floor()
+        .max(1.0) as usize
+}
+
 /// Proxies 页面：配置列表入口，用于快速选择隧道。
-pub(crate) fn render_proxies(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
-    let mut list = div().flex().flex_wrap().gap_2();
-    if app.configs.is_empty() {
-        list = list.child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("No configs yet"),
-        );
+pub(crate) fn render_proxies(
+    app: &mut WgApp,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) -> Div {
+    let list_scroll = if app.configs.is_empty() {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("No configs yet"),
+            )
     } else {
-        for (idx, config) in app.configs.iter().enumerate() {
-            list = list.child(config_list_item(app, idx, config, cx));
-        }
-    }
+        let columns = proxies_columns(window);
+        // 以“行”为虚拟化单位，每行放 columns 张卡片。
+        let row_count = (app.configs.len() + columns - 1) / columns;
+        let row_height = px(PROXIES_CARD_HEIGHT);
+        // 虚拟化列表需要每行的固定高度；宽度由布局自动撑满。
+        let item_sizes = Rc::new(vec![size(px(0.0), row_height); row_count]);
+        let scroll_handle = window
+            .use_keyed_state(PROXIES_SCROLL_STATE_ID, cx, |_, _| ScrollHandle::default())
+            .read(cx)
+            .clone();
+        let scroll_handle = VirtualListScrollHandle::from(scroll_handle);
+
+        let list = v_virtual_list(
+            cx.entity(),
+            "proxy-virtual-list",
+            item_sizes,
+            move |this, visible_range, _window, cx| {
+                // 仅渲染当前可见行，显著减少 DOM/布局/绘制成本。
+                visible_range
+                    .map(|row_ix| {
+                        let start = row_ix * columns;
+                        let end = (start + columns).min(this.configs.len());
+                        let mut row = div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .w_full()
+                            .h(row_height);
+                        for idx in start..end {
+                            let config = &this.configs[idx];
+                            row = row.child(config_list_item(this, idx, config, cx));
+                        }
+                        row
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .gap_2()
+        .w_full()
+        .flex_1()
+        // 绑定滚动句柄，支持滚动条与滚动位置同步。
+        .track_scroll(&scroll_handle);
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .relative()
+            .child(list)
+            .child(Scrollbar::vertical(&scroll_handle))
+    };
 
     div()
         .flex()
@@ -52,11 +136,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                         })),
                 ),
         )
-        .child(
-            list.flex_1()
-                .min_h(px(0.0))
-                .overflow_y_scrollbar(),
-        )
+        .child(list_scroll)
 }
 
 fn config_list_item(
@@ -97,14 +177,17 @@ fn config_list_item(
         .border_1()
         .border_color(border_color)
         .bg(bg)
-        .shadow_sm()
-        .w(px(240.0))
-        .min_h(px(64.0))
+        // 阴影改为更轻量的样式，降低 GPU 绘制负担。
+        .shadow_xs()
+        .w(px(PROXIES_CARD_WIDTH))
+        .h(px(PROXIES_CARD_HEIGHT))
         .child(
             div()
                 .text_sm()
                 .font_semibold()
                 .text_color(name_color)
+                // 避免长名称导致多行布局波动，保持行高稳定。
+                .truncate()
                 .child(config.name.clone()),
         );
 

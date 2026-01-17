@@ -65,7 +65,9 @@ impl Render for WgApp {
                         ))
                         .child(right_panel::render_right_panel(self, &data, cx))
                         .into_any_element(),
-                    SidebarItem::Proxies => proxies::render_proxies(self, cx).into_any_element(),
+                    SidebarItem::Proxies => {
+                        proxies::render_proxies(self, window, cx).into_any_element()
+                    }
                     SidebarItem::Logs => logs::render_logs(self, window, cx).into_any_element(),
                     SidebarItem::Dns => dns::render_dns(self, cx).into_any_element(),
                     _ => overview::render_placeholder(cx).into_any_element(),
