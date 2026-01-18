@@ -39,6 +39,9 @@ pub(crate) fn render_proxies(
     window: &mut Window,
     cx: &mut Context<WgApp>,
 ) -> Div {
+    let nodes_tag = Tag::secondary()
+        .small()
+        .child(format!("{} nodes", app.configs.len()));
     let list_scroll = if app.configs.is_empty() {
         div()
             .flex()
@@ -125,15 +128,21 @@ pub(crate) fn render_proxies(
                 .justify_between()
                 .child(div().text_lg().child("Tunnels"))
                 .child(
-                    Button::new("cfg-list-import")
-                        .icon(Icon::new(IconName::FolderOpen).size_3())
-                        .label("Import")
-                        .outline()
-                        .xsmall()
-                        .disabled(app.busy)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.handle_import_click(window, cx);
-                        })),
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(nodes_tag)
+                        .child(
+                            Button::new("cfg-list-import")
+                                .icon(Icon::new(IconName::FolderOpen).size_3())
+                                .label("Import")
+                                .outline()
+                                .xsmall()
+                                .disabled(app.busy)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.handle_import_click(window, cx);
+                                })),
+                        ),
                 ),
         )
         .child(list_scroll)
