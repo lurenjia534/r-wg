@@ -3,8 +3,8 @@ use std::rc::Rc;
 use gpui::*;
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
-    VirtualListScrollHandle, button::{Button, ButtonVariants},
-    h_flex, input::Input, scroll::Scrollbar, tag::Tag, v_virtual_list,
+    VirtualListScrollHandle, button::Button, h_flex, input::Input, scroll::Scrollbar, tag::Tag,
+    v_virtual_list,
 };
 
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
@@ -45,22 +45,33 @@ pub(crate) fn render_proxies(
         .proxy_search_input
         .clone()
         .expect("proxy search input should be initialized");
-    let query = search_input.read(cx).value().trim().to_lowercase();
-    // 先生成过滤后的索引列表，后续虚拟化按索引渲染，避免复制配置内容。
     let total_nodes = app.configs.len();
-    let filtered_indices: Vec<usize> = if query.is_empty() {
-        (0..total_nodes).collect()
+    let query = search_input.read(cx).value();
+    let query = query.as_ref().trim().to_lowercase();
+    let use_filter = !query.is_empty();
+    // 过滤逻辑说明：
+    // - 查询为空时不构建索引，直接按原列表渲染，减少无意义的遍历；
+    // - 查询不为空时，缓存过滤结果，只有“查询串变化或总数变化”才重新计算。
+    let filtered_nodes = if use_filter {
+        if app.proxy_filter_query != query || app.proxy_filter_total != total_nodes {
+            app.proxy_filter_query = query.clone();
+            app.proxy_filter_total = total_nodes;
+            app.proxy_filtered_indices = app
+                .configs
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, config)| {
+                    config
+                        .name_lower
+                        .contains(&query)
+                        .then_some(idx)
+                })
+                .collect();
+        }
+        app.proxy_filtered_indices.len()
     } else {
-        app.configs
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, config)| {
-                let name = config.name.to_lowercase();
-                name.contains(&query).then_some(idx)
-            })
-            .collect()
+        total_nodes
     };
-    let filtered_nodes = filtered_indices.len();
     // 查询为空显示总数；查询有值时显示“匹配/总数”。
     let nodes_text = if query.is_empty() {
         format!("{total_nodes} nodes")
@@ -82,7 +93,7 @@ pub(crate) fn render_proxies(
                     .text_color(cx.theme().muted_foreground)
                     .child("No configs yet"),
             )
-    } else if filtered_indices.is_empty() {
+    } else if use_filter && filtered_nodes == 0 {
         // 有配置但没有匹配项时给出提示。
         div()
             .flex()
@@ -97,8 +108,6 @@ pub(crate) fn render_proxies(
                     .child("No matching nodes"),
             )
     } else {
-        // 将过滤后的索引共享给虚拟化渲染闭包。
-        let filtered_indices = Rc::new(filtered_indices);
         let columns = proxies_columns(window);
         // 以“行”为虚拟化单位，每行放 columns 张卡片。
         let row_count = (filtered_nodes + columns - 1) / columns;
@@ -117,11 +126,16 @@ pub(crate) fn render_proxies(
             item_sizes,
             move |this, visible_range, _window, cx| {
                 // 仅渲染当前可见行，显著减少 DOM/布局/绘制成本。
-                let indices = filtered_indices.as_ref();
+                let indices = &this.proxy_filtered_indices;
+                let total = if use_filter {
+                    indices.len()
+                } else {
+                    this.configs.len()
+                };
                 visible_range
                     .map(|row_ix| {
                         let start = row_ix * columns;
-                        let end = (start + columns).min(indices.len());
+                        let end = (start + columns).min(total);
                         let mut row = div()
                             .flex()
                             .flex_row()
@@ -130,7 +144,7 @@ pub(crate) fn render_proxies(
                             .h(row_height);
                         // 从索引映射到真实配置，保证过滤后仍可正确选择。
                         for idx in start..end {
-                            let config_idx = indices[idx];
+                            let config_idx = if use_filter { indices[idx] } else { idx };
                             let config = &this.configs[config_idx];
                             row = row.child(config_list_item(this, config_idx, config, cx));
                         }
@@ -156,7 +170,7 @@ pub(crate) fn render_proxies(
             .child(Scrollbar::vertical(&scroll_handle))
     };
 
-    div()
+    let panel = div()
         .flex()
         .flex_col()
         .gap_3()
@@ -205,8 +219,8 @@ pub(crate) fn render_proxies(
                                 })),
                         ),
                 ),
-        )
-        .child(list_scroll)
+        );
+    panel.child(list_scroll)
 }
 
 fn config_list_item(
@@ -267,7 +281,7 @@ fn config_list_item(
         item = item.cursor_pointer();
     }
 
-    let mut item = item.id(("config-item", idx));
+    let item = item.id(("config-item", idx));
     item.on_click(cx.listener(move |this, _event, window, cx| {
         if this.busy {
             return;

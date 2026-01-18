@@ -1,10 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 
 use gpui::{Entity, SharedString};
 use gpui_component::{IconName, input::InputState};
-use r_wg::backend::wg::{Engine, PeerStats};
+use r_wg::backend::wg::{config, Engine, PeerStats};
 use r_wg::dns::{DnsMode, DnsPreset};
 
 /// 速度曲线采样点数量（固定窗口）。
@@ -20,8 +20,13 @@ pub(crate) enum ConfigSource {
 /// 隧道配置条目：用于配置列表与编辑器。
 #[derive(Clone)]
 pub(crate) struct TunnelConfig {
+    /// 配置名称（用于列表与启动）。
     pub(crate) name: String,
-    pub(crate) text: String,
+    /// 小写版本的名称，用于搜索过滤，避免每次渲染都重复分配/转换。
+    pub(crate) name_lower: String,
+    /// 配置文本：文件导入时懒加载，因此可能为空。
+    pub(crate) text: Option<SharedString>,
+    /// 配置来源：文件路径或粘贴内容。
     pub(crate) source: ConfigSource,
 }
 
@@ -38,6 +43,20 @@ impl TunnelConfig {
             ConfigSource::Paste => format!("{} (pasted)", self.name),
         }
     }
+}
+
+/// 选中配置的解析缓存，避免渲染时重复解析。
+pub(crate) struct ParseCache {
+    pub(crate) name: String,
+    pub(crate) text_hash: u64,
+    pub(crate) parsed: Option<config::WireGuardConfig>,
+    pub(crate) error: Option<String>,
+}
+
+/// 最近一次载入到输入框的配置，避免重复 set_value。
+pub(crate) struct LoadedConfigState {
+    pub(crate) name: String,
+    pub(crate) text_hash: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -104,6 +123,24 @@ pub(crate) struct WgApp {
     pub(crate) engine: Engine,
     pub(crate) configs: Vec<TunnelConfig>,
     pub(crate) selected: Option<usize>,
+    /// 正在异步加载的配置索引（用于防止 UI 写入旧数据）。
+    pub(crate) loading_config: Option<usize>,
+    /// 正在异步加载的配置路径（用于防止索引复用带来的错写）。
+    pub(crate) loading_config_path: Option<PathBuf>,
+    /// 解析缓存：只缓存“当前选中”的解析结果，避免每次渲染都解析。
+    pub(crate) parse_cache: Option<ParseCache>,
+    /// 最近一次写入输入框的配置标记，用于跳过重复 set_value。
+    pub(crate) loaded_config: Option<LoadedConfigState>,
+    /// 文本缓存：按路径缓存最近读取的配置文本，减少重复 IO。
+    pub(crate) config_text_cache: HashMap<PathBuf, SharedString>,
+    /// 文本缓存顺序：用于简易 LRU 淘汰。
+    pub(crate) config_text_cache_order: VecDeque<PathBuf>,
+    /// 代理/节点过滤：上一次查询字符串。
+    pub(crate) proxy_filter_query: String,
+    /// 代理/节点过滤：上一次的总条目数（用于检测列表变化）。
+    pub(crate) proxy_filter_total: usize,
+    /// 代理/节点过滤：缓存过滤后的索引列表，避免每帧全量扫描。
+    pub(crate) proxy_filtered_indices: Vec<usize>,
     // 输入控件句柄（懒创建，避免提前绑定窗口上下文）。
     pub(crate) name_input: Option<Entity<InputState>>,
     pub(crate) config_input: Option<Entity<InputState>>,
@@ -148,6 +185,15 @@ impl WgApp {
             engine,
             configs: Vec::new(),
             selected: None,
+            loading_config: None,
+            loading_config_path: None,
+            parse_cache: None,
+            loaded_config: None,
+            config_text_cache: HashMap::new(),
+            config_text_cache_order: VecDeque::new(),
+            proxy_filter_query: String::new(),
+            proxy_filter_total: 0,
+            proxy_filtered_indices: Vec::new(),
             name_input: None,
             config_input: None,
             log_input: None,

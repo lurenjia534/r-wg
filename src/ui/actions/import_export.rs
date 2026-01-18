@@ -3,16 +3,20 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::Command;
 
-use gpui::{AppContext, Context, PathPromptOptions, Window};
+use futures_util::stream::{FuturesUnordered, StreamExt};
+use gpui::{AppContext, Context, PathPromptOptions, SharedString, Window};
 use r_wg::backend::wg::config;
 
 use super::super::format::{name_from_path, sanitize_file_stem};
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
 
 enum ImportOutcome {
-    Ok { name: String, text: String, path: PathBuf },
+    Ok { name: String, path: PathBuf },
     Err { path: PathBuf, message: String },
 }
+
+const IMPORT_CONCURRENCY: usize = 8;
+const IMPORT_BATCH_SIZE: usize = 200;
 
 impl WgApp {
     /// 点击导入按钮后的处理。
@@ -146,90 +150,94 @@ impl WgApp {
             return;
         }
 
+        // 记录总数，用于状态提示与批量导入节奏控制。
+        let total = paths.len();
         self.busy = true;
-        self.set_status(format!("Loading {} files...", paths.len()));
+        self.set_status(format!("Loading {total} files..."));
         cx.notify();
 
         let view = cx.weak_entity();
         window
             .spawn(cx, async move |cx| {
-                let read_task = cx.background_spawn(async move {
-                    let mut outcomes = Vec::new();
-                    for path in paths {
-                        let name = name_from_path(&path);
-                        match std::fs::read_to_string(&path) {
-                            Ok(text) => {
-                                if let Err(err) = config::parse_config(&text) {
-                                    outcomes.push(ImportOutcome::Err {
-                                        path,
-                                        message: format!("Invalid config: {err}"),
-                                    });
-                                } else {
-                                    outcomes.push(ImportOutcome::Ok { name, text, path });
-                                }
-                            }
-                            Err(err) => {
-                                outcomes.push(ImportOutcome::Err {
-                                    path,
-                                    message: format!("Read failed: {err}"),
-                                });
-                            }
-                        }
-                    }
-                    outcomes
-                });
-
-                let outcomes = read_task.await;
-                view.update_in(cx, |this, window, cx| {
-                    let mut imported = 0usize;
-                    let mut failed = 0usize;
-                    let mut last_error = None;
-                    let mut last_imported_idx = None;
-                    let mut names_in_use: HashSet<String> = this
-                        .configs
+                // 在 UI 线程里收集已有名称，避免重名。
+                let mut names_in_use = match view.update(cx, |this, _| {
+                    this.configs
                         .iter()
                         .map(|cfg| cfg.name.clone())
-                        .collect();
-                    let mut unique_name = |base: &str| {
-                        if !names_in_use.contains(base) {
-                            names_in_use.insert(base.to_string());
-                            return base.to_string();
+                        .collect::<HashSet<_>>()
+                }) {
+                    Ok(names) => names,
+                    Err(_) => return,
+                };
+
+                let mut processed = 0usize;
+                let mut imported = 0usize;
+                let mut failed = 0usize;
+                let mut last_error = None;
+                let mut outcomes_batch = Vec::new();
+
+                // 并行读/解析：限制并发，避免同时打开过多文件。
+                let concurrency = IMPORT_CONCURRENCY.min(total.max(1));
+                let mut pending = paths.into_iter();
+                let mut tasks = FuturesUnordered::new();
+                for _ in 0..concurrency {
+                    if let Some(path) = pending.next() {
+                        tasks.push(cx.background_spawn(async move { read_config(path) }));
+                    }
+                }
+
+                while let Some(outcome) = tasks.next().await {
+                    // 先在后台线程完成解析，UI 线程只接收结果。
+                    let outcome = match outcome {
+                        ImportOutcome::Ok { name, path } => {
+                            let name = unique_name(&mut names_in_use, &name);
+                            imported += 1;
+                            ImportOutcome::Ok { name, path }
                         }
-                        for idx in 2..1000 {
-                            let candidate = format!("{base}-{idx}");
-                            if names_in_use.insert(candidate.clone()) {
-                                return candidate;
-                            }
+                        ImportOutcome::Err { path, message } => {
+                            failed += 1;
+                            last_error = Some(format!("{message} ({})", path.display()));
+                            ImportOutcome::Err { path, message }
                         }
-                        let candidate = format!("{base}-{}", names_in_use.len() + 1);
-                        names_in_use.insert(candidate.clone());
-                        candidate
                     };
 
-                    for outcome in outcomes {
-                        match outcome {
-                            ImportOutcome::Ok { name, text, path } => {
-                                let name = unique_name(&name);
-                                this.configs.push(TunnelConfig {
-                                    name: name.clone(),
-                                    text,
-                                    source: ConfigSource::File(path),
-                                });
-                                last_imported_idx = Some(this.configs.len() - 1);
-                                imported += 1;
-                            }
-                            ImportOutcome::Err { path, message } => {
-                                failed += 1;
-                                last_error = Some(format!("{message} ({})", path.display()));
-                            }
-                        }
+                    processed += 1;
+                    outcomes_batch.push(outcome);
+
+                    if let Some(path) = pending.next() {
+                        tasks.push(cx.background_spawn(async move { read_config(path) }));
                     }
 
-                    if let Some(idx) = last_imported_idx {
+                    // 批量提交：减少 UI 线程频繁更新带来的卡顿。
+                    if outcomes_batch.len() >= IMPORT_BATCH_SIZE || processed == total {
+                        let outcomes = std::mem::take(&mut outcomes_batch);
+                        view.update_in(cx, |this, _window, cx| {
+                            for outcome in outcomes {
+                                if let ImportOutcome::Ok { name, path } = outcome {
+                                    this.configs.push(TunnelConfig {
+                                        name_lower: name.to_lowercase(),
+                                        name,
+                                        text: None,
+                                        source: ConfigSource::File(path),
+                                    });
+                                }
+                            }
+                            // 使用状态文本作为轻量“进度提示”。
+                            this.set_status(format!("Importing {processed}/{total}..."));
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                }
+
+                view.update_in(cx, |this, window, cx| {
+                    this.busy = false;
+                    if imported > 0 {
+                        let idx = this.configs.len().saturating_sub(1);
                         this.selected = Some(idx);
                         this.load_config_into_inputs(idx, window, cx);
                     }
-                    this.busy = false;
+                    // 导入结束后给出总结提示（成功/失败数）。
                     if imported == 0 && failed > 0 {
                         this.set_error(
                             last_error.unwrap_or_else(|| "Import failed".to_string()),
@@ -258,6 +266,11 @@ impl WgApp {
             cx.notify();
             return;
         };
+        let cached_text = match &selected.source {
+            ConfigSource::File(path) => self.cached_config_text(path),
+            ConfigSource::Paste => None,
+        };
+        let initial_text = selected.text.clone().or(cached_text);
 
         self.set_status("Choose export folder...");
         cx.notify();
@@ -309,7 +322,40 @@ impl WgApp {
 
             let filename = format!("{}.conf", sanitize_file_stem(&selected.name));
             let export_path = dir.join(filename);
-            let text = selected.text.clone();
+            let text_result = match initial_text {
+                Some(text) => Ok(text.to_string()),
+                None => match selected.source {
+                    ConfigSource::File(path) => {
+                        let path_for_cache = path.clone();
+                        let read_task =
+                            cx.background_spawn(async move { std::fs::read_to_string(&path) });
+                        match read_task.await {
+                            Ok(text) => {
+                                let shared: SharedString = text.clone().into();
+                                view.update(cx, |this, _| {
+                                    this.cache_config_text(path_for_cache, shared);
+                                })
+                                .ok();
+                                Ok(text)
+                            }
+                            Err(err) => Err(format!("Read failed: {err}")),
+                        }
+                    }
+                    ConfigSource::Paste => Err("Config text missing".to_string()),
+                },
+            };
+
+            let text = match text_result {
+                Ok(text) => text,
+                Err(message) => {
+                    view.update(cx, |this, cx| {
+                        this.set_error(message);
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
 
             let write_task = cx.background_spawn(async move {
                 std::fs::write(&export_path, text)?;
@@ -332,6 +378,44 @@ impl WgApp {
         })
         .detach();
     }
+}
+
+fn read_config(path: PathBuf) -> ImportOutcome {
+    // 后台线程读取 + 解析，返回结果给 UI 线程消费。
+    let name = name_from_path(&path);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            if let Err(err) = config::parse_config(&text) {
+                ImportOutcome::Err {
+                    path,
+                    message: format!("Invalid config: {err}"),
+                }
+            } else {
+                ImportOutcome::Ok { name, path }
+            }
+        }
+        Err(err) => ImportOutcome::Err {
+            path,
+            message: format!("Read failed: {err}"),
+        },
+    }
+}
+
+fn unique_name(names_in_use: &mut HashSet<String>, base: &str) -> String {
+    // 生成唯一名称，避免导入时覆盖已有配置。
+    if !names_in_use.contains(base) {
+        names_in_use.insert(base.to_string());
+        return base.to_string();
+    }
+    for idx in 2..1000 {
+        let candidate = format!("{base}-{idx}");
+        if names_in_use.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    let candidate = format!("{base}-{}", names_in_use.len() + 1);
+    names_in_use.insert(candidate.clone());
+    candidate
 }
 
 fn portal_missing_message(message: &str) -> bool {

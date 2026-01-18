@@ -29,23 +29,42 @@ impl ViewData {
     /// 从应用状态构造渲染数据。
     pub(crate) fn new(app: &WgApp) -> Self {
         let selected_config = app.selected_config();
-        let (parsed_config, parse_error) = match selected_config {
-            Some(config) => match config::parse_config(&config.text) {
-                Ok(config) => (Some(config), None),
-                Err(err) => (None, Some(err.to_string())),
-            },
-            None => (None, None),
+        // 优先从解析缓存取结果：
+        // - 缓存只针对当前选中配置；
+        // - 避免在每次渲染时重复 parse_config。
+        let (parsed_config, parse_error) = match (selected_config, app.parse_cache.as_ref()) {
+            (Some(config), Some(cache)) if cache.name == config.name => {
+                (cache.parsed.clone(), cache.error.clone())
+            }
+            _ => (None, None),
         };
+        // 选中项处于“异步加载中”时显示 Loading 状态。
+        let is_loading = app.selected.is_some() && app.loading_config == app.selected;
 
-        let config_status = if parse_error.is_some() {
+        // 解析状态的展示逻辑：
+        // - Loading：文本尚未读完；
+        // - Invalid：解析失败；
+        // - Valid：解析成功；
+        // - Unknown：已选中但暂未解析（例如文本还未加载）。
+        let config_status = if is_loading {
+            Some(ConfigStatus {
+                label: "Loading",
+                color: 0x64748b,
+            })
+        } else if parse_error.is_some() {
             Some(ConfigStatus {
                 label: "Invalid",
                 color: 0xb14f4a,
             })
-        } else if selected_config.is_some() {
+        } else if selected_config.is_some() && parsed_config.is_some() {
             Some(ConfigStatus {
                 label: "Valid",
                 color: 0x3aa380,
+            })
+        } else if selected_config.is_some() {
+            Some(ConfigStatus {
+                label: "Unknown",
+                color: 0x94a3b8,
             })
         } else {
             None
