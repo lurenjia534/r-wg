@@ -19,11 +19,24 @@ impl WgApp {
             let placeholder = "[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = ...\nAllowedIPs = 0.0.0.0/0\nEndpoint = example.com:51820";
             let input = cx.new(|cx| {
                 InputState::new(window, cx)
-                    .multi_line(true)
+                    .code_editor("toml")
                     .rows(16)
                     .placeholder(placeholder)
             });
             self.config_input = Some(input);
+        }
+    }
+
+    pub(crate) fn ensure_proxy_search_input(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Proxies 页搜索框输入状态：用于在大列表中快速过滤。
+        // 这里同样采用懒创建，避免在应用启动时就绑定窗口上下文。
+        if self.proxy_search_input.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search nodes"));
+            self.proxy_search_input = Some(input);
         }
     }
 

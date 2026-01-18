@@ -4,7 +4,7 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
     VirtualListScrollHandle, button::{Button, ButtonVariants},
-    h_flex, scroll::Scrollbar, tag::Tag, v_virtual_list,
+    h_flex, input::Input, scroll::Scrollbar, tag::Tag, v_virtual_list,
 };
 
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
@@ -39,9 +39,36 @@ pub(crate) fn render_proxies(
     window: &mut Window,
     cx: &mut Context<WgApp>,
 ) -> Div {
-    let nodes_tag = Tag::secondary()
-        .small()
-        .child(format!("{} nodes", app.configs.len()));
+    // 初始化搜索输入框并读取当前查询，用于过滤节点列表。
+    app.ensure_proxy_search_input(window, cx);
+    let search_input = app
+        .proxy_search_input
+        .clone()
+        .expect("proxy search input should be initialized");
+    let query = search_input.read(cx).value().trim().to_lowercase();
+    // 先生成过滤后的索引列表，后续虚拟化按索引渲染，避免复制配置内容。
+    let total_nodes = app.configs.len();
+    let filtered_indices: Vec<usize> = if query.is_empty() {
+        (0..total_nodes).collect()
+    } else {
+        app.configs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, config)| {
+                let name = config.name.to_lowercase();
+                name.contains(&query).then_some(idx)
+            })
+            .collect()
+    };
+    let filtered_nodes = filtered_indices.len();
+    // 查询为空显示总数；查询有值时显示“匹配/总数”。
+    let nodes_text = if query.is_empty() {
+        format!("{total_nodes} nodes")
+    } else {
+        format!("{filtered_nodes}/{total_nodes} nodes")
+    };
+    let nodes_tag = Tag::secondary().small().child(nodes_text);
+
     let list_scroll = if app.configs.is_empty() {
         div()
             .flex()
@@ -55,10 +82,26 @@ pub(crate) fn render_proxies(
                     .text_color(cx.theme().muted_foreground)
                     .child("No configs yet"),
             )
+    } else if filtered_indices.is_empty() {
+        // 有配置但没有匹配项时给出提示。
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("No matching nodes"),
+            )
     } else {
+        // 将过滤后的索引共享给虚拟化渲染闭包。
+        let filtered_indices = Rc::new(filtered_indices);
         let columns = proxies_columns(window);
         // 以“行”为虚拟化单位，每行放 columns 张卡片。
-        let row_count = (app.configs.len() + columns - 1) / columns;
+        let row_count = (filtered_nodes + columns - 1) / columns;
         let row_height = px(PROXIES_CARD_HEIGHT);
         // 虚拟化列表需要每行的固定高度；宽度由布局自动撑满。
         let item_sizes = Rc::new(vec![size(px(0.0), row_height); row_count]);
@@ -74,19 +117,22 @@ pub(crate) fn render_proxies(
             item_sizes,
             move |this, visible_range, _window, cx| {
                 // 仅渲染当前可见行，显著减少 DOM/布局/绘制成本。
+                let indices = filtered_indices.as_ref();
                 visible_range
                     .map(|row_ix| {
                         let start = row_ix * columns;
-                        let end = (start + columns).min(this.configs.len());
+                        let end = (start + columns).min(indices.len());
                         let mut row = div()
                             .flex()
                             .flex_row()
                             .gap_2()
                             .w_full()
                             .h(row_height);
+                        // 从索引映射到真实配置，保证过滤后仍可正确选择。
                         for idx in start..end {
-                            let config = &this.configs[idx];
-                            row = row.child(config_list_item(this, idx, config, cx));
+                            let config_idx = indices[idx];
+                            let config = &this.configs[config_idx];
+                            row = row.child(config_list_item(this, config_idx, config, cx));
                         }
                         row
                     })
@@ -131,6 +177,21 @@ pub(crate) fn render_proxies(
                     h_flex()
                         .items_center()
                         .gap_2()
+                        .child(
+                            // 搜索框：轻量样式，与右侧标签/按钮并排。
+                            div()
+                                .w(px(200.0))
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .bg(cx.theme().secondary)
+                                .child(
+                                    Input::new(&search_input)
+                                        .appearance(false)
+                                        .bordered(false)
+                                        .cleanable(true),
+                                ),
+                        )
                         .child(nodes_tag)
                         .child(
                             Button::new("cfg-list-import")

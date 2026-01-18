@@ -108,6 +108,7 @@ pub(crate) struct WgApp {
     pub(crate) name_input: Option<Entity<InputState>>,
     pub(crate) config_input: Option<Entity<InputState>>,
     pub(crate) log_input: Option<Entity<InputState>>,
+    pub(crate) proxy_search_input: Option<Entity<InputState>>,
     // 日志状态与提示。
     pub(crate) log_auto_follow: bool,
     pub(crate) status: SharedString,
@@ -150,6 +151,7 @@ impl WgApp {
             name_input: None,
             config_input: None,
             log_input: None,
+            proxy_search_input: None,
             log_auto_follow: true,
             status: "Ready".into(),
             last_error: None,
