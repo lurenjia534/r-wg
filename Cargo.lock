@@ -4733,6 +4733,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "dirs 5.0.1",
  "futures-util",
  "gotatun",
  "gpui",
@@ -4741,6 +4742,8 @@ dependencies = [
  "ipnetwork",
  "netlink-packet-route",
  "rtnetlink",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

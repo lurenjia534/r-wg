@@ -20,6 +20,7 @@ impl Render for WgApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 输入控件按需延迟创建，避免在构造阶段就绑定窗口上下文。
         self.ensure_inputs(window, cx);
+        self.start_load_persisted_state(window, cx);
 
         // 复制 Entity 句柄，避免后续借用冲突。
         let name_input = self

@@ -15,6 +15,9 @@ futures-util = "0.3"
 ipnetwork = "0.21.1" # gotatun 0.2.x 的公共 Peer/Allowed IPs 类型依赖
 rtnetlink = "0.20.0"
 netlink-packet-route = "0.28.0"
+dirs = "5.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 # smallvec is included here for convenience, it is used by gpui when creating
 # components that can have children. uncomment this line or
 # use `cargo add smallvec` to add it to your project

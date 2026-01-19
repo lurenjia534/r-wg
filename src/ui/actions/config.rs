@@ -1,11 +1,13 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use gpui::{AppContext, ClipboardItem, Context, SharedString, Window};
 use gpui_component::input::InputState;
 use r_wg::backend::wg::config;
 
+use super::super::persistence;
 use super::super::state::{ConfigSource, LoadedConfigState, ParseCache, TunnelConfig, WgApp};
 
 const CONFIG_TEXT_CACHE_LIMIT: usize = 32;
@@ -189,16 +191,8 @@ impl WgApp {
             return;
         }
 
-        // 文件型配置：如果缓存里有文本，直接复用缓存。
-        let Some(path) = (match &config.source {
-            ConfigSource::File(path) => Some(path.clone()),
-            ConfigSource::Paste => None,
-        }) else {
-            self.set_error("Config text is missing");
-            cx.notify();
-            return;
-        };
-
+        // 如果缓存里有文本，直接复用缓存。
+        let path = config.storage_path.clone();
         if let Some(text) = self.cached_config_text(&path) {
             let text_hash = text_hash(text.as_ref());
             if let Some(loaded) = &self.loaded_config {
@@ -254,9 +248,7 @@ impl WgApp {
                     let Some(config) = this.configs.get(idx) else {
                         return;
                     };
-                    let ConfigSource::File(current_path) = &config.source else {
-                        return;
-                    };
+                    let current_path = &config.storage_path;
                     let loading_path = this.loading_config_path.as_ref();
                     if current_path != &path_for_match
                         || this.loading_config != Some(idx)
@@ -339,18 +331,60 @@ impl WgApp {
             name.to_string()
         };
 
-        self.upsert_config(
-            TunnelConfig {
-                name: name.clone(),
-                name_lower: name.to_lowercase(),
-                text: Some(text),
-                source: ConfigSource::Paste,
-            },
-            window,
-            cx,
-        );
-        self.set_status(format!("Pasted {name}"));
+        let storage = match self.ensure_storage() {
+            Ok(storage) => storage,
+            Err(err) => {
+                self.set_error(err);
+                cx.notify();
+                return;
+            }
+        };
+        let id = self.alloc_config_id();
+        let storage_path = persistence::config_path(&storage, id);
+        let name_lower = name.to_lowercase();
+        let text_for_write = text.to_string();
+        let text_for_state = text.clone();
+
+        self.busy = true;
+        self.set_status("Saving config...");
         cx.notify();
+
+        let storage_path_for_write = storage_path.clone();
+        let view = cx.weak_entity();
+        window
+            .spawn(cx, async move |cx| {
+                let write_task = cx.background_spawn(async move {
+                    persistence::write_config_text(&storage_path_for_write, &text_for_write)
+                });
+                let result = write_task.await;
+                view.update_in(cx, |this, window, cx| {
+                    this.busy = false;
+                    match result {
+                        Ok(()) => {
+                            this.upsert_config(
+                                TunnelConfig {
+                                    id,
+                                    name: name.clone(),
+                                    name_lower,
+                                    text: Some(text_for_state),
+                                    source: ConfigSource::Paste,
+                                    storage_path,
+                                },
+                                window,
+                                cx,
+                            );
+                            this.persist_state_async(cx);
+                            this.set_status(format!("Pasted {name}"));
+                        }
+                        Err(err) => {
+                            this.set_error(err);
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
     }
 
     /// 保存当前输入框内容到配置列表。
@@ -399,24 +433,73 @@ impl WgApp {
             return;
         }
 
-        let source = self
+        let name = name.to_string();
+        let storage = match self.ensure_storage() {
+            Ok(storage) => storage,
+            Err(err) => {
+                self.set_error(err);
+                cx.notify();
+                return;
+            }
+        };
+
+        let existing = self
             .selected_config()
             .filter(|cfg| cfg.name == name)
-            .map(|cfg| cfg.source.clone())
-            .unwrap_or(ConfigSource::Paste);
+            .cloned();
+        let (id, storage_path, source) = match existing {
+            Some(cfg) => (cfg.id, cfg.storage_path, cfg.source),
+            None => {
+                let id = self.alloc_config_id();
+                let storage_path = persistence::config_path(&storage, id);
+                (id, storage_path, ConfigSource::Paste)
+            }
+        };
 
-        self.upsert_config(
-            TunnelConfig {
-                name: name.to_string(),
-                name_lower: name.to_lowercase(),
-                text: Some(text),
-                source,
-            },
-            window,
-            cx,
-        );
-        self.set_status("Saved tunnel");
+        let name_lower = name.to_lowercase();
+        let text_for_write = text.to_string();
+        let text_for_state = text.clone();
+
+        self.busy = true;
+        self.set_status("Saving config...");
         cx.notify();
+
+        let storage_path_for_write = storage_path.clone();
+        let view = cx.weak_entity();
+        window
+            .spawn(cx, async move |cx| {
+                let write_task = cx.background_spawn(async move {
+                    persistence::write_config_text(&storage_path_for_write, &text_for_write)
+                });
+                let result = write_task.await;
+                view.update_in(cx, |this, window, cx| {
+                    this.busy = false;
+                    match result {
+                        Ok(()) => {
+                            this.upsert_config(
+                                TunnelConfig {
+                                    id,
+                                    name: name.to_string(),
+                                    name_lower,
+                                    text: Some(text_for_state),
+                                    source,
+                                    storage_path,
+                                },
+                                window,
+                                cx,
+                            );
+                            this.persist_state_async(cx);
+                            this.set_status("Saved tunnel");
+                        }
+                        Err(err) => {
+                            this.set_error(err);
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
     }
 
     /// 仅修改配置名称，不改内容。
@@ -469,6 +552,7 @@ impl WgApp {
         }
         self.set_status(format!("Renamed to {new_name}"));
         self.load_config_into_inputs(idx, window, cx);
+        self.persist_state_async(cx);
         cx.notify();
     }
 
@@ -483,6 +567,7 @@ impl WgApp {
             return;
         };
         let name = self.configs[idx].name.clone();
+        let storage_path = self.configs[idx].storage_path.clone();
         if self.running_name.as_deref() == Some(name.as_str()) {
             self.set_error("Stop the tunnel before deleting");
             cx.notify();
@@ -490,6 +575,14 @@ impl WgApp {
         }
 
         self.configs.remove(idx);
+        // 清理逻辑说明：
+        // - 删除配置不仅要移除内存列表，还要同步清理缓存和磁盘文件；
+        // - config_text_cache 里可能还保留该配置的文本，需显式移除；
+        // - storage_path 对应内部 configs/<id>.conf，避免留下无用文件；
+        // - 删除文件失败（例如用户手动删过）不算致命错误，仅做提示。
+        self.config_text_cache.remove(&storage_path);
+        self.config_text_cache_order
+            .retain(|entry| entry != &storage_path);
         self.loading_config = None;
         self.loading_config_path = None;
         if self.configs.is_empty() {
@@ -501,7 +594,26 @@ impl WgApp {
             self.load_config_into_inputs(next_idx, window, cx);
         }
         self.set_status(format!("Deleted {name}"));
+        self.persist_state_async(cx);
         cx.notify();
+
+        cx.spawn(async move |view, cx| {
+            // 后台删除磁盘文件：避免阻塞 UI，
+            // 同时允许文件不存在的情况（已经手动删除）。
+            let delete_task = cx.background_spawn(async move {
+                std::fs::remove_file(&storage_path)
+            });
+            if let Err(err) = delete_task.await {
+                if err.kind() != ErrorKind::NotFound {
+                    view.update(cx, |this, cx| {
+                        this.set_error(format!("Remove file failed: {err}"));
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     /// 将当前配置复制到剪贴板。
@@ -516,10 +628,7 @@ impl WgApp {
         };
         let selected = self.configs[idx].clone();
         // 优先取内存/缓存，避免无谓 IO。
-        let cached_text = match &selected.source {
-            ConfigSource::File(path) => self.cached_config_text(path),
-            ConfigSource::Paste => None,
-        };
+        let cached_text = self.cached_config_text(&selected.storage_path);
         let text = selected.text.clone().or(cached_text);
         if let Some(text) = text {
             cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
@@ -528,18 +637,14 @@ impl WgApp {
             return;
         }
 
-        let ConfigSource::File(path) = selected.source else {
-            self.set_error("Config text missing");
-            cx.notify();
-            return;
-        };
-
         self.set_status("Loading config...");
         cx.notify();
 
         cx.spawn(async move |view, cx| {
-            let path_for_cache = path.clone();
-            let read_task = cx.background_spawn(async move { std::fs::read_to_string(&path) });
+            let path_for_cache = selected.storage_path.clone();
+            let read_task = cx.background_spawn(async move {
+                std::fs::read_to_string(&selected.storage_path)
+            });
             let result = read_task.await;
             view.update(cx, |this, cx| {
                 // 注意：复制场景不改变选中项，因此只需检查是否仍选中同一索引。

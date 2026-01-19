@@ -7,19 +7,23 @@ use gpui_component::{IconName, input::InputState};
 use r_wg::backend::wg::{config, Engine, PeerStats};
 use r_wg::dns::{DnsMode, DnsPreset};
 
+use super::persistence::StoragePaths;
+
 /// 速度曲线采样点数量（固定窗口）。
 pub(crate) const SPARKLINE_SAMPLES: usize = 24;
 
 /// 配置来源：文件或粘贴文本。
 #[derive(Clone)]
 pub(crate) enum ConfigSource {
-    File(PathBuf),
+    File { origin_path: Option<PathBuf> },
     Paste,
 }
 
 /// 隧道配置条目：用于配置列表与编辑器。
 #[derive(Clone)]
 pub(crate) struct TunnelConfig {
+    /// 持久化 ID（用于内部文件名）。
+    pub(crate) id: u64,
     /// 配置名称（用于列表与启动）。
     pub(crate) name: String,
     /// 小写版本的名称，用于搜索过滤，避免每次渲染都重复分配/转换。
@@ -28,14 +32,17 @@ pub(crate) struct TunnelConfig {
     pub(crate) text: Option<SharedString>,
     /// 配置来源：文件路径或粘贴内容。
     pub(crate) source: ConfigSource,
+    /// 内部存储路径：用于持久化读写。
+    pub(crate) storage_path: PathBuf,
 }
 
 impl TunnelConfig {
     pub(crate) fn label(&self) -> String {
         match &self.source {
-            ConfigSource::File(path) => {
-                let file = path
-                    .file_name()
+            ConfigSource::File { origin_path } => {
+                let file = origin_path
+                    .as_ref()
+                    .and_then(|path| path.file_name())
                     .and_then(|name| name.to_str())
                     .unwrap_or("file");
                 format!("{} ({})", self.name, file)
@@ -122,6 +129,12 @@ pub(crate) struct WgApp {
     // 后端与配置列表。
     pub(crate) engine: Engine,
     pub(crate) configs: Vec<TunnelConfig>,
+    /// 配置持久化目录与 state.json 路径。
+    pub(crate) storage: Option<StoragePaths>,
+    /// 下一个配置 ID（用于内部文件名）。
+    pub(crate) next_config_id: u64,
+    /// 是否已触发持久化加载，避免重复启动加载任务。
+    pub(crate) persistence_loaded: bool,
     pub(crate) selected: Option<usize>,
     /// 正在异步加载的配置索引（用于防止 UI 写入旧数据）。
     pub(crate) loading_config: Option<usize>,
@@ -184,6 +197,9 @@ impl WgApp {
         Self {
             engine,
             configs: Vec::new(),
+            storage: None,
+            next_config_id: 1,
+            persistence_loaded: false,
             selected: None,
             loading_config: None,
             loading_config_path: None,

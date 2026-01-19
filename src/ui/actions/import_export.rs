@@ -8,11 +8,26 @@ use gpui::{AppContext, Context, PathPromptOptions, SharedString, Window};
 use r_wg::backend::wg::config;
 
 use super::super::format::{name_from_path, sanitize_file_stem};
+use super::super::persistence;
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
 
+struct ImportJob {
+    id: u64,
+    origin_path: PathBuf,
+    storage_path: PathBuf,
+}
+
 enum ImportOutcome {
-    Ok { name: String, path: PathBuf },
-    Err { path: PathBuf, message: String },
+    Ok {
+        id: u64,
+        name: String,
+        origin_path: PathBuf,
+        storage_path: PathBuf,
+    },
+    Err {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 const IMPORT_CONCURRENCY: usize = 8;
@@ -150,8 +165,28 @@ impl WgApp {
             return;
         }
 
+        let storage = match self.ensure_storage() {
+            Ok(storage) => storage,
+            Err(err) => {
+                self.set_error(err);
+                cx.notify();
+                return;
+            }
+        };
+
+        let mut jobs = Vec::with_capacity(paths.len());
+        for path in paths {
+            let id = self.alloc_config_id();
+            let storage_path = persistence::config_path(&storage, id);
+            jobs.push(ImportJob {
+                id,
+                origin_path: path,
+                storage_path,
+            });
+        }
+
         // 记录总数，用于状态提示与批量导入节奏控制。
-        let total = paths.len();
+        let total = jobs.len();
         self.busy = true;
         self.set_status(format!("Loading {total} files..."));
         cx.notify();
@@ -178,21 +213,31 @@ impl WgApp {
 
                 // 并行读/解析：限制并发，避免同时打开过多文件。
                 let concurrency = IMPORT_CONCURRENCY.min(total.max(1));
-                let mut pending = paths.into_iter();
+                let mut pending = jobs.into_iter();
                 let mut tasks = FuturesUnordered::new();
                 for _ in 0..concurrency {
-                    if let Some(path) = pending.next() {
-                        tasks.push(cx.background_spawn(async move { read_config(path) }));
+                    if let Some(job) = pending.next() {
+                        tasks.push(cx.background_spawn(async move { read_config(job) }));
                     }
                 }
 
                 while let Some(outcome) = tasks.next().await {
                     // 先在后台线程完成解析，UI 线程只接收结果。
                     let outcome = match outcome {
-                        ImportOutcome::Ok { name, path } => {
+                        ImportOutcome::Ok {
+                            id,
+                            name,
+                            origin_path,
+                            storage_path,
+                        } => {
                             let name = unique_name(&mut names_in_use, &name);
                             imported += 1;
-                            ImportOutcome::Ok { name, path }
+                            ImportOutcome::Ok {
+                                id,
+                                name,
+                                origin_path,
+                                storage_path,
+                            }
                         }
                         ImportOutcome::Err { path, message } => {
                             failed += 1;
@@ -204,8 +249,8 @@ impl WgApp {
                     processed += 1;
                     outcomes_batch.push(outcome);
 
-                    if let Some(path) = pending.next() {
-                        tasks.push(cx.background_spawn(async move { read_config(path) }));
+                    if let Some(job) = pending.next() {
+                        tasks.push(cx.background_spawn(async move { read_config(job) }));
                     }
 
                     // 批量提交：减少 UI 线程频繁更新带来的卡顿。
@@ -213,12 +258,22 @@ impl WgApp {
                         let outcomes = std::mem::take(&mut outcomes_batch);
                         view.update_in(cx, |this, _window, cx| {
                             for outcome in outcomes {
-                                if let ImportOutcome::Ok { name, path } = outcome {
+                                if let ImportOutcome::Ok {
+                                    id,
+                                    name,
+                                    origin_path,
+                                    storage_path,
+                                } = outcome
+                                {
                                     this.configs.push(TunnelConfig {
+                                        id,
                                         name_lower: name.to_lowercase(),
                                         name,
                                         text: None,
-                                        source: ConfigSource::File(path),
+                                        source: ConfigSource::File {
+                                            origin_path: Some(origin_path),
+                                        },
+                                        storage_path,
                                     });
                                 }
                             }
@@ -249,6 +304,9 @@ impl WgApp {
                     } else {
                         this.set_status(format!("Imported {imported} configs"));
                     }
+                    if imported > 0 {
+                        this.persist_state_async(cx);
+                    }
                     cx.notify();
                 })
                 .ok();
@@ -266,10 +324,7 @@ impl WgApp {
             cx.notify();
             return;
         };
-        let cached_text = match &selected.source {
-            ConfigSource::File(path) => self.cached_config_text(path),
-            ConfigSource::Paste => None,
-        };
+        let cached_text = self.cached_config_text(&selected.storage_path);
         let initial_text = selected.text.clone().or(cached_text);
 
         self.set_status("Choose export folder...");
@@ -324,25 +379,23 @@ impl WgApp {
             let export_path = dir.join(filename);
             let text_result = match initial_text {
                 Some(text) => Ok(text.to_string()),
-                None => match selected.source {
-                    ConfigSource::File(path) => {
-                        let path_for_cache = path.clone();
-                        let read_task =
-                            cx.background_spawn(async move { std::fs::read_to_string(&path) });
-                        match read_task.await {
-                            Ok(text) => {
-                                let shared: SharedString = text.clone().into();
-                                view.update(cx, |this, _| {
-                                    this.cache_config_text(path_for_cache, shared);
-                                })
-                                .ok();
-                                Ok(text)
-                            }
-                            Err(err) => Err(format!("Read failed: {err}")),
+                None => {
+                    let path_for_cache = selected.storage_path.clone();
+                    let read_task = cx.background_spawn(async move {
+                        std::fs::read_to_string(&selected.storage_path)
+                    });
+                    match read_task.await {
+                        Ok(text) => {
+                            let shared: SharedString = text.clone().into();
+                            view.update(cx, |this, _| {
+                                this.cache_config_text(path_for_cache, shared);
+                            })
+                            .ok();
+                            Ok(text)
                         }
+                        Err(err) => Err(format!("Read failed: {err}")),
                     }
-                    ConfigSource::Paste => Err("Config text missing".to_string()),
-                },
+                }
             };
 
             let text = match text_result {
@@ -380,22 +433,33 @@ impl WgApp {
     }
 }
 
-fn read_config(path: PathBuf) -> ImportOutcome {
+fn read_config(job: ImportJob) -> ImportOutcome {
     // 后台线程读取 + 解析，返回结果给 UI 线程消费。
-    let name = name_from_path(&path);
-    match std::fs::read_to_string(&path) {
+    let name = name_from_path(&job.origin_path);
+    match std::fs::read_to_string(&job.origin_path) {
         Ok(text) => {
             if let Err(err) = config::parse_config(&text) {
                 ImportOutcome::Err {
-                    path,
+                    path: job.origin_path,
                     message: format!("Invalid config: {err}"),
                 }
             } else {
-                ImportOutcome::Ok { name, path }
+                match persistence::write_config_text(&job.storage_path, &text) {
+                    Ok(()) => ImportOutcome::Ok {
+                        id: job.id,
+                        name,
+                        origin_path: job.origin_path,
+                        storage_path: job.storage_path,
+                    },
+                    Err(message) => ImportOutcome::Err {
+                        path: job.origin_path,
+                        message,
+                    },
+                }
             }
         }
         Err(err) => ImportOutcome::Err {
-            path,
+            path: job.origin_path,
             message: format!("Read failed: {err}"),
         },
     }

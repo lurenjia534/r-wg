@@ -292,7 +292,7 @@ fn config_list_item(
 
 fn config_source_label(source: &ConfigSource) -> &'static str {
     match source {
-        ConfigSource::File(_) => "File",
+        ConfigSource::File { .. } => "File",
         ConfigSource::Paste => "Pasted",
     }
 }

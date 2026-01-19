@@ -4,6 +4,7 @@
 mod config;
 mod import_export;
 mod logs;
+mod persistence;
 mod stats;
 mod status;
 mod tunnel;
