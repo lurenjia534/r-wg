@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use chrono::{Duration as ChronoDuration, Local, NaiveDate};
 use gpui::*;
@@ -7,9 +6,10 @@ use gpui::prelude::FluentBuilder as _;
 
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, divider::Divider,
+    chart::BarChart,
     group_box::{GroupBox, GroupBoxVariants},
     h_flex, tag::Tag, v_flex,
-    plot::{StrokeStyle, scale::{Scale, ScaleLinear}, shape::{Bar, Line}},
+    plot::{AXIS_GAP, StrokeStyle, scale::{Scale, ScaleLinear}, shape::Line},
     PixelsExt,
 };
 
@@ -345,31 +345,31 @@ fn traffic_trend_card(cx: &mut Context<WgApp>, trend: &TrafficTrendData) -> Grou
                     div()
                         .h(px(140.0))
                         .w_full()
-                        .child(TrafficTrendChart::new(
-                            trend.points.clone(),
-                            trend.average_bytes,
-                            bar_color,
-                            bar_highlight,
-                            avg_color,
-                        )),
-                )
-                .child(trend_labels(&trend.points, cx)),
+                        .relative()
+                        .child(
+                            BarChart::new(trend.points.clone())
+                                .x(|point| point.label.clone())
+                                .y(|point| point.bytes as f64)
+                                .fill(move |point| {
+                                    if point.is_today {
+                                        bar_highlight
+                                    } else {
+                                        bar_color
+                                    }
+                                }),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .child(TrafficAvgLine::new(
+                                    trend.points.clone(),
+                                    trend.average_bytes,
+                                    avg_color,
+                                )),
+                        ),
+                ),
         )
-}
-
-fn trend_labels(points: &[TrafficTrendPoint], cx: &mut Context<WgApp>) -> Div {
-    let columns = points.len().max(1) as u16;
-    let mut row = div().grid().grid_cols(columns).w_full();
-    for point in points {
-        row = row.child(
-            div()
-                .text_xs()
-                .text_center()
-                .text_color(cx.theme().muted_foreground)
-                .child(point.label.clone()),
-        );
-    }
-    row
 }
 
 fn build_traffic_trend(app: &WgApp) -> TrafficTrendData {
@@ -639,33 +639,23 @@ fn format_avg_bytes(bytes: f64) -> String {
     }
 }
 
-struct TrafficTrendChart {
+struct TrafficAvgLine {
     points: Vec<TrafficTrendPoint>,
     average_bytes: f64,
-    bar_color: Hsla,
-    bar_highlight: Hsla,
     avg_color: Hsla,
 }
 
-impl TrafficTrendChart {
-    fn new(
-        points: Vec<TrafficTrendPoint>,
-        average_bytes: f64,
-        bar_color: Hsla,
-        bar_highlight: Hsla,
-        avg_color: Hsla,
-    ) -> Self {
+impl TrafficAvgLine {
+    fn new(points: Vec<TrafficTrendPoint>, average_bytes: f64, avg_color: Hsla) -> Self {
         Self {
             points,
             average_bytes,
-            bar_color,
-            bar_highlight,
             avg_color,
         }
     }
 }
 
-impl IntoElement for TrafficTrendChart {
+impl IntoElement for TrafficAvgLine {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -673,7 +663,7 @@ impl IntoElement for TrafficTrendChart {
     }
 }
 
-impl Element for TrafficTrendChart {
+impl Element for TrafficAvgLine {
     type RequestLayoutState = ();
     type PrepaintState = ();
 
@@ -718,62 +708,20 @@ impl Element for TrafficTrendChart {
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) {
         if self.points.is_empty() {
             return;
         }
 
         let width = bounds.size.width.as_f32();
-        let height = bounds.size.height.as_f32();
-        let padding_top = 8.0;
-        let padding_bottom = 12.0;
-        let baseline = height - padding_bottom;
+        let height = bounds.size.height.as_f32() - AXIS_GAP;
 
-        let max = self
-            .points
-            .iter()
-            .map(|point| point.bytes as f64)
-            .fold(0.0, f64::max)
-            .max(1.0);
+        let mut domain: Vec<f64> = self.points.iter().map(|point| point.bytes as f64).collect();
+        domain.push(0.0);
+        let y_scale = ScaleLinear::new(domain, vec![height, 10.0]);
 
-        let y_scale = ScaleLinear::new(vec![0.0_f64, max], vec![baseline, padding_top]);
-        let count = self.points.len() as f32;
-        let slot_width = if count > 0.0 { width / count } else { width };
-        let band_width = (slot_width * 0.5).min(30.0);
-        let band_offset = (slot_width - band_width) / 2.0;
-        let indices: Vec<usize> = (0..self.points.len()).collect();
-        let points = Rc::new(self.points.clone());
-        let points_for_y = points.clone();
-        let points_for_fill = points.clone();
-        let y_scale_for_bar = y_scale.clone();
-        let bar_color = self.bar_color;
-        let bar_highlight = self.bar_highlight;
-        let baseline_for_bar = baseline;
-        let slot_width_for_bar = slot_width;
-        let band_offset_for_bar = band_offset;
-
-        let bar = Bar::new()
-            .data(indices)
-            .band_width(band_width)
-            .x(move |idx| {
-                Some((*idx as f32) * slot_width_for_bar + band_offset_for_bar)
-            })
-            .y0(move |_| baseline_for_bar)
-            .y1(move |idx| y_scale_for_bar.tick(&(points_for_y[*idx].bytes as f64)))
-            .fill(move |idx| {
-                if points_for_fill[*idx].is_today {
-                    bar_highlight
-                } else {
-                    bar_color
-                }
-            });
-
-        bar.paint(&bounds, window, cx);
-
-        let avg_y = y_scale
-            .tick(&self.average_bytes)
-            .unwrap_or(baseline);
+        let avg_y = y_scale.tick(&self.average_bytes).unwrap_or(height);
         let avg_line = Line::new()
             .data(vec![(0.0_f32, avg_y), (width, avg_y)])
             .x(|point| Some(point.0))
