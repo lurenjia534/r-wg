@@ -9,7 +9,7 @@ use gpui_component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, divider::Divider,
     group_box::{GroupBox, GroupBoxVariants},
     h_flex, tag::Tag, v_flex,
-    plot::{StrokeStyle, scale::{Scale, ScaleBand, ScaleLinear}, shape::{Bar, Line}},
+    plot::{StrokeStyle, scale::{Scale, ScaleLinear}, shape::{Bar, Line}},
     PixelsExt,
 };
 
@@ -359,7 +359,7 @@ fn traffic_trend_card(cx: &mut Context<WgApp>, trend: &TrafficTrendData) -> Grou
 
 fn trend_labels(points: &[TrafficTrendPoint], cx: &mut Context<WgApp>) -> Div {
     let columns = points.len().max(1) as u16;
-    let mut row = div().grid().grid_cols(columns).gap_2();
+    let mut row = div().grid().grid_cols(columns).w_full();
     for point in points {
         row = row.child(
             div()
@@ -738,24 +738,27 @@ impl Element for TrafficTrendChart {
             .max(1.0);
 
         let y_scale = ScaleLinear::new(vec![0.0_f64, max], vec![baseline, padding_top]);
+        let count = self.points.len() as f32;
+        let slot_width = if count > 0.0 { width / count } else { width };
+        let band_width = (slot_width * 0.5).min(30.0);
+        let band_offset = (slot_width - band_width) / 2.0;
         let indices: Vec<usize> = (0..self.points.len()).collect();
-        let x_scale = ScaleBand::new(indices.clone(), vec![0.0, width])
-            .padding_inner(0.4)
-            .padding_outer(0.2);
-        let band_width = x_scale.band_width();
         let points = Rc::new(self.points.clone());
         let points_for_y = points.clone();
         let points_for_fill = points.clone();
-        let x_scale_for_bar = x_scale.clone();
         let y_scale_for_bar = y_scale.clone();
         let bar_color = self.bar_color;
         let bar_highlight = self.bar_highlight;
         let baseline_for_bar = baseline;
+        let slot_width_for_bar = slot_width;
+        let band_offset_for_bar = band_offset;
 
         let bar = Bar::new()
             .data(indices)
             .band_width(band_width)
-            .x(move |idx| x_scale_for_bar.tick(idx))
+            .x(move |idx| {
+                Some((*idx as f32) * slot_width_for_bar + band_offset_for_bar)
+            })
             .y0(move |_| baseline_for_bar)
             .y1(move |idx| y_scale_for_bar.tick(&(points_for_y[*idx].bytes as f64)))
             .fill(move |idx| {
