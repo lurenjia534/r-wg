@@ -1,9 +1,10 @@
 use gpui::*;
-use gpui_component::ActiveTheme as _;
+use gpui_component::{
+    ActiveTheme as _, description_list::DescriptionList, group_box::{GroupBox, GroupBoxVariants},
+};
 
 use super::data::ViewData;
 use super::widgets::tab_button;
-use super::super::components::{card, info_row};
 use super::super::format::{
     format_addresses, format_allowed_ips, format_bytes, format_dns, format_peer_line,
     format_route_table,
@@ -56,17 +57,13 @@ pub(crate) fn render_right_panel(
             .map(|cfg| format_allowed_ips(&cfg.peers))
             .unwrap_or_else(|| "-".to_string());
 
-        card(
-            cx.theme(),
-            "Network",
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(info_row(cx.theme(), "Local Address", addresses))
-                .child(info_row(cx.theme(), "DNS", dns))
-                .child(info_row(cx.theme(), "Route Table", route_table))
-                .child(info_row(cx.theme(), "Allowed IPs", routes)),
+        GroupBox::new().fill().title("Network").child(
+            DescriptionList::new()
+                .columns(1)
+                .item("Local Address", addresses, 1)
+                .item("DNS", dns, 1)
+                .item("Route Table", route_table, 1)
+                .item("Allowed IPs", routes, 1),
         )
     };
 
@@ -84,19 +81,15 @@ pub(crate) fn render_right_panel(
         } else {
             data.peer_summary.peer_count.to_string()
         };
-        card(
-            cx.theme(),
-            "Connection",
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(info_row(cx.theme(), "Status", connection_state))
-                .child(info_row(cx.theme(), "Tunnel", active_tunnel))
-                .child(info_row(cx.theme(), "Peers", peers))
-                .child(info_row(cx.theme(), "Handshake", data.last_handshake.clone()))
-                .child(info_row(cx.theme(), "RX", rx))
-                .child(info_row(cx.theme(), "TX", tx)),
+        GroupBox::new().fill().title("Connection").child(
+            DescriptionList::new()
+                .columns(1)
+                .item("Status", connection_state, 1)
+                .item("Tunnel", active_tunnel, 1)
+                .item("Peers", peers, 1)
+                .item("Handshake", data.last_handshake.clone(), 1)
+                .item("RX", rx, 1)
+                .item("TX", tx, 1),
         )
     };
 
@@ -126,11 +119,10 @@ pub(crate) fn render_right_panel(
                     .into_any_element()
             }));
         }
-        card(
-            cx.theme(),
-            "Peers",
-            div().flex().flex_col().gap_1().children(stats_items),
-        )
+        GroupBox::new()
+            .fill()
+            .title("Peers")
+            .child(div().flex().flex_col().gap_1().children(stats_items))
     };
 
     // Logs 卡片：集中显示最近状态与错误信息。
@@ -140,16 +132,12 @@ pub(crate) fn render_right_panel(
             .clone()
             .unwrap_or_else(|| "None".into());
         let parse_state = data.parse_error.clone().unwrap_or_else(|| "None".to_string());
-        card(
-            cx.theme(),
-            "Logs",
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(info_row(cx.theme(), "Latest Status", app.status.to_string()))
-                .child(info_row(cx.theme(), "Last Error", last_error.to_string()))
-                .child(info_row(cx.theme(), "Parse Error", parse_state)),
+        GroupBox::new().fill().title("Logs").child(
+            DescriptionList::new()
+                .columns(1)
+                .item("Latest Status", app.status.to_string(), 1)
+                .item("Last Error", last_error.to_string(), 1)
+                .item("Parse Error", parse_state, 1),
         )
     };
 
