@@ -297,6 +297,7 @@ impl WgApp {
     ) {
         self.selected = Some(idx);
         self.load_config_into_inputs(idx, window, cx);
+        self.persist_state_async(cx);
         self.set_status("Loaded tunnel");
         cx.notify();
     }
