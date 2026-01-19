@@ -12,6 +12,10 @@ use super::persistence::StoragePaths;
 
 /// 速度曲线采样点数量（固定窗口）。
 pub(crate) const SPARKLINE_SAMPLES: usize = 24;
+/// 7 日流量趋势展示天数。
+pub(crate) const TRAFFIC_TREND_DAYS: usize = 7;
+/// 持久化的流量历史天数（限制 state.json 体积）。
+pub(crate) const TRAFFIC_HISTORY_DAYS: usize = 30;
 
 /// 配置来源：文件或粘贴文本。
 #[derive(Clone)]
@@ -65,6 +69,13 @@ pub(crate) struct ParseCache {
 pub(crate) struct LoadedConfigState {
     pub(crate) name: String,
     pub(crate) text_hash: u64,
+}
+
+/// 日流量统计（按本地日期汇总）。
+#[derive(Clone)]
+pub(crate) struct TrafficDay {
+    pub(crate) date: String,
+    pub(crate) bytes: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -193,6 +204,10 @@ pub(crate) struct WgApp {
     pub(crate) last_iface_tx_bytes: u64,
     pub(crate) iface_rx_rate_bps: f64,
     pub(crate) iface_tx_rate_bps: f64,
+    // 7 日流量趋势（按天累计）。
+    pub(crate) traffic_days: Vec<TrafficDay>,
+    pub(crate) traffic_dirty: bool,
+    pub(crate) traffic_last_persist_at: Option<Instant>,
 }
 
 impl WgApp {
@@ -244,6 +259,9 @@ impl WgApp {
             last_iface_tx_bytes: 0,
             iface_rx_rate_bps: 0.0,
             iface_tx_rate_bps: 0.0,
+            traffic_days: Vec::new(),
+            traffic_dirty: false,
+            traffic_last_persist_at: None,
         }
     }
 }

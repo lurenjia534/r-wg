@@ -1,10 +1,12 @@
+use std::collections::BTreeMap;
+
 use gpui::{AppContext, Context, Window};
 use gpui_component::theme::Theme;
 
 use super::super::persistence::{
     self, PersistedConfig, PersistedSource, PersistedState, StoragePaths, STATE_VERSION,
 };
-use super::super::state::{ConfigSource, TunnelConfig, WgApp};
+use super::super::state::{ConfigSource, TrafficDay, TunnelConfig, WgApp};
 
 impl WgApp {
     pub(crate) fn ensure_storage(&mut self) -> Result<StoragePaths, String> {
@@ -71,6 +73,7 @@ impl WgApp {
     }
 
     pub(crate) fn persist_state_async(&mut self, cx: &mut Context<Self>) {
+        // 异步写盘：避免阻塞 UI；失败只提示错误，不影响当前交互。
         let storage = match self.ensure_storage() {
             Ok(storage) => storage,
             Err(err) => {
@@ -149,6 +152,19 @@ impl WgApp {
         }
 
         self.configs = configs;
+        // 合并同一天的流量记录，并按日期排序，避免重复日期导致统计偏差。
+        let mut traffic_days = BTreeMap::<String, u64>::new();
+        for day in state.traffic_days {
+            let entry = traffic_days.entry(day.date).or_insert(0);
+            *entry = entry.saturating_add(day.bytes);
+        }
+        self.traffic_days = traffic_days
+            .into_iter()
+            .map(|(date, bytes)| TrafficDay { date, bytes })
+            .collect();
+        // 刚加载的数据视为“干净”，只有新流量产生时才标记 dirty。
+        self.traffic_dirty = false;
+        self.traffic_last_persist_at = None;
         self.selected = state.selected_id.and_then(|id| {
             self.configs.iter().position(|cfg| cfg.id == id)
         });
@@ -193,6 +209,13 @@ impl WgApp {
             selected_id,
             // 保存当前主题，便于下次启动恢复。
             theme_mode: Some(self.theme_mode),
+            // 按天流量持久化，便于下次启动继续累计与绘制趋势。
+            traffic_days: self
+                .traffic_days
+                .clone()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             configs: self
                 .configs
                 .iter()

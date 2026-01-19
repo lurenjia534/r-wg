@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use gpui_component::theme::ThemeMode;
 use serde::{Deserialize, Serialize};
 
-use super::state::ConfigSource;
+use super::state::{ConfigSource, TrafficDay};
 
 pub(crate) const STATE_VERSION: u32 = 1;
 const STATE_FILE_NAME: &str = "state.json";
@@ -25,6 +25,8 @@ pub(crate) struct PersistedState {
     // 兼容旧版 state.json，字段可缺省。
     #[serde(default)]
     pub(crate) theme_mode: Option<ThemeMode>,
+    #[serde(default)]
+    pub(crate) traffic_days: Vec<PersistedTrafficDay>,
     pub(crate) configs: Vec<PersistedConfig>,
 }
 
@@ -33,6 +35,12 @@ pub(crate) struct PersistedConfig {
     pub(crate) id: u64,
     pub(crate) name: String,
     pub(crate) source: PersistedSource,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct PersistedTrafficDay {
+    pub(crate) date: String,
+    pub(crate) bytes: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -58,6 +66,24 @@ impl From<PersistedSource> for ConfigSource {
         match source {
             PersistedSource::File { origin_path } => ConfigSource::File { origin_path },
             PersistedSource::Paste => ConfigSource::Paste,
+        }
+    }
+}
+
+impl From<TrafficDay> for PersistedTrafficDay {
+    fn from(day: TrafficDay) -> Self {
+        Self {
+            date: day.date,
+            bytes: day.bytes,
+        }
+    }
+}
+
+impl From<PersistedTrafficDay> for TrafficDay {
+    fn from(day: PersistedTrafficDay) -> Self {
+        Self {
+            date: day.date,
+            bytes: day.bytes,
         }
     }
 }

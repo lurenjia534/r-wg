@@ -1,11 +1,14 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use chrono::Local;
 use gpui::{AppContext, Context};
 use r_wg::backend::wg::EngineStats;
 use r_wg::log;
 
-use super::super::state::{SidebarItem, WgApp, SPARKLINE_SAMPLES};
+use super::super::state::{
+    SidebarItem, TrafficDay, WgApp, SPARKLINE_SAMPLES, TRAFFIC_HISTORY_DAYS,
+};
 
 impl WgApp {
     /// 启动统计轮询。
@@ -61,11 +64,20 @@ impl WgApp {
                             return false;
                         }
 
+                        let mut persist_due = false;
                         match result {
-                            Ok(stats) => this.apply_stats(stats),
+                            Ok(stats) => {
+                                persist_due = this.apply_stats(stats);
+                            }
                             Err(err) => {
                                 this.stats_note = format!("Stats failed: {err}").into();
                             }
+                        }
+                        if persist_due {
+                            // 仅在必要时落盘，避免每次轮询都写 state.json。
+                            this.persist_state_async(cx);
+                            this.traffic_last_persist_at = Some(Instant::now());
+                            this.traffic_dirty = false;
                         }
                         cx.notify();
                         true
@@ -86,7 +98,7 @@ impl WgApp {
     /// - 先汇总 peer 的累计字节数。
     /// - 基于上一次采样计算速率，避免计数回绕导致负值。
     /// - 尝试读取网卡层统计，作为辅助对比。
-    pub(crate) fn apply_stats(&mut self, stats: EngineStats) {
+    pub(crate) fn apply_stats(&mut self, stats: EngineStats) -> bool {
         // 聚合统计，用于右侧状态卡片展示。
         let total_rx: u64 = stats.peers.iter().map(|peer| peer.rx_bytes).sum();
         let total_tx: u64 = stats.peers.iter().map(|peer| peer.tx_bytes).sum();
@@ -128,6 +140,10 @@ impl WgApp {
         push_rate_sample(&mut self.rx_rate_history, self.rx_rate_bps);
         push_rate_sample(&mut self.tx_rate_history, self.tx_rate_bps);
 
+        // 本轮统计窗口内的总流量（RX + TX），用于 7 日趋势。
+        let traffic_delta = rx_delta.saturating_add(tx_delta);
+        let persist_due = self.record_daily_traffic(traffic_delta);
+
         self.peer_stats = stats.peers;
         if self.peer_stats.is_empty() {
             self.stats_note = "No peers reported".into();
@@ -164,6 +180,8 @@ impl WgApp {
                 ),
             );
         }
+
+        persist_due
     }
 
     /// 清空统计状态。
@@ -194,6 +212,49 @@ impl WgApp {
         for _ in 0..SPARKLINE_SAMPLES {
             self.rx_rate_history.push_back(0.0);
             self.tx_rate_history.push_back(0.0);
+        }
+    }
+
+    fn record_daily_traffic(&mut self, bytes: u64) -> bool {
+        // 没有流量就不记录，避免制造无意义的“空写盘”。
+        if bytes == 0 {
+            return false;
+        }
+
+        // 按本地日期归档，确保跨时区/跨天显示符合用户直觉。
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let mut created = false;
+        if let Some(day) = self.traffic_days.iter_mut().find(|day| day.date == today) {
+            day.bytes = day.bytes.saturating_add(bytes);
+        } else {
+            self.traffic_days.push(TrafficDay {
+                date: today,
+                bytes,
+            });
+            created = true;
+        }
+
+        self.prune_traffic_days();
+        self.traffic_dirty = true;
+
+        if created {
+            // 新的一天首次写入，立即落盘，避免程序异常退出导致丢失当天起点。
+            return true;
+        }
+
+        // 同一天内按节流间隔落盘，平衡数据安全与磁盘写入频率。
+        match self.traffic_last_persist_at {
+            Some(last) => last.elapsed() >= Duration::from_secs(60),
+            None => true,
+        }
+    }
+
+    fn prune_traffic_days(&mut self) {
+        // 保持按时间顺序排列，超出上限时丢弃最旧的记录。
+        self.traffic_days.sort_by(|a, b| a.date.cmp(&b.date));
+        if self.traffic_days.len() > TRAFFIC_HISTORY_DAYS {
+            let remove_count = self.traffic_days.len() - TRAFFIC_HISTORY_DAYS;
+            self.traffic_days.drain(0..remove_count);
         }
     }
 }
