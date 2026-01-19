@@ -2,9 +2,9 @@ use gpui::*;
 use gpui::prelude::FluentBuilder as _;
 
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, StyledExt as _, divider::Divider,
+    ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, divider::Divider,
     group_box::{GroupBox, GroupBoxVariants},
-    h_flex, v_flex,
+    h_flex, tag::Tag, v_flex,
     plot::{StrokeStyle, shape::Line},
     PixelsExt,
 };
@@ -19,6 +19,7 @@ pub(crate) fn render_overview(
     cx: &mut Context<WgApp>,
 ) -> Div {
     let uptime = format_uptime(app);
+    let memory = format_memory_usage();
     let rx = super::super::format::format_bytes(data.peer_summary.rx_bytes);
     let tx = super::super::format::format_bytes(data.peer_summary.tx_bytes);
     let peers = data.peer_summary.peer_count.to_string();
@@ -45,13 +46,6 @@ pub(crate) fn render_overview(
         .map(|cfg| super::super::format::format_route_table(cfg.interface.table))
         .unwrap_or_else(|| "-".to_string());
 
-    let status_text = if app.running { "On" } else { "Off" };
-    let status_color = if app.running {
-        rgb(0x22c55e)
-    } else {
-        rgb(0x64748b)
-    };
-
     div()
         .flex()
         .flex_col()
@@ -66,10 +60,10 @@ pub(crate) fn render_overview(
                     running_status_card(
                         cx,
                         &uptime,
+                        &memory,
                         &rx,
                         &tx,
-                        status_text,
-                        status_color,
+                        app.running,
                         &peers,
                         &handshake,
                     )
@@ -127,13 +121,14 @@ pub(crate) fn render_placeholder(cx: &mut Context<WgApp>) -> Div {
 fn running_status_card(
     cx: &mut Context<WgApp>,
     uptime: &str,
+    memory: &str,
     rx: &str,
     tx: &str,
-    status_text: &str,
-    status_color: Rgba,
+    is_running: bool,
     peers: &str,
     handshake: &str,
 ) -> GroupBox {
+    let border = cx.theme().border;
     GroupBox::new()
         .fill()
         .title(card_title(
@@ -142,37 +137,53 @@ fn running_status_card(
             None,
             cx,
         ))
-        .child(two_row_grid(
-            [
-                metric_cell(IconName::LoaderCircle, "Uptime", uptime, rgb(0x3a8bd6), cx),
-                metric_cell(IconName::ArrowDown, "RX", rx, rgb(0xf59e0b), cx),
-                metric_cell(IconName::ArrowUp, "TX", tx, rgb(0x2dd4bf), cx),
-            ],
-            [
-                status_item(
-                    IconName::CircleCheck,
-                    "Status",
-                    status_text,
-                    status_color,
+        .child(
+            v_flex()
+                .gap_0()
+                .child(two_row_grid(
+                    [
+                        metric_cell(
+                            IconName::LoaderCircle,
+                            "Uptime",
+                            uptime,
+                            rgb(0x3a8bd6),
+                            cx,
+                        ),
+                        metric_cell(IconName::ArrowDown, "RX", rx, rgb(0xf59e0b), cx),
+                        metric_cell(IconName::ArrowUp, "TX", tx, rgb(0x2dd4bf), cx),
+                    ],
+                    [
+                        status_state_item(is_running, cx),
+                        status_item(
+                            IconName::CircleUser,
+                            "Peers",
+                            peers,
+                            rgb(0x60a5fa),
+                            cx,
+                        ),
+                        status_item(
+                            IconName::ExternalLink,
+                            "Handshake",
+                            handshake,
+                            rgb(0xa3a3a3),
+                            cx,
+                        ),
+                    ],
                     cx,
+                ))
+                .child(
+                    metric_cell(
+                        IconName::LayoutDashboard,
+                        "Memory",
+                        memory,
+                        rgb(0x22d3ee),
+                        cx,
+                    )
+                    .w_full()
+                    .border_t_1()
+                    .border_color(border),
                 ),
-                status_item(
-                    IconName::CircleUser,
-                    "Peers",
-                    peers,
-                    rgb(0x60a5fa),
-                    cx,
-                ),
-                status_item(
-                    IconName::ExternalLink,
-                    "Handshake",
-                    handshake,
-                    rgb(0xa3a3a3),
-                    cx,
-                ),
-            ],
-            cx,
-        ))
+        )
 }
 
 fn network_status_card(
@@ -409,6 +420,34 @@ fn status_item(
                 .font_semibold()
                 .text_color(cx.theme().foreground)
                 .child(value.to_string()),
+        )
+}
+
+fn status_state_item(is_running: bool, cx: &mut Context<WgApp>) -> Div {
+    let (state_text, state_icon, tag) = if is_running {
+        ("On", IconName::CircleCheck, Tag::success())
+    } else {
+        ("Off", IconName::CircleX, Tag::secondary().outline())
+    };
+
+    v_flex()
+        .gap_1()
+        .flex_grow()
+        .min_w(px(0.0))
+        .px_4()
+        .py_2()
+        .child(
+            div()
+                .text_sm()
+                .font_semibold()
+                .text_color(cx.theme().foreground)
+                .child("Status"),
+        )
+        .child(
+            tag.small()
+                .gap_1()
+                .child(Icon::new(state_icon).size_3())
+                .child(state_text),
         )
 }
 
@@ -673,5 +712,41 @@ fn format_allowed_summary(data: &ViewData) -> String {
         "-".to_string()
     } else {
         format!("{count} routes")
+    }
+}
+
+fn format_memory_usage() -> String {
+    match read_process_rss_bytes() {
+        Some(bytes) => format_memory(bytes),
+        None => "-".to_string(),
+    }
+}
+
+fn read_process_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            let mut parts = rest.split_whitespace();
+            let kb = parts.next()?.parse::<u64>().ok()?;
+            return Some(kb.saturating_mul(1024));
+        }
+    }
+    None
+}
+
+fn format_memory(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * KB;
+    const GB: f64 = 1024.0 * MB;
+
+    let value = bytes as f64;
+    if value >= GB {
+        format!("{:.1} GB", value / GB)
+    } else if value >= MB {
+        format!("{:.0} MB", value / MB)
+    } else if value >= KB {
+        format!("{:.0} KB", value / KB)
+    } else {
+        format!("{bytes} B")
     }
 }
