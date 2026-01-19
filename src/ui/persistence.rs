@@ -1,6 +1,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use gpui_component::theme::ThemeMode;
 use serde::{Deserialize, Serialize};
 
 use super::state::ConfigSource;
@@ -21,6 +22,9 @@ pub(crate) struct PersistedState {
     pub(crate) version: u32,
     pub(crate) next_id: u64,
     pub(crate) selected_id: Option<u64>,
+    // 兼容旧版 state.json，字段可缺省。
+    #[serde(default)]
+    pub(crate) theme_mode: Option<ThemeMode>,
     pub(crate) configs: Vec<PersistedConfig>,
 }
 

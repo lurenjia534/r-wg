@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use gpui::{Entity, SharedString};
 use gpui_component::{IconName, input::InputState};
+use gpui_component::theme::ThemeMode;
 use r_wg::backend::wg::{config, Engine, PeerStats};
 use r_wg::dns::{DnsMode, DnsPreset};
 
@@ -173,6 +174,8 @@ pub(crate) struct WgApp {
     pub(crate) stats_generation: u64,
     // 页面选择与模式开关。
     pub(crate) right_tab: RightTab,
+    // 持久化的主题选择（浅色/深色）。
+    pub(crate) theme_mode: ThemeMode,
     pub(crate) dns_mode: DnsMode,
     pub(crate) dns_preset: DnsPreset,
     pub(crate) sidebar_active: SidebarItem,
@@ -193,7 +196,7 @@ pub(crate) struct WgApp {
 }
 
 impl WgApp {
-    pub(crate) fn new(engine: Engine) -> Self {
+    pub(crate) fn new(engine: Engine, theme_mode: ThemeMode) -> Self {
         Self {
             engine,
             configs: Vec::new(),
@@ -224,6 +227,7 @@ impl WgApp {
             stats_note: "Peer stats unavailable".into(),
             stats_generation: 0,
             right_tab: RightTab::Status,
+            theme_mode,
             dns_mode: DnsMode::FollowConfig,
             dns_preset: DnsPreset::CloudflareStandard,
             sidebar_active: SidebarItem::Overview,

@@ -1,4 +1,5 @@
 use gpui::{AppContext, Context, Window};
+use gpui_component::theme::Theme;
 
 use super::super::persistence::{
     self, PersistedConfig, PersistedSource, PersistedState, StoragePaths, STATE_VERSION,
@@ -109,6 +110,12 @@ impl WgApp {
             return;
         }
 
+        // 尽早应用主题，避免启动时闪烁。
+        if let Some(theme_mode) = state.theme_mode {
+            self.theme_mode = theme_mode;
+            Theme::change(theme_mode, Some(window), cx);
+        }
+
         let mut configs = Vec::new();
         let mut max_id = 0u64;
         let mut missing_files = 0usize;
@@ -184,6 +191,8 @@ impl WgApp {
             version: STATE_VERSION,
             next_id: self.next_config_id,
             selected_id,
+            // 保存当前主题，便于下次启动恢复。
+            theme_mode: Some(self.theme_mode),
             configs: self
                 .configs
                 .iter()

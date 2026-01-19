@@ -58,8 +58,13 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .icon(Icon::new(IconName::Sun).size_4())
                 .selected(!is_dark)
                 .tooltip("Switch to light mode")
-                .on_click(cx.listener(|_, _, window, cx| {
-                    Theme::change(ThemeMode::Light, Some(window), cx);
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.theme_mode != ThemeMode::Light {
+                        // 持久化主题选择，便于下次启动恢复。
+                        this.theme_mode = ThemeMode::Light;
+                        Theme::change(ThemeMode::Light, Some(window), cx);
+                        this.persist_state_async(cx);
+                    }
                 })),
         )
         .child(
@@ -67,8 +72,13 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .icon(Icon::new(IconName::Moon).size_4())
                 .selected(is_dark)
                 .tooltip("Switch to dark mode")
-                .on_click(cx.listener(|_, _, window, cx| {
-                    Theme::change(ThemeMode::Dark, Some(window), cx);
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.theme_mode != ThemeMode::Dark {
+                        // 持久化主题选择，便于下次启动恢复。
+                        this.theme_mode = ThemeMode::Dark;
+                        Theme::change(ThemeMode::Dark, Some(window), cx);
+                        this.persist_state_async(cx);
+                    }
                 })),
         );
 
