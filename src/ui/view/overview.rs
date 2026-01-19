@@ -6,7 +6,7 @@ use gpui::prelude::FluentBuilder as _;
 
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, divider::Divider,
-    chart::BarChart,
+    chart::{BarChart, LineChart},
     group_box::{GroupBox, GroupBoxVariants},
     h_flex, tag::Tag, v_flex,
     plot::{AXIS_GAP, StrokeStyle, scale::{Scale, ScaleLinear}, shape::Line},
@@ -33,8 +33,10 @@ pub(crate) fn render_overview(
     let download_total = super::super::format::format_bytes(data.peer_summary.rx_bytes);
     let upload_series: Vec<f32> = app.tx_rate_history.iter().copied().collect();
     let download_series: Vec<f32> = app.rx_rate_history.iter().copied().collect();
-    let upload_sparkline = Sparkline::new(&upload_series, rgb(0x6366f1), rgb(0xf8fafc));
-    let download_sparkline = Sparkline::new(&download_series, rgb(0x22d3ee), rgb(0xf8fafc));
+    let upload_sparkline =
+        sparkline_chart(build_sparkline_points(&upload_series), rgb(0x6366f1));
+    let download_sparkline =
+        sparkline_chart(build_sparkline_points(&download_series), rgb(0x22d3ee));
 
     let local_ip = format_local_ip(data);
     let dns = format_dns(data);
@@ -259,8 +261,8 @@ fn traffic_stats_card(
     download_speed: &str,
     upload_total: &str,
     download_total: &str,
-    upload_sparkline: Sparkline,
-    download_sparkline: Sparkline,
+    upload_sparkline: AnyElement,
+    download_sparkline: AnyElement,
 ) -> GroupBox {
     GroupBox::new()
         .fill()
@@ -410,7 +412,7 @@ fn traffic_column(
     speed: &str,
     total: &str,
     color: impl Into<Hsla>,
-    sparkline: Sparkline,
+    sparkline: AnyElement,
     cx: &mut Context<WgApp>,
 ) -> Div {
     let color: Hsla = color.into();
@@ -623,6 +625,33 @@ fn format_speed(bytes_per_sec: f64) -> String {
     }
 }
 
+struct SparklinePoint {
+    label: String,
+    value: f64,
+}
+
+fn build_sparkline_points(series: &[f32]) -> Vec<SparklinePoint> {
+    series
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| SparklinePoint {
+            label: idx.to_string(),
+            value: *value as f64,
+        })
+        .collect()
+}
+
+fn sparkline_chart(points: Vec<SparklinePoint>, stroke: impl Into<Hsla>) -> AnyElement {
+    let tick_margin = points.len().saturating_add(1);
+    LineChart::new(points)
+        .x(|point| point.label.clone())
+        .y(|point| point.value)
+        .stroke(stroke)
+        .linear()
+        .tick_margin(tick_margin)
+        .into_any_element()
+}
+
 fn format_avg_bytes(bytes: f64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * KB;
@@ -731,157 +760,6 @@ impl Element for TrafficAvgLine {
             .stroke_style(StrokeStyle::Linear);
 
         avg_line.paint(&bounds, window);
-    }
-}
-
-struct Sparkline {
-    data: Vec<f32>,
-    stroke: Hsla,
-    dot_fill: Hsla,
-    dot_stroke: Hsla,
-    stroke_width: f32,
-}
-
-impl Sparkline {
-    fn new(data: &[f32], stroke: impl Into<Hsla>, dot_stroke: impl Into<Hsla>) -> Self {
-        let stroke = stroke.into();
-        Self {
-            data: data.to_vec(),
-            stroke,
-            dot_fill: stroke,
-            dot_stroke: dot_stroke.into(),
-            stroke_width: 2.5,
-        }
-    }
-}
-
-impl IntoElement for Sparkline {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-impl Element for Sparkline {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        let style = Style {
-            size: Size::full(),
-            ..Default::default()
-        };
-        (window.request_layout(style, None, cx), ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
-        _: &mut Window,
-        _: &mut App,
-    ) -> Self::PrepaintState {
-    }
-
-    fn paint(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
-        window: &mut Window,
-        _cx: &mut App,
-    ) {
-        if self.data.len() < 2 {
-            return;
-        }
-
-        let width = bounds.size.width.as_f32();
-        let height = bounds.size.height.as_f32();
-        let padding = 6.0;
-        let available = (height - padding * 2.0).max(1.0);
-
-        let min = self
-            .data
-            .iter()
-            .cloned()
-            .fold(f32::INFINITY, f32::min);
-        let max = self
-            .data
-            .iter()
-            .cloned()
-            .fold(f32::NEG_INFINITY, f32::max);
-        let range = if (max - min).abs() < f32::EPSILON {
-            1.0
-        } else {
-            max - min
-        };
-
-        let len = self.data.len();
-        let points: Vec<(f32, f32)> = self
-            .data
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| {
-                let x = if len == 1 {
-                    width / 2.0
-                } else {
-                    (idx as f32 / (len - 1) as f32) * width
-                };
-                let y = height - padding - ((value - min) / range) * available;
-                (x, y)
-            })
-            .collect();
-
-        let line = Line::new()
-            .data(points.clone())
-            .x(|point| Some(point.0))
-            .y(|point| Some(point.1))
-            .stroke(self.stroke)
-            .stroke_width(self.stroke_width)
-            .stroke_style(StrokeStyle::Linear);
-        line.paint(&bounds, window);
-
-        if let Some((x, y)) = points.last().copied() {
-            let dot_size = px(12.0);
-            let dot_radius = dot_size.as_f32() / 2.0;
-            let origin_x = bounds.origin.x.as_f32();
-            let origin_y = bounds.origin.y.as_f32();
-            let dot_bounds = gpui::bounds(
-                point(
-                    px(origin_x + x - dot_radius),
-                    px(origin_y + y - dot_radius),
-                ),
-                size(dot_size, dot_size),
-            );
-            let dot = quad(
-                dot_bounds,
-                dot_radius,
-                self.dot_fill,
-                px(2.0),
-                self.dot_stroke,
-                BorderStyle::default(),
-            );
-            window.paint_quad(dot);
-        }
     }
 }
 
