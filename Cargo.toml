@@ -13,8 +13,6 @@ base64 = "0.22.1"
 chrono = "0.4.43"
 futures-util = "0.3"
 ipnetwork = "0.21.1" # gotatun 0.2.x 的公共 Peer/Allowed IPs 类型依赖
-rtnetlink = "0.20.0"
-netlink-packet-route = "0.28.0"
 dirs = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -22,6 +20,10 @@ serde_json = "1.0"
 # components that can have children. uncomment this line or
 # use `cargo add smallvec` to add it to your project
 #smallvec = "1.13.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rtnetlink = "0.20.0"
+netlink-packet-route = "0.28.0"
 
 [patch.crates-io]
 # 临时补丁：ashpd 0.11.0 在 zvariant >= 5.9 的 dict key 约束下编译失败；上游修复后删除此 patch。

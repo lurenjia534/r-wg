@@ -6,8 +6,11 @@
 //! - Linux：真实实现（地址/路由/DNS）。
 //! - macOS/Windows：当前保持空实现占位，后续补齐。
 
+#[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "macos")]
 pub mod macos;
+#[cfg(target_os = "windows")]
 pub mod windows;
 
 use crate::backend::wg::config::{InterfaceConfig, PeerConfig};
