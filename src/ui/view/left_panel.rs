@@ -1,8 +1,8 @@
 use gpui::*;
 
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader,
-    SidebarMenu, SidebarMenuItem},
+    ActiveTheme as _, Icon, IconName, Selectable as _,
+    sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     h_flex, v_flex,
 };
 
@@ -44,7 +44,12 @@ pub(crate) fn render_left_panel(
                 .child(Icon::new(IconName::Info).size_4())
                 .child(div().text_sm().child("About")),
         )
-        .child(Icon::new(IconName::Settings).size_4());
+        .child(Icon::new(IconName::Settings).size_4())
+        .selected(app.sidebar_active == SidebarItem::About)
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, _window, cx| {
+            this.sidebar_active = SidebarItem::About;
+            cx.notify();
+        }));
 
     Sidebar::left()
         .collapsible(false)
