@@ -1,10 +1,9 @@
-//! 平台层统一入口。
+//! 平台网络配置的统一入口。
 //!
-//! 目标是屏蔽各平台网络配置差异，并为上层提供一致的接口：
-//! `apply_network_config` / `cleanup_network_config`。
-//!
-//! - Linux：真实实现（地址/路由/DNS）。
-//! - macOS/Windows：当前保持空实现占位，后续补齐。
+//! 说明：
+//! - 该模块只负责“按平台分发”到具体实现（linux/windows）。
+//! - 上层（引擎/UI）只调用这里的 `apply_network_config` / `cleanup_network_config`。
+//! - 非目标平台会编译为占位实现，避免引入不必要依赖。
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -15,27 +14,27 @@ pub mod windows;
 
 use crate::backend::wg::config::{InterfaceConfig, PeerConfig};
 
-/// Linux 平台的真实状态与错误类型直接复用，避免重复定义。
+/// Linux 平台：直接复用 linux 模块的状态与错误类型。
 #[cfg(target_os = "linux")]
 pub use linux::{AppliedNetworkState as NetworkState, NetworkError};
 
-/// 非 Linux 平台的占位状态类型。
-///
-/// 目前不会携带任何实际配置状态，仅用于保持 API 形状一致。
-#[cfg(not(target_os = "linux"))]
+/// Windows 平台：直接复用 windows 模块的状态与错误类型。
+#[cfg(target_os = "windows")]
+pub use windows::{AppliedNetworkState as NetworkState, NetworkError};
+
+/// 其他平台：占位状态类型（仅用于保持 API 形状一致）。
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 #[derive(Debug)]
 pub struct NetworkState;
 
-/// 非 Linux 平台的占位错误类型。
-///
-/// 目前只有 Unsupported，用于提醒上层功能尚未实现。
-#[cfg(not(target_os = "linux"))]
+/// 其他平台：占位错误类型（提示未实现）。
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 #[derive(Debug)]
 pub enum NetworkError {
     Unsupported,
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 impl std::fmt::Display for NetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -44,12 +43,12 @@ impl std::fmt::Display for NetworkError {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 impl std::error::Error for NetworkError {}
 
 /// 应用系统网络配置。
-///
-/// Linux 上执行真实配置；其他平台暂时为 no-op，返回占位状态。
+/// - Linux/Windows：调用各自平台实现。
+/// - 其他平台：no-op，占位返回。
 #[cfg(target_os = "linux")]
 pub async fn apply_network_config(
     tun_name: &str,
@@ -59,7 +58,18 @@ pub async fn apply_network_config(
     linux::apply_network_config(tun_name, interface, peers).await
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows 平台的网络配置入口。
+#[cfg(target_os = "windows")]
+pub async fn apply_network_config(
+    tun_name: &str,
+    interface: &InterfaceConfig,
+    peers: &[PeerConfig],
+) -> Result<NetworkState, NetworkError> {
+    windows::apply_network_config(tun_name, interface, peers).await
+}
+
+/// 其他平台：占位实现。
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 pub async fn apply_network_config(
     _tun_name: &str,
     _interface: &InterfaceConfig,
@@ -69,14 +79,21 @@ pub async fn apply_network_config(
 }
 
 /// 回滚系统网络配置。
-///
-/// Linux 上执行真实清理；其他平台暂时为 no-op。
+/// - Linux/Windows：调用各自平台实现。
+/// - 其他平台：no-op。
 #[cfg(target_os = "linux")]
 pub async fn cleanup_network_config(state: NetworkState) -> Result<(), NetworkError> {
     linux::cleanup_network_config(state).await
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows 平台的回滚入口。
+#[cfg(target_os = "windows")]
+pub async fn cleanup_network_config(state: NetworkState) -> Result<(), NetworkError> {
+    windows::cleanup_network_config(state).await
+}
+
+/// 其他平台：占位实现。
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 pub async fn cleanup_network_config(_state: NetworkState) -> Result<(), NetworkError> {
     Ok(())
 }
