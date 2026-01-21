@@ -24,14 +24,14 @@ r-wg is a Rust-based WireGuard client with a GPUI front end and a Rust backend (
 ### Linux (non-root with capabilities)
 
 ```sh
-scripts/build_with_cap.sh
-scripts/run_with_cap.sh
+scripts/linux/build_with_cap.sh
+scripts/linux/run_with_cap.sh
 ```
 
 To run with logs:
 
 ```sh
-RWG_LOG=1 scripts/run_with_cap.sh
+RWG_LOG=1 scripts/linux/run_with_cap.sh
 ```
 
 If you build manually, set the capability on the binary:
@@ -45,8 +45,8 @@ sudo setcap cap_net_admin+ep target/debug/r-wg
 ### Release build
 
 ```sh
-scripts/build_with_cap.sh --release
-scripts/run_with_cap.sh --release
+scripts/linux/build_with_cap.sh --release
+scripts/linux/run_with_cap.sh --release
 ```
 
 ## Configuration Format
@@ -72,7 +72,7 @@ Endpoint = example.com:51820
 - `src/backend/wg`: config parser and engine.
 - `src/platform/linux`: Linux network apply/cleanup via netlink.
 - `src/ui.rs`: GPUI UI and tunnel management.
-- `scripts/`: build/run helpers with `setcap`.
+- `scripts/`: OS-specific helpers (`scripts/linux`, `scripts/windows`).
 
 ## Dependency Note
 
