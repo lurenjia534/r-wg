@@ -22,6 +22,14 @@ serde_json = "1.0"
 # use `cargo add smallvec` to add it to your project
 #smallvec = "1.13.2"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.56.0", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 rtnetlink = "0.20.0"
 netlink-packet-route = "0.28.0"
