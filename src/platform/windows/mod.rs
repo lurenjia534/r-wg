@@ -3,23 +3,27 @@
 // 目标：根据 WG 配置为 Wintun 适配器设置地址、路由、接口 metric 等，
 // 同时处理绕过路由（bypass route）以保证 Endpoint 可达。
 use std::collections::HashSet;
+use std::ffi::CStr;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use tokio::time::sleep;
-use windows::core::PWSTR;
+use windows::core::{GUID, PSTR, PWSTR};
 use windows::Win32::Foundation::{
-    ERROR_ALREADY_EXISTS, ERROR_BUFFER_OVERFLOW, ERROR_NOT_FOUND, ERROR_OBJECT_ALREADY_EXISTS,
-    BOOLEAN, NO_ERROR, WIN32_ERROR,
+    ERROR_ALREADY_EXISTS, ERROR_BUFFER_OVERFLOW, ERROR_FILE_NOT_FOUND, ERROR_NOT_FOUND,
+    ERROR_OBJECT_ALREADY_EXISTS, BOOLEAN, NO_ERROR, WIN32_ERROR,
 };
 use windows::Win32::NetworkManagement::IpHelper::{
     CreateIpForwardEntry2, CreateUnicastIpAddressEntry, DeleteIpForwardEntry2,
-    DeleteUnicastIpAddressEntry, GetAdaptersAddresses, GetBestRoute2, GetIpInterfaceEntry,
-    InitializeIpForwardEntry, InitializeIpInterfaceEntry, InitializeUnicastIpAddressEntry,
-    SetIpInterfaceEntry, IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_UNICAST_ADDRESS_LH, IP_ADDRESS_PREFIX,
-    MIB_IPFORWARD_ROW2, MIB_IPINTERFACE_ROW, MIB_UNICASTIPADDRESS_ROW, GAA_FLAG_INCLUDE_PREFIX,
-    GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
+    DeleteUnicastIpAddressEntry, FreeInterfaceDnsSettings, GetAdaptersAddresses,
+    GetBestRoute2, GetInterfaceDnsSettings, GetIpInterfaceEntry, InitializeIpForwardEntry,
+    InitializeIpInterfaceEntry, InitializeUnicastIpAddressEntry, SetInterfaceDnsSettings,
+    SetIpInterfaceEntry, DNS_INTERFACE_SETTINGS, DNS_INTERFACE_SETTINGS_VERSION1,
+    DNS_SETTING_NAMESERVER, DNS_SETTING_SEARCHLIST, IP_ADAPTER_ADDRESSES_LH,
+    IP_ADAPTER_UNICAST_ADDRESS_LH, IP_ADDRESS_PREFIX, MIB_IPFORWARD_ROW2, MIB_IPINTERFACE_ROW,
+    MIB_UNICASTIPADDRESS_ROW, GAA_FLAG_INCLUDE_PREFIX, GAA_FLAG_SKIP_ANYCAST,
+    GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
 };
 use windows::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows::Win32::Networking::WinSock::{
@@ -44,6 +48,8 @@ struct AdapterInfo {
     if_index: u32,
     // NET_LUID 用于部分 IP Helper API。
     luid: NET_LUID_LH,
+    guid: GUID,
+    dns_guid_fallback: Option<GUID>,
 }
 
 #[derive(Clone)]
@@ -66,6 +72,15 @@ struct InterfaceMetricState {
     metric: u32,
 }
 
+#[derive(Clone)]
+struct DnsState {
+    guid: GUID,
+    touched_nameserver: bool,
+    touched_search: bool,
+    original_nameserver: Option<String>,
+    original_searchlist: Option<String>,
+}
+
 pub struct AppliedNetworkState {
     // 保存本次应用的状态，便于 cleanup 时回滚。
     tun_name: String,
@@ -74,6 +89,7 @@ pub struct AppliedNetworkState {
     routes: Vec<RouteEntry>,
     bypass_routes: Vec<RouteEntry>,
     iface_metrics: Vec<InterfaceMetricState>,
+    dns: Option<DnsState>,
 }
 
 #[derive(Debug)]
@@ -136,10 +152,6 @@ pub async fn apply_network_config(
     if interface.fwmark.is_some() {
         log_net("fwmark ignored on windows".to_string());
     }
-    if !interface.dns_servers.is_empty() || !interface.dns_search.is_empty() {
-        log_net("dns config not implemented on windows".to_string());
-    }
-
     let adapter = find_adapter_with_retry(tun_name).await?;
 
     let mut state = AppliedNetworkState {
@@ -149,6 +161,7 @@ pub async fn apply_network_config(
         routes: Vec::new(),
         bypass_routes: Vec::new(),
         iface_metrics: Vec::new(),
+        dns: None,
     };
 
     cleanup_stale_unicast_addresses(adapter, &interface.addresses)?;
@@ -274,6 +287,22 @@ pub async fn apply_network_config(
         }
     }
 
+    if !interface.dns_servers.is_empty() || !interface.dns_search.is_empty() {
+        log_net(format!(
+            "dns: servers={} search={}",
+            interface.dns_servers.len(),
+            interface.dns_search.len()
+        ));
+        match apply_dns(adapter, &interface.dns_servers, &interface.dns_search) {
+            Ok(dns_state) => state.dns = Some(dns_state),
+            Err(err) => {
+                log_net(format!("dns apply failed: {err}"));
+                let _ = cleanup_network_config(state).await;
+                return Err(err);
+            }
+        }
+    }
+
     Ok(state)
 }
 
@@ -311,12 +340,210 @@ pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), Ne
         }
     }
 
+    if let Some(dns) = state.dns {
+        log_net("dns revert".to_string());
+        if let Err(err) = cleanup_dns(dns) {
+            log_net(format!("dns revert failed: {err}"));
+        }
+    }
+
     Ok(())
 }
 
 fn log_net(message: String) {
     // 统一网络层日志出口。
     log::log("net", message);
+}
+
+fn apply_dns(
+    adapter: AdapterInfo,
+    servers: &[IpAddr],
+    search: &[String],
+) -> Result<DnsState, NetworkError> {
+    let primary = apply_dns_with_guid(adapter.guid, servers, search);
+    if primary.is_ok() {
+        return primary;
+    }
+    if let Some(fallback) = adapter.dns_guid_fallback {
+        log_net("dns apply retry with fallback guid".to_string());
+        return apply_dns_with_guid(fallback, servers, search);
+    }
+    primary
+}
+
+fn apply_dns_with_guid(
+    guid: GUID,
+    servers: &[IpAddr],
+    search: &[String],
+) -> Result<DnsState, NetworkError> {
+    let (original_nameserver, original_searchlist) = read_interface_dns_settings(guid)?;
+
+    let search_items: Vec<String> = search
+        .iter()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+        .collect();
+
+    let touched_nameserver = !servers.is_empty();
+    let touched_search = !search_items.is_empty();
+
+    if !touched_nameserver && !touched_search {
+        return Ok(DnsState {
+            guid,
+            touched_nameserver,
+            touched_search,
+            original_nameserver,
+            original_searchlist,
+        });
+    }
+
+    let mut flags = 0u64;
+    let mut nameserver_buf = None;
+    if touched_nameserver {
+        flags |= DNS_SETTING_NAMESERVER as u64;
+        let joined = servers
+            .iter()
+            .map(|ip| ip.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        nameserver_buf = Some(encode_utf16_z(&joined));
+    }
+
+    let mut search_buf = None;
+    if touched_search {
+        flags |= DNS_SETTING_SEARCHLIST as u64;
+        let joined = search_items.join(",");
+        search_buf = Some(encode_utf16_z(&joined));
+    }
+
+    let settings = DNS_INTERFACE_SETTINGS {
+        Version: DNS_INTERFACE_SETTINGS_VERSION1,
+        Flags: flags,
+        Domain: PWSTR(std::ptr::null_mut()),
+        NameServer: pwstr_from_buf(&nameserver_buf),
+        SearchList: pwstr_from_buf(&search_buf),
+        RegistrationEnabled: 0,
+        RegisterAdapterName: 0,
+        EnableLLMNR: 0,
+        QueryAdapterName: 0,
+        ProfileNameServer: PWSTR(std::ptr::null_mut()),
+    };
+
+    let result = unsafe { SetInterfaceDnsSettings(guid, &settings) };
+    if result != NO_ERROR {
+        return Err(NetworkError::Win32 {
+            context: "SetInterfaceDnsSettings",
+            code: result,
+        });
+    }
+
+    Ok(DnsState {
+        guid,
+        touched_nameserver,
+        touched_search,
+        original_nameserver,
+        original_searchlist,
+    })
+}
+
+fn cleanup_dns(state: DnsState) -> Result<(), NetworkError> {
+    if !state.touched_nameserver && !state.touched_search {
+        return Ok(());
+    }
+
+    let mut flags = 0u64;
+    let mut nameserver_buf = None;
+    if state.touched_nameserver {
+        flags |= DNS_SETTING_NAMESERVER as u64;
+        if let Some(value) = state.original_nameserver.as_ref() {
+            nameserver_buf = Some(encode_utf16_z(value));
+        }
+    }
+
+    let mut search_buf = None;
+    if state.touched_search {
+        flags |= DNS_SETTING_SEARCHLIST as u64;
+        if let Some(value) = state.original_searchlist.as_ref() {
+            search_buf = Some(encode_utf16_z(value));
+        }
+    }
+
+    if flags == 0 {
+        return Ok(());
+    }
+
+    let settings = DNS_INTERFACE_SETTINGS {
+        Version: DNS_INTERFACE_SETTINGS_VERSION1,
+        Flags: flags,
+        Domain: PWSTR(std::ptr::null_mut()),
+        NameServer: pwstr_from_buf(&nameserver_buf),
+        SearchList: pwstr_from_buf(&search_buf),
+        RegistrationEnabled: 0,
+        RegisterAdapterName: 0,
+        EnableLLMNR: 0,
+        QueryAdapterName: 0,
+        ProfileNameServer: PWSTR(std::ptr::null_mut()),
+    };
+
+    let result = unsafe { SetInterfaceDnsSettings(state.guid, &settings) };
+    if result != NO_ERROR {
+        return Err(NetworkError::Win32 {
+            context: "SetInterfaceDnsSettings(revert)",
+            code: result,
+        });
+    }
+
+    Ok(())
+}
+
+fn read_interface_dns_settings(
+    guid: GUID,
+) -> Result<(Option<String>, Option<String>), NetworkError> {
+    let mut settings = DNS_INTERFACE_SETTINGS::default();
+    settings.Version = DNS_INTERFACE_SETTINGS_VERSION1;
+
+    let result = unsafe { GetInterfaceDnsSettings(guid, &mut settings) };
+    if result == ERROR_FILE_NOT_FOUND {
+        log_net("dns settings not found for interface, assuming empty".to_string());
+        return Ok((None, None));
+    }
+    if result != NO_ERROR {
+        return Err(NetworkError::Win32 {
+            context: "GetInterfaceDnsSettings",
+            code: result,
+        });
+    }
+
+    let nameserver = normalize_pwstr(settings.NameServer);
+    let searchlist = normalize_pwstr(settings.SearchList);
+
+    unsafe {
+        FreeInterfaceDnsSettings(&mut settings);
+    }
+
+    Ok((nameserver, searchlist))
+}
+
+fn normalize_pwstr(ptr: PWSTR) -> Option<String> {
+    let value = pwstr_to_string(ptr);
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn encode_utf16_z(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn pwstr_from_buf(buf: &Option<Vec<u16>>) -> PWSTR {
+    match buf {
+        Some(value) => PWSTR(value.as_ptr() as *mut u16),
+        None => PWSTR(std::ptr::null_mut()),
+    }
 }
 
 async fn find_adapter_with_retry(name: &str) -> Result<AdapterInfo, NetworkError> {
@@ -360,9 +587,24 @@ fn find_adapter_by_name(name: &str) -> Result<Option<AdapterInfo>, NetworkError>
             let current = &*adapter;
             let friendly = pwstr_to_string(current.FriendlyName);
             if friendly.eq_ignore_ascii_case(name) {
+                let adapter_name = pstr_to_string(current.AdapterName);
+                let guid = match extract_guid_from_adapter_name(&adapter_name) {
+                    Some(guid) => guid,
+                    None => {
+                        log_net("adapter guid parse failed, using NetworkGuid".to_string());
+                        current.NetworkGuid
+                    }
+                };
+                let dns_guid_fallback = if guid != current.NetworkGuid {
+                    Some(current.NetworkGuid)
+                } else {
+                    None
+                };
                 return Ok(Some(AdapterInfo {
                     if_index: current.Anonymous1.Anonymous.IfIndex,
                     luid: current.Luid,
+                    guid,
+                    dns_guid_fallback,
                 }));
             }
             adapter = current.Next;
@@ -387,6 +629,55 @@ fn pwstr_to_string(ptr: PWSTR) -> String {
         let slice = std::slice::from_raw_parts(ptr.0, len);
         String::from_utf16_lossy(slice)
     }
+}
+
+fn pstr_to_string(ptr: PSTR) -> String {
+    // Convert Windows ANSI string pointer to Rust String.
+    if ptr.0.is_null() {
+        return String::new();
+    }
+    unsafe { CStr::from_ptr(ptr.0 as *const i8).to_string_lossy().into_owned() }
+}
+
+fn extract_guid_from_adapter_name(name: &str) -> Option<GUID> {
+    let trimmed = name.trim();
+    let candidate = if let Some(start) = trimmed.find('{') {
+        let rest = &trimmed[start + 1..];
+        if let Some(end) = rest.find('}') {
+            &rest[..end]
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+    let candidate = candidate.trim_matches('{').trim_matches('}');
+    if !is_guid_string(candidate) {
+        return None;
+    }
+    Some(GUID::from(candidate))
+}
+
+fn is_guid_string(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    for (idx, ch) in bytes.iter().enumerate() {
+        match idx {
+            8 | 13 | 18 | 23 => {
+                if *ch != b'-' {
+                    return false;
+                }
+            }
+            _ => {
+                if !ch.is_ascii_hexdigit() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 fn add_unicast_address(
