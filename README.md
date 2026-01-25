@@ -5,7 +5,8 @@ r-wg is a Rust-based WireGuard client with a GPUI front end and a Rust backend (
 ## Status
 
 - Linux: TUN device + address/route configuration via netlink, DNS via resolvectl/resolvconf.
-- macOS/Windows: scaffolding only (network configuration is a placeholder).
+- Windows: network configuration implementation (addresses/routes/DNS/metrics + endpoint bypass).
+- macOS: placeholder only (network configuration not implemented).
 
 ## Features
 
@@ -74,6 +75,7 @@ Endpoint = example.com:51820
 
 - `src/backend/wg`: config parser and engine.
 - `src/platform/linux`: Linux network apply/cleanup via netlink.
+- `src/platform/windows`: Windows network apply/cleanup via IP Helper APIs.
 - `src/ui.rs`: GPUI UI and tunnel management.
 - `scripts/`: OS-specific helpers (`scripts/linux`, `scripts/windows`).
 
