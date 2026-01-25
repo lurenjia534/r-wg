@@ -70,7 +70,7 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         v_flex().gap_3().child(header).child(
             Alert::info(
                 "about-status",
-                "Linux networking is production-ready. macOS/Windows are scaffolding only.",
+                "Linux networking is production-ready. Windows is supported. macOS is scaffolding only.",
             )
             .text_xs(),
         ),
@@ -128,10 +128,10 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                             .child("macOS scaffold"),
                     )
                     .child(
-                        Tag::warning()
+                        Tag::success()
                             .small()
                             .rounded_full()
-                            .child("Windows scaffold"),
+                            .child("Windows ready"),
                     ),
             ),
     );
