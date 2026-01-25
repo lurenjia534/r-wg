@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{Duration as ChronoDuration, Local, NaiveDate};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 
 use gpui_component::{
-    chart::{BarChart, LineChart},
+    button::{Button, ButtonGroup},
+    chart::{BarChart, LineChart, PieChart},
     divider::Divider,
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
@@ -14,11 +15,13 @@ use gpui_component::{
         shape::Line,
         StrokeStyle, AXIS_GAP,
     },
+    progress::Progress,
     tag::Tag,
-    v_flex, ActiveTheme as _, Icon, IconName, PixelsExt, Sizable as _, StyledExt as _,
+    v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, PixelsExt, Selectable as _,
+    Sizable as _, StyledExt as _,
 };
 
-use super::super::state::{WgApp, TRAFFIC_TREND_DAYS};
+use super::super::state::{TrafficDayStats, TrafficHour, TrafficPeriod, WgApp, TRAFFIC_TREND_DAYS};
 use super::data::ViewData;
 
 /// Overview 页：两张状态卡片（运行状态 / 网络状态）。
@@ -49,6 +52,7 @@ pub(crate) fn render_overview(app: &mut WgApp, data: &ViewData, cx: &mut Context
         .map(|cfg| super::super::format::format_route_table(cfg.interface.table))
         .unwrap_or_else(|| "-".to_string());
     let traffic_trend = build_traffic_trend(app);
+    let traffic_summary = build_traffic_summary(app);
 
     div()
         .flex()
@@ -105,6 +109,7 @@ pub(crate) fn render_overview(app: &mut WgApp, data: &ViewData, cx: &mut Context
                 )
                 .child(traffic_trend_card(cx, &traffic_trend).w(relative(0.5))),
         )
+        .child(traffic_summary_card(app, cx, &traffic_summary))
 }
 
 /// 其它菜单项的占位页。
@@ -325,6 +330,418 @@ fn traffic_trend_card(cx: &mut Context<WgApp>, trend: &TrafficTrendData) -> Grou
                         ))),
                 ),
         )
+}
+
+#[derive(Clone)]
+struct TrafficSummaryData {
+    total_rx: u64,
+    total_tx: u64,
+    ranked: Vec<TrafficRankItem>,
+}
+
+#[derive(Clone)]
+struct TrafficRankItem {
+    name: String,
+    rx_bytes: u64,
+    tx_bytes: u64,
+}
+
+impl TrafficRankItem {
+    fn total_bytes(&self) -> u64 {
+        self.rx_bytes.saturating_add(self.tx_bytes)
+    }
+}
+
+fn traffic_summary_card(
+    app: &mut WgApp,
+    cx: &mut Context<WgApp>,
+    summary: &TrafficSummaryData,
+) -> GroupBox {
+    let upload_color: Hsla = rgb(0x6366f1).into();
+    let download_color: Hsla = rgb(0x22d3ee).into();
+    let rank_color: Hsla = rgb(0xa855f7).into();
+    let total_bytes = summary.total_rx.saturating_add(summary.total_tx);
+    let upload_text = super::super::format::format_bytes(summary.total_tx);
+    let download_text = super::super::format::format_bytes(summary.total_rx);
+    let total_text = super::super::format::format_bytes(total_bytes);
+    let upload_pct = percent(summary.total_tx, total_bytes);
+    let download_pct = percent(summary.total_rx, total_bytes);
+
+    let period_toggle = ButtonGroup::new("traffic-summary-period")
+        .outline()
+        .compact()
+        .small()
+        .child(
+            Button::new("traffic-period-today")
+                .label("Today")
+                .selected(app.traffic_period == TrafficPeriod::Today)
+                .tooltip("Last 24 hours")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.traffic_period = TrafficPeriod::Today;
+                    cx.notify();
+                })),
+        )
+        .child(
+            Button::new("traffic-period-month")
+                .label("This Month")
+                .selected(app.traffic_period == TrafficPeriod::ThisMonth)
+                .tooltip("Last 30 days")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.traffic_period = TrafficPeriod::ThisMonth;
+                    cx.notify();
+                })),
+        )
+        .child(
+            Button::new("traffic-period-last")
+                .label("Last Month")
+                .selected(app.traffic_period == TrafficPeriod::LastMonth)
+                .tooltip("Previous 30 days")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.traffic_period = TrafficPeriod::LastMonth;
+                    cx.notify();
+                })),
+        );
+
+    let ranking_tabs = ButtonGroup::new("traffic-summary-ranking")
+        .outline()
+        .compact()
+        .xsmall()
+        .child(
+            Button::new("traffic-ranking-proxy")
+                .label("Proxy")
+                .selected(true),
+        )
+        .child(
+            Button::new("traffic-ranking-process")
+                .label("Process")
+                .disabled(true),
+        )
+        .child(
+            Button::new("traffic-ranking-interface")
+                .label("Interface")
+                .disabled(true),
+        )
+        .child(
+            Button::new("traffic-ranking-host")
+                .label("Hostname")
+                .disabled(true),
+        );
+
+    let pie_data = vec![
+        TrafficSlice {
+            value: summary.total_rx,
+            color: download_color,
+        },
+        TrafficSlice {
+            value: summary.total_tx,
+            color: upload_color,
+        },
+    ];
+
+    let donut = div()
+        .size(px(160.0))
+        .relative()
+        .child(
+            PieChart::new(pie_data)
+                .value(|slice| slice.value as f32)
+                .inner_radius(44.0)
+                .outer_radius(60.0)
+                .pad_angle(0.04)
+                .color(|slice| slice.color)
+                .into_any_element(),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Total"),
+                )
+                .child(div().text_2xl().font_semibold().child(total_text)),
+        );
+
+    let breakdown = v_flex()
+        .gap_3()
+        .min_w(px(220.0))
+        .child(metric_progress(
+            IconName::ArrowUp,
+            "Upload",
+            &upload_text,
+            upload_pct,
+            upload_color,
+            cx,
+        ))
+        .child(metric_progress(
+            IconName::ArrowDown,
+            "Download",
+            &download_text,
+            download_pct,
+            download_color,
+            cx,
+        ));
+
+    let ranking = traffic_ranking_list(&summary.ranked, rank_color, cx);
+
+    GroupBox::new()
+        .fill()
+        .title(card_title(IconName::ChartPie, "Traffic Summary", None, cx))
+        .child(
+            v_flex()
+                .gap_3()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(period_toggle)
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Ranking"),
+                                )
+                                .child(ranking_tabs),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_6()
+                        .items_start()
+                        .flex_wrap()
+                        .child(donut)
+                        .child(breakdown)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .flex_grow()
+                                .min_w(px(220.0))
+                                .child(ranking),
+                        ),
+                ),
+        )
+}
+
+struct TrafficSlice {
+    value: u64,
+    color: Hsla,
+}
+
+fn metric_progress(
+    icon: IconName,
+    label: &str,
+    value: &str,
+    pct: f32,
+    color: Hsla,
+    cx: &mut Context<WgApp>,
+) -> Div {
+    v_flex()
+        .gap_1()
+        .child(
+            h_flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(Icon::new(icon).size_3().text_color(color))
+                        .child(label.to_string()),
+                )
+                .child(div().text_sm().font_semibold().child(value.to_string())),
+        )
+        .child(Progress::new().value(pct).bg(color).h(px(6.0)))
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(format!("{pct:.0}%")),
+        )
+}
+
+fn traffic_ranking_list(ranked: &[TrafficRankItem], color: Hsla, cx: &mut Context<WgApp>) -> Div {
+    if ranked.is_empty() {
+        return div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child("No traffic data yet");
+    }
+
+    let max_total = ranked
+        .iter()
+        .map(|item| item.total_bytes())
+        .max()
+        .unwrap_or(0);
+    let rows = ranked.iter().map(|item| {
+        let total = item.total_bytes();
+        let pct = percent(total, max_total);
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_sm()
+                            .flex_grow()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .child(item.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(super::super::format::format_bytes(total)),
+                    ),
+            )
+            .child(Progress::new().value(pct).bg(color).h(px(6.0)))
+    });
+
+    v_flex().gap_2().children(rows)
+}
+
+fn percent(value: u64, total: u64) -> f32 {
+    if total == 0 {
+        0.0
+    } else {
+        (value as f64 / total as f64 * 100.0) as f32
+    }
+}
+
+fn build_traffic_summary(app: &WgApp) -> TrafficSummaryData {
+    const MAX_RANK_ITEMS: usize = 7;
+    let now = Local::now();
+    let today = now.date_naive();
+    let current_hour = now.timestamp() / 3600;
+
+    let (total_rx, total_tx, ranked) = match app.traffic_period {
+        TrafficPeriod::Today => {
+            let min_hour = current_hour.saturating_sub(23);
+            let (total_rx, total_tx) = sum_hours(&app.traffic_hours, min_hour, current_hour);
+            let ranked = app
+                .configs
+                .iter()
+                .filter_map(|cfg| {
+                    let hours = app.config_traffic_hours.get(&cfg.id)?;
+                    let (rx, tx) = sum_hours(hours, min_hour, current_hour);
+                    let total = rx.saturating_add(tx);
+                    if total == 0 {
+                        None
+                    } else {
+                        Some(TrafficRankItem {
+                            name: cfg.name.clone(),
+                            rx_bytes: rx,
+                            tx_bytes: tx,
+                        })
+                    }
+                })
+                .collect::<Vec<_>>();
+            (total_rx, total_tx, ranked)
+        }
+        TrafficPeriod::ThisMonth => {
+            let dates = build_date_set(today, 0, 30);
+            let (total_rx, total_tx) = sum_days(&app.traffic_days_v2, &dates);
+            let ranked = app
+                .configs
+                .iter()
+                .filter_map(|cfg| {
+                    let days = app.config_traffic_days.get(&cfg.id)?;
+                    let (rx, tx) = sum_days(days, &dates);
+                    let total = rx.saturating_add(tx);
+                    if total == 0 {
+                        None
+                    } else {
+                        Some(TrafficRankItem {
+                            name: cfg.name.clone(),
+                            rx_bytes: rx,
+                            tx_bytes: tx,
+                        })
+                    }
+                })
+                .collect::<Vec<_>>();
+            (total_rx, total_tx, ranked)
+        }
+        TrafficPeriod::LastMonth => {
+            let dates = build_date_set(today, 30, 30);
+            let (total_rx, total_tx) = sum_days(&app.traffic_days_v2, &dates);
+            let ranked = app
+                .configs
+                .iter()
+                .filter_map(|cfg| {
+                    let days = app.config_traffic_days.get(&cfg.id)?;
+                    let (rx, tx) = sum_days(days, &dates);
+                    let total = rx.saturating_add(tx);
+                    if total == 0 {
+                        None
+                    } else {
+                        Some(TrafficRankItem {
+                            name: cfg.name.clone(),
+                            rx_bytes: rx,
+                            tx_bytes: tx,
+                        })
+                    }
+                })
+                .collect::<Vec<_>>();
+            (total_rx, total_tx, ranked)
+        }
+    };
+
+    let mut ranked = ranked;
+    ranked.sort_by(|a, b| b.total_bytes().cmp(&a.total_bytes()));
+    ranked.truncate(MAX_RANK_ITEMS);
+
+    TrafficSummaryData {
+        total_rx,
+        total_tx,
+        ranked,
+    }
+}
+
+fn build_date_set(today: NaiveDate, start_offset: i64, days: i64) -> HashSet<String> {
+    let mut set = HashSet::with_capacity(days as usize);
+    for offset in start_offset..start_offset + days {
+        let date = today - ChronoDuration::days(offset);
+        set.insert(date.format("%Y-%m-%d").to_string());
+    }
+    set
+}
+
+fn sum_days(days: &[TrafficDayStats], dates: &HashSet<String>) -> (u64, u64) {
+    let mut rx = 0u64;
+    let mut tx = 0u64;
+    for day in days {
+        if dates.contains(&day.date) {
+            rx = rx.saturating_add(day.rx_bytes);
+            tx = tx.saturating_add(day.tx_bytes);
+        }
+    }
+    (rx, tx)
+}
+
+fn sum_hours(hours: &[TrafficHour], min_hour: i64, max_hour: i64) -> (u64, u64) {
+    let mut rx = 0u64;
+    let mut tx = 0u64;
+    for hour in hours {
+        if hour.hour >= min_hour && hour.hour <= max_hour {
+            rx = rx.saturating_add(hour.rx_bytes);
+            tx = tx.saturating_add(hour.tx_bytes);
+        }
+    }
+    (rx, tx)
 }
 
 fn build_traffic_trend(app: &WgApp) -> TrafficTrendData {
