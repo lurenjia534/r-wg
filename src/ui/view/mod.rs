@@ -57,7 +57,8 @@ impl Render for WgApp {
                         .flex()
                         .flex_row()
                         .gap_3()
-                        .flex_grow()
+                        .flex_1()
+                        .min_h(px(0.0))
                         .child(configs::render_configs_editor(
                             self,
                             &data,

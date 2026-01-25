@@ -2,6 +2,7 @@ use gpui::*;
 use gpui_component::{
     description_list::DescriptionList,
     group_box::{GroupBox, GroupBoxVariants},
+    scroll::ScrollableElement,
     ActiveTheme as _,
 };
 
@@ -154,6 +155,14 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
             .into_any_element(),
     };
 
+    let right_scroll = div()
+        .id("right-panel-scroll")
+        .w_full()
+        .flex_1()
+        .min_h(px(0.0))
+        .child(right_body)
+        .overflow_y_scrollbar();
+
     div()
         .w(px(360.0))
         .h_full()
@@ -167,5 +176,14 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
         .border_color(cx.theme().border)
         .child(div().text_lg().child("Status"))
         .child(right_tab_row)
-        .child(right_body)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.0))
+                .w_full()
+                .overflow_hidden()
+                .child(right_scroll),
+        )
 }
