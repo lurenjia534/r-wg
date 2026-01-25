@@ -27,6 +27,14 @@ pub(crate) struct PersistedState {
     pub(crate) theme_mode: Option<ThemeMode>,
     #[serde(default)]
     pub(crate) traffic_days: Vec<PersistedTrafficDay>,
+    #[serde(default)]
+    pub(crate) traffic_days_v2: Vec<PersistedTrafficDayStats>,
+    #[serde(default)]
+    pub(crate) traffic_hours: Vec<PersistedTrafficHour>,
+    #[serde(default)]
+    pub(crate) config_traffic_days: Vec<PersistedConfigTrafficDay>,
+    #[serde(default)]
+    pub(crate) config_traffic_hours: Vec<PersistedConfigTrafficHour>,
     pub(crate) configs: Vec<PersistedConfig>,
 }
 
@@ -41,6 +49,36 @@ pub(crate) struct PersistedConfig {
 pub(crate) struct PersistedTrafficDay {
     pub(crate) date: String,
     pub(crate) bytes: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct PersistedTrafficDayStats {
+    pub(crate) date: String,
+    pub(crate) rx_bytes: u64,
+    pub(crate) tx_bytes: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct PersistedTrafficHour {
+    pub(crate) hour: i64,
+    pub(crate) rx_bytes: u64,
+    pub(crate) tx_bytes: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct PersistedConfigTrafficDay {
+    pub(crate) config_id: u64,
+    pub(crate) date: String,
+    pub(crate) rx_bytes: u64,
+    pub(crate) tx_bytes: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct PersistedConfigTrafficHour {
+    pub(crate) config_id: u64,
+    pub(crate) hour: i64,
+    pub(crate) rx_bytes: u64,
+    pub(crate) tx_bytes: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

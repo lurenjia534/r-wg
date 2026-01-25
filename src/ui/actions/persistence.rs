@@ -1,12 +1,16 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use gpui::{AppContext, Context, Window};
 use gpui_component::theme::Theme;
 
 use super::super::persistence::{
-    self, PersistedConfig, PersistedSource, PersistedState, StoragePaths, STATE_VERSION,
+    self, PersistedConfig, PersistedConfigTrafficDay, PersistedConfigTrafficHour, PersistedSource,
+    PersistedState, PersistedTrafficDayStats, PersistedTrafficHour, StoragePaths, STATE_VERSION,
 };
-use super::super::state::{ConfigSource, TrafficDay, TunnelConfig, WgApp};
+use super::super::state::{
+    ConfigSource, TrafficDay, TrafficDayStats, TrafficHour, TunnelConfig, WgApp,
+    TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
+};
 
 impl WgApp {
     pub(crate) fn ensure_storage(&mut self) -> Result<StoragePaths, String> {
@@ -159,6 +163,13 @@ impl WgApp {
             .into_iter()
             .map(|(date, bytes)| TrafficDay { date, bytes })
             .collect();
+        // 新版（按天/按小时）流量统计。
+        self.traffic_days_v2 = merge_day_stats(state.traffic_days_v2);
+        self.traffic_hours = merge_hour_stats(state.traffic_hours);
+        let config_ids: HashSet<u64> = self.configs.iter().map(|cfg| cfg.id).collect();
+        self.config_traffic_days = merge_config_day_stats(state.config_traffic_days, &config_ids);
+        self.config_traffic_hours =
+            merge_config_hour_stats(state.config_traffic_hours, &config_ids);
         // 刚加载的数据视为“干净”，只有新流量产生时才标记 dirty。
         self.traffic_dirty = false;
         self.traffic_last_persist_at = None;
@@ -211,6 +222,48 @@ impl WgApp {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            traffic_days_v2: self
+                .traffic_days_v2
+                .iter()
+                .map(|day| PersistedTrafficDayStats {
+                    date: day.date.clone(),
+                    rx_bytes: day.rx_bytes,
+                    tx_bytes: day.tx_bytes,
+                })
+                .collect(),
+            traffic_hours: self
+                .traffic_hours
+                .iter()
+                .map(|hour| PersistedTrafficHour {
+                    hour: hour.hour,
+                    rx_bytes: hour.rx_bytes,
+                    tx_bytes: hour.tx_bytes,
+                })
+                .collect(),
+            config_traffic_days: self
+                .config_traffic_days
+                .iter()
+                .flat_map(|(config_id, days)| {
+                    days.iter().map(|day| PersistedConfigTrafficDay {
+                        config_id: *config_id,
+                        date: day.date.clone(),
+                        rx_bytes: day.rx_bytes,
+                        tx_bytes: day.tx_bytes,
+                    })
+                })
+                .collect(),
+            config_traffic_hours: self
+                .config_traffic_hours
+                .iter()
+                .flat_map(|(config_id, hours)| {
+                    hours.iter().map(|hour| PersistedConfigTrafficHour {
+                        config_id: *config_id,
+                        hour: hour.hour,
+                        rx_bytes: hour.rx_bytes,
+                        tx_bytes: hour.tx_bytes,
+                    })
+                })
+                .collect(),
             configs: self
                 .configs
                 .iter()
@@ -221,5 +274,125 @@ impl WgApp {
                 })
                 .collect(),
         }
+    }
+}
+
+fn merge_day_stats(items: Vec<PersistedTrafficDayStats>) -> Vec<TrafficDayStats> {
+    let mut map = BTreeMap::<String, (u64, u64)>::new();
+    for day in items {
+        let entry = map.entry(day.date).or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(day.rx_bytes);
+        entry.1 = entry.1.saturating_add(day.tx_bytes);
+    }
+    let mut days = map
+        .into_iter()
+        .map(|(date, (rx_bytes, tx_bytes))| TrafficDayStats {
+            date,
+            rx_bytes,
+            tx_bytes,
+        })
+        .collect::<Vec<_>>();
+    prune_day_stats(&mut days);
+    days
+}
+
+fn merge_hour_stats(items: Vec<PersistedTrafficHour>) -> Vec<TrafficHour> {
+    let mut map = BTreeMap::<i64, (u64, u64)>::new();
+    for hour in items {
+        let entry = map.entry(hour.hour).or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(hour.rx_bytes);
+        entry.1 = entry.1.saturating_add(hour.tx_bytes);
+    }
+    let mut hours = map
+        .into_iter()
+        .map(|(hour, (rx_bytes, tx_bytes))| TrafficHour {
+            hour,
+            rx_bytes,
+            tx_bytes,
+        })
+        .collect::<Vec<_>>();
+    prune_hour_stats(&mut hours);
+    hours
+}
+
+fn merge_config_day_stats(
+    items: Vec<PersistedConfigTrafficDay>,
+    config_ids: &HashSet<u64>,
+) -> HashMap<u64, Vec<TrafficDayStats>> {
+    let mut map = HashMap::<u64, BTreeMap<String, (u64, u64)>>::new();
+    for day in items {
+        if !config_ids.contains(&day.config_id) {
+            continue;
+        }
+        let entry = map
+            .entry(day.config_id)
+            .or_insert_with(BTreeMap::new)
+            .entry(day.date)
+            .or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(day.rx_bytes);
+        entry.1 = entry.1.saturating_add(day.tx_bytes);
+    }
+    let mut out = HashMap::new();
+    for (config_id, days) in map {
+        let mut days = days
+            .into_iter()
+            .map(|(date, (rx_bytes, tx_bytes))| TrafficDayStats {
+                date,
+                rx_bytes,
+                tx_bytes,
+            })
+            .collect::<Vec<_>>();
+        prune_day_stats(&mut days);
+        out.insert(config_id, days);
+    }
+    out
+}
+
+fn merge_config_hour_stats(
+    items: Vec<PersistedConfigTrafficHour>,
+    config_ids: &HashSet<u64>,
+) -> HashMap<u64, Vec<TrafficHour>> {
+    let mut map = HashMap::<u64, BTreeMap<i64, (u64, u64)>>::new();
+    for hour in items {
+        if !config_ids.contains(&hour.config_id) {
+            continue;
+        }
+        let entry = map
+            .entry(hour.config_id)
+            .or_insert_with(BTreeMap::new)
+            .entry(hour.hour)
+            .or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(hour.rx_bytes);
+        entry.1 = entry.1.saturating_add(hour.tx_bytes);
+    }
+    let mut out = HashMap::new();
+    for (config_id, hours) in map {
+        let mut hours = hours
+            .into_iter()
+            .map(|(hour, (rx_bytes, tx_bytes))| TrafficHour {
+                hour,
+                rx_bytes,
+                tx_bytes,
+            })
+            .collect::<Vec<_>>();
+        prune_hour_stats(&mut hours);
+        out.insert(config_id, hours);
+    }
+    out
+}
+
+fn prune_day_stats(days: &mut Vec<TrafficDayStats>) {
+    days.sort_by(|a, b| a.date.cmp(&b.date));
+    if days.len() > TRAFFIC_ROLLING_DAYS {
+        let remove_count = days.len() - TRAFFIC_ROLLING_DAYS;
+        days.drain(0..remove_count);
+    }
+}
+
+fn prune_hour_stats(hours: &mut Vec<TrafficHour>) {
+    hours.sort_by(|a, b| a.hour.cmp(&b.hour));
+    if hours.len() > TRAFFIC_HOURLY_HISTORY {
+        let remove_count = hours.len() - TRAFFIC_HOURLY_HISTORY;
+        hours.drain(0..remove_count);
     }
 }

@@ -558,6 +558,7 @@ impl WgApp {
             cx.notify();
             return;
         };
+        let config_id = self.configs[idx].id;
         let name = self.configs[idx].name.clone();
         let storage_path = self.configs[idx].storage_path.clone();
         if self.running_name.as_deref() == Some(name.as_str()) {
@@ -567,6 +568,8 @@ impl WgApp {
         }
 
         self.configs.remove(idx);
+        self.config_traffic_days.remove(&config_id);
+        self.config_traffic_hours.remove(&config_id);
         // 清理逻辑说明：
         // - 删除配置不仅要移除内存列表，还要同步清理缓存和磁盘文件；
         // - config_text_cache 里可能还保留该配置的文本，需显式移除；

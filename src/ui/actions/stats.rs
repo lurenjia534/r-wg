@@ -7,7 +7,8 @@ use r_wg::backend::wg::EngineStats;
 use r_wg::log;
 
 use super::super::state::{
-    SidebarItem, TrafficDay, WgApp, SPARKLINE_SAMPLES, TRAFFIC_HISTORY_DAYS,
+    SidebarItem, TrafficDay, TrafficDayStats, TrafficHour, WgApp, SPARKLINE_SAMPLES,
+    TRAFFIC_HISTORY_DAYS, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
 };
 
 impl WgApp {
@@ -141,8 +142,7 @@ impl WgApp {
         push_rate_sample(&mut self.tx_rate_history, self.tx_rate_bps);
 
         // 本轮统计窗口内的总流量（RX + TX），用于 7 日趋势。
-        let traffic_delta = rx_delta.saturating_add(tx_delta);
-        let persist_due = self.record_daily_traffic(traffic_delta);
+        let persist_due = self.record_traffic(rx_delta, tx_delta);
 
         self.peer_stats = stats.peers;
         if self.peer_stats.is_empty() {
@@ -215,27 +215,55 @@ impl WgApp {
         }
     }
 
-    fn record_daily_traffic(&mut self, bytes: u64) -> bool {
+    fn record_traffic(&mut self, rx_bytes: u64, tx_bytes: u64) -> bool {
+        let total = rx_bytes.saturating_add(tx_bytes);
         // 没有流量就不记录，避免制造无意义的“空写盘”。
-        if bytes == 0 {
+        if total == 0 {
             return false;
         }
 
         // 按本地日期归档，确保跨时区/跨天显示符合用户直觉。
-        let today = Local::now().format("%Y-%m-%d").to_string();
+        let now = Local::now();
+        let today = now.format("%Y-%m-%d").to_string();
+        let hour = now.timestamp() / 3600;
         let mut created = false;
-        if let Some(day) = self.traffic_days.iter_mut().find(|day| day.date == today) {
-            day.bytes = day.bytes.saturating_add(bytes);
-        } else {
-            self.traffic_days.push(TrafficDay { date: today, bytes });
+
+        // 旧版总量统计（用于 7 日趋势）。
+        if update_traffic_day_total(&mut self.traffic_days, &today, total) {
+            created = true;
+        }
+        self.prune_traffic_days();
+
+        // 新版整体统计（按天 + 按小时）。
+        if update_traffic_day_stats(&mut self.traffic_days_v2, &today, rx_bytes, tx_bytes) {
+            created = true;
+        }
+        if update_traffic_hour_stats(&mut self.traffic_hours, hour, rx_bytes, tx_bytes) {
             created = true;
         }
 
-        self.prune_traffic_days();
+        // 按配置统计：仅在运行中时记录。
+        if let Some(config_id) = self.running_id {
+            let days = self
+                .config_traffic_days
+                .entry(config_id)
+                .or_insert_with(Vec::new);
+            if update_traffic_day_stats(days, &today, rx_bytes, tx_bytes) {
+                created = true;
+            }
+            let hours = self
+                .config_traffic_hours
+                .entry(config_id)
+                .or_insert_with(Vec::new);
+            if update_traffic_hour_stats(hours, hour, rx_bytes, tx_bytes) {
+                created = true;
+            }
+        }
+
         self.traffic_dirty = true;
 
         if created {
-            // 新的一天首次写入，立即落盘，避免程序异常退出导致丢失当天起点。
+            // 新的一天/新的一小时首次写入，立即落盘，避免异常退出丢失起点。
             return true;
         }
 
@@ -253,6 +281,74 @@ impl WgApp {
             let remove_count = self.traffic_days.len() - TRAFFIC_HISTORY_DAYS;
             self.traffic_days.drain(0..remove_count);
         }
+    }
+}
+
+fn update_traffic_day_total(days: &mut Vec<TrafficDay>, date: &str, bytes: u64) -> bool {
+    if let Some(day) = days.iter_mut().find(|day| day.date == date) {
+        day.bytes = day.bytes.saturating_add(bytes);
+        return false;
+    }
+    days.push(TrafficDay {
+        date: date.to_string(),
+        bytes,
+    });
+    true
+}
+
+fn update_traffic_day_stats(
+    days: &mut Vec<TrafficDayStats>,
+    date: &str,
+    rx_bytes: u64,
+    tx_bytes: u64,
+) -> bool {
+    if let Some(day) = days.iter_mut().find(|day| day.date == date) {
+        day.rx_bytes = day.rx_bytes.saturating_add(rx_bytes);
+        day.tx_bytes = day.tx_bytes.saturating_add(tx_bytes);
+        return false;
+    }
+    days.push(TrafficDayStats {
+        date: date.to_string(),
+        rx_bytes,
+        tx_bytes,
+    });
+    prune_traffic_day_stats(days);
+    true
+}
+
+fn update_traffic_hour_stats(
+    hours: &mut Vec<TrafficHour>,
+    hour: i64,
+    rx_bytes: u64,
+    tx_bytes: u64,
+) -> bool {
+    if let Some(bucket) = hours.iter_mut().find(|bucket| bucket.hour == hour) {
+        bucket.rx_bytes = bucket.rx_bytes.saturating_add(rx_bytes);
+        bucket.tx_bytes = bucket.tx_bytes.saturating_add(tx_bytes);
+        return false;
+    }
+    hours.push(TrafficHour {
+        hour,
+        rx_bytes,
+        tx_bytes,
+    });
+    prune_traffic_hours(hours);
+    true
+}
+
+fn prune_traffic_day_stats(days: &mut Vec<TrafficDayStats>) {
+    days.sort_by(|a, b| a.date.cmp(&b.date));
+    if days.len() > TRAFFIC_ROLLING_DAYS {
+        let remove_count = days.len() - TRAFFIC_ROLLING_DAYS;
+        days.drain(0..remove_count);
+    }
+}
+
+fn prune_traffic_hours(hours: &mut Vec<TrafficHour>) {
+    hours.sort_by(|a, b| a.hour.cmp(&b.hour));
+    if hours.len() > TRAFFIC_HOURLY_HISTORY {
+        let remove_count = hours.len() - TRAFFIC_HOURLY_HISTORY;
+        hours.drain(0..remove_count);
     }
 }
 

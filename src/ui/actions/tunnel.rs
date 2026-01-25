@@ -32,6 +32,7 @@ impl WgApp {
                             Ok(()) => {
                                 this.running = false;
                                 this.running_name = None;
+                                this.running_id = None;
                                 this.started_at = None;
                                 this.set_status("Stopped");
                                 this.clear_stats();
@@ -121,6 +122,7 @@ impl WgApp {
                         Ok(()) => {
                             this.running = true;
                             this.running_name = Some(selected.name.clone());
+                            this.running_id = Some(selected.id);
                             this.started_at = Some(Instant::now());
                             this.last_stats_at = None;
                             this.last_rx_bytes = 0;

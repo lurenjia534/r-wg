@@ -16,6 +16,10 @@ pub(crate) const SPARKLINE_SAMPLES: usize = 24;
 pub(crate) const TRAFFIC_TREND_DAYS: usize = 7;
 /// 持久化的流量历史天数（限制 state.json 体积）。
 pub(crate) const TRAFFIC_HISTORY_DAYS: usize = 30;
+/// Traffic Summary 的滚动天数（过去 30 天 + 前 30 天）。
+pub(crate) const TRAFFIC_ROLLING_DAYS: usize = 60;
+/// Traffic Summary 的滚动小时数（过去 24 小时，预留 48 小时）。
+pub(crate) const TRAFFIC_HOURLY_HISTORY: usize = 48;
 
 /// 配置来源：文件或粘贴文本。
 #[derive(Clone)]
@@ -78,10 +82,33 @@ pub(crate) struct TrafficDay {
     pub(crate) bytes: u64,
 }
 
+/// 按天统计的 RX/TX 统计（用于 30 天窗口）。
+#[derive(Clone)]
+pub(crate) struct TrafficDayStats {
+    pub(crate) date: String,
+    pub(crate) rx_bytes: u64,
+    pub(crate) tx_bytes: u64,
+}
+
+/// 按小时统计的 RX/TX 统计（用于 24 小时窗口）。
+#[derive(Clone)]
+pub(crate) struct TrafficHour {
+    pub(crate) hour: i64,
+    pub(crate) rx_bytes: u64,
+    pub(crate) tx_bytes: u64,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RightTab {
     Status,
     Logs,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrafficPeriod {
+    Today,
+    ThisMonth,
+    LastMonth,
 }
 
 /// 左侧导航栏的选中项。
@@ -182,12 +209,14 @@ pub(crate) struct WgApp {
     pub(crate) running: bool,
     pub(crate) busy: bool,
     pub(crate) running_name: Option<String>,
+    pub(crate) running_id: Option<u64>,
     pub(crate) peer_stats: Vec<PeerStats>,
     // 统计展示（用于右侧面板与图表）。
     pub(crate) stats_note: SharedString,
     pub(crate) stats_generation: u64,
     // 页面选择与模式开关。
     pub(crate) right_tab: RightTab,
+    pub(crate) traffic_period: TrafficPeriod,
     // 持久化的主题选择（浅色/深色）。
     pub(crate) theme_mode: ThemeMode,
     pub(crate) dns_mode: DnsMode,
@@ -209,6 +238,10 @@ pub(crate) struct WgApp {
     pub(crate) iface_tx_rate_bps: f64,
     // 7 日流量趋势（按天累计）。
     pub(crate) traffic_days: Vec<TrafficDay>,
+    pub(crate) traffic_days_v2: Vec<TrafficDayStats>,
+    pub(crate) traffic_hours: Vec<TrafficHour>,
+    pub(crate) config_traffic_days: HashMap<u64, Vec<TrafficDayStats>>,
+    pub(crate) config_traffic_hours: HashMap<u64, Vec<TrafficHour>>,
     pub(crate) traffic_dirty: bool,
     pub(crate) traffic_last_persist_at: Option<Instant>,
 }
@@ -241,10 +274,12 @@ impl WgApp {
             running: false,
             busy: false,
             running_name: None,
+            running_id: None,
             peer_stats: Vec::new(),
             stats_note: "Peer stats unavailable".into(),
             stats_generation: 0,
             right_tab: RightTab::Status,
+            traffic_period: TrafficPeriod::Today,
             theme_mode,
             dns_mode: DnsMode::FollowConfig,
             dns_preset: DnsPreset::CloudflareStandard,
@@ -263,6 +298,10 @@ impl WgApp {
             iface_rx_rate_bps: 0.0,
             iface_tx_rate_bps: 0.0,
             traffic_days: Vec::new(),
+            traffic_days_v2: Vec::new(),
+            traffic_hours: Vec::new(),
+            config_traffic_days: HashMap::new(),
+            config_traffic_hours: HashMap::new(),
             traffic_dirty: false,
             traffic_last_persist_at: None,
         }

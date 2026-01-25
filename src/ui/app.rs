@@ -77,6 +77,7 @@ pub fn run() {
                                             this.busy = false;
                                             this.running = false;
                                             this.running_name = None;
+                                            this.running_id = None;
                                             this.started_at = None;
                                             this.clear_stats();
                                             this.set_status("Stopped");
