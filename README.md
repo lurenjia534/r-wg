@@ -42,6 +42,9 @@ sudo setcap cap_net_admin+ep target/debug/r-wg
 ./target/debug/r-wg
 ```
 
+Note: file capabilities are not preserved in release archives, so after downloading a release
+you must run `sudo setcap cap_net_admin+ep r-wg` (or run the binary with `sudo`).
+
 ### Release build
 
 ```sh
