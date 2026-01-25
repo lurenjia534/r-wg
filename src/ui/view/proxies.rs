@@ -223,7 +223,7 @@ fn config_list_item(
         cx.theme().secondary
     };
     let border_color = if is_selected {
-        cx.theme().accent
+        cx.theme().accent_foreground
     } else if cx.theme().is_dark() {
         cx.theme().foreground.alpha(0.12)
     } else {
