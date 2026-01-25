@@ -17,10 +17,7 @@ pub struct PeerSummary {
 pub fn summarize_peers(peers: &[PeerStats]) -> PeerSummary {
     let rx_bytes = peers.iter().map(|peer| peer.rx_bytes).sum();
     let tx_bytes = peers.iter().map(|peer| peer.tx_bytes).sum();
-    let last_handshake = peers
-        .iter()
-        .filter_map(|peer| peer.last_handshake)
-        .min();
+    let last_handshake = peers.iter().filter_map(|peer| peer.last_handshake).min();
     PeerSummary {
         peer_count: peers.len(),
         rx_bytes,

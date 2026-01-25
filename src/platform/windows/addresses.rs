@@ -5,14 +5,12 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 
-use windows::Win32::Foundation::{
-    ERROR_BUFFER_OVERFLOW, ERROR_NOT_FOUND, NO_ERROR, WIN32_ERROR,
-};
+use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_NOT_FOUND, NO_ERROR, WIN32_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
     CreateUnicastIpAddressEntry, DeleteUnicastIpAddressEntry, GetAdaptersAddresses,
-    InitializeUnicastIpAddressEntry, IP_ADAPTER_ADDRESSES_LH,
-    IP_ADAPTER_UNICAST_ADDRESS_LH, MIB_UNICASTIPADDRESS_ROW, GAA_FLAG_INCLUDE_PREFIX,
-    GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
+    InitializeUnicastIpAddressEntry, GAA_FLAG_INCLUDE_PREFIX, GAA_FLAG_SKIP_ANYCAST,
+    GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
+    IP_ADAPTER_UNICAST_ADDRESS_LH, MIB_UNICASTIPADDRESS_ROW,
 };
 use windows::Win32::Networking::WinSock::AF_UNSPEC;
 
@@ -75,7 +73,10 @@ pub(super) fn cleanup_stale_unicast_addresses(
             continue;
         }
         log_net(format!("address remove: {}/{}", ip, prefix));
-        let address = InterfaceAddress { addr: ip, cidr: prefix };
+        let address = InterfaceAddress {
+            addr: ip,
+            cidr: prefix,
+        };
         delete_unicast_address(adapter, &address)?;
         removed += 1;
     }
@@ -85,10 +86,7 @@ pub(super) fn cleanup_stale_unicast_addresses(
     Ok(())
 }
 
-fn build_unicast_row(
-    adapter: AdapterInfo,
-    address: &InterfaceAddress,
-) -> MIB_UNICASTIPADDRESS_ROW {
+fn build_unicast_row(adapter: AdapterInfo, address: &InterfaceAddress) -> MIB_UNICASTIPADDRESS_ROW {
     // 构造 IP Helper 结构体，包含 ifIndex/LUID 与前缀长度。
     let mut row: MIB_UNICASTIPADDRESS_ROW = unsafe { std::mem::zeroed() };
     unsafe {
@@ -109,9 +107,7 @@ fn is_link_local(addr: IpAddr) -> bool {
     }
 }
 
-fn list_unicast_addresses(
-    adapter: AdapterInfo,
-) -> Result<Vec<(IpAddr, u8)>, NetworkError> {
+fn list_unicast_addresses(adapter: AdapterInfo) -> Result<Vec<(IpAddr, u8)>, NetworkError> {
     // 遍历适配器现有单播地址，用于后续差异化清理。
     let mut size = 0u32;
     let family = AF_UNSPEC.0 as u32;
@@ -144,8 +140,7 @@ fn list_unicast_addresses(
         while !adapter_ptr.is_null() {
             let current = &*adapter_ptr;
             if current.Anonymous1.Anonymous.IfIndex == adapter.if_index {
-                let mut unicast: *mut IP_ADAPTER_UNICAST_ADDRESS_LH =
-                    current.FirstUnicastAddress;
+                let mut unicast: *mut IP_ADAPTER_UNICAST_ADDRESS_LH = current.FirstUnicastAddress;
                 while !unicast.is_null() {
                     let entry = &*unicast;
                     if let Some(ip) = ip_from_socket_address(&entry.Address) {

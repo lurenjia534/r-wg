@@ -1,8 +1,8 @@
 use gpui::*;
 use gpui_component::ActiveTheme as _;
 
-use super::data::ConfigStatus;
 use super::super::state::WgApp;
+use super::data::ConfigStatus;
 
 /// 配置状态徽标（Valid/Invalid），没有状态时返回空元素。
 pub(crate) fn status_badge(status: Option<&ConfigStatus>) -> AnyElement {

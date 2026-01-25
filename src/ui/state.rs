@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use gpui::{Entity, SharedString};
-use gpui_component::{IconName, input::InputState};
 use gpui_component::theme::ThemeMode;
+use gpui_component::{input::InputState, IconName};
 use r_wg::backend::wg::{config, Engine, PeerStats};
 use r_wg::dns::{DnsMode, DnsPreset};
 

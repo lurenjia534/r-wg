@@ -23,7 +23,11 @@ pub(super) fn netlink_handle() -> Result<Handle, NetworkError> {
 
 pub(super) async fn link_index(handle: &Handle, tun_name: &str) -> Result<u32, NetworkError> {
     // 通过接口名查询 ifindex，后续所有操作都以 ifindex 为准。
-    let mut links = handle.link().get().match_name(tun_name.to_string()).execute();
+    let mut links = handle
+        .link()
+        .get()
+        .match_name(tun_name.to_string())
+        .execute();
     match links.try_next().await? {
         Some(link) => Ok(link.header.index),
         None => Err(NetworkError::LinkNotFound(tun_name.to_string())),
@@ -112,10 +116,13 @@ pub(super) fn route_message_table_id(message: &RouteMessage) -> u32 {
 
 pub(super) fn route_message_oif(message: &RouteMessage) -> Option<u32> {
     // 从 RouteAttribute 解析输出接口 ifindex。
-    message
-        .attributes
-        .iter()
-        .find_map(|attr| if let RouteAttribute::Oif(value) = attr { Some(*value) } else { None })
+    message.attributes.iter().find_map(|attr| {
+        if let RouteAttribute::Oif(value) = attr {
+            Some(*value)
+        } else {
+            None
+        }
+    })
 }
 
 fn route_message_destination(message: &RouteMessage) -> Option<IpAddr> {

@@ -35,7 +35,9 @@ fn sockaddr_inet_v6(addr: Ipv6Addr) -> SOCKADDR_INET {
     let mut sockaddr: SOCKADDR_IN6 = unsafe { std::mem::zeroed() };
     sockaddr.sin6_family = AF_INET6;
     sockaddr.sin6_addr = IN6_ADDR {
-        u: IN6_ADDR_0 { Byte: addr.octets() },
+        u: IN6_ADDR_0 {
+            Byte: addr.octets(),
+        },
     };
     SOCKADDR_INET { Ipv6: sockaddr }
 }

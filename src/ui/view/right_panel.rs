@@ -1,22 +1,20 @@
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, description_list::DescriptionList, group_box::{GroupBox, GroupBoxVariants},
+    description_list::DescriptionList,
+    group_box::{GroupBox, GroupBoxVariants},
+    ActiveTheme as _,
 };
 
-use super::data::ViewData;
-use super::widgets::tab_button;
 use super::super::format::{
     format_addresses, format_allowed_ips, format_bytes, format_dns, format_peer_line,
     format_route_table,
 };
 use super::super::state::{RightTab, WgApp};
+use super::data::ViewData;
+use super::widgets::tab_button;
 
 /// 右侧面板：状态/日志切换与卡片内容展示。
-pub(crate) fn render_right_panel(
-    app: &mut WgApp,
-    data: &ViewData,
-    cx: &mut Context<WgApp>,
-) -> Div {
+pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
     // 顶部标签切换（状态/日志）。
     let right_tab_row = div()
         .flex()
@@ -70,10 +68,7 @@ pub(crate) fn render_right_panel(
     // Connection 卡片：展示连接状态与流量统计。
     let status_card = {
         let connection_state = if app.running { "Connected" } else { "Idle" };
-        let active_tunnel = app
-            .running_name
-            .clone()
-            .unwrap_or_else(|| "-".to_string());
+        let active_tunnel = app.running_name.clone().unwrap_or_else(|| "-".to_string());
         let rx = format_bytes(data.peer_summary.rx_bytes);
         let tx = format_bytes(data.peer_summary.tx_bytes);
         let peers = if data.peer_summary.peer_count == 0 {
@@ -127,11 +122,11 @@ pub(crate) fn render_right_panel(
 
     // Logs 卡片：集中显示最近状态与错误信息。
     let logs_card = {
-        let last_error = app
-            .last_error
+        let last_error = app.last_error.clone().unwrap_or_else(|| "None".into());
+        let parse_state = data
+            .parse_error
             .clone()
-            .unwrap_or_else(|| "None".into());
-        let parse_state = data.parse_error.clone().unwrap_or_else(|| "None".to_string());
+            .unwrap_or_else(|| "None".to_string());
         GroupBox::new().fill().title("Logs").child(
             DescriptionList::new()
                 .columns(1)
@@ -151,7 +146,12 @@ pub(crate) fn render_right_panel(
             .child(network_card)
             .child(peers_card)
             .into_any_element(),
-        RightTab::Logs => div().flex().flex_col().gap_3().child(logs_card).into_any_element(),
+        RightTab::Logs => div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(logs_card)
+            .into_any_element(),
     };
 
     div()

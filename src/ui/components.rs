@@ -1,9 +1,9 @@
 use gpui::{IntoElement, ParentElement};
 use gpui_component::{
-    Disableable as _,
     button::{Button, ButtonVariants},
     description_list::{DescriptionItem, DescriptionText},
     group_box::{GroupBox, GroupBoxVariants},
+    Disableable as _,
 };
 
 #[derive(Clone, Copy)]
@@ -14,9 +14,7 @@ pub enum ButtonTone {
 }
 
 pub fn action_button(id: &'static str, label: &str, enabled: bool, tone: ButtonTone) -> Button {
-    let mut button = Button::new(id)
-        .label(label.to_string())
-        .disabled(!enabled);
+    let mut button = Button::new(id).label(label.to_string()).disabled(!enabled);
     button = match tone {
         ButtonTone::Neutral => button,
         ButtonTone::Accent => button.primary(),

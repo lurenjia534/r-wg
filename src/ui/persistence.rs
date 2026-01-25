@@ -53,9 +53,9 @@ pub(crate) enum PersistedSource {
 impl From<&ConfigSource> for PersistedSource {
     fn from(source: &ConfigSource) -> Self {
         match source {
-            ConfigSource::File { origin_path } => {
-                PersistedSource::File { origin_path: origin_path.clone() }
-            }
+            ConfigSource::File { origin_path } => PersistedSource::File {
+                origin_path: origin_path.clone(),
+            },
             ConfigSource::Paste => PersistedSource::Paste,
         }
     }
@@ -113,14 +113,13 @@ pub(crate) fn load_state(paths: &StoragePaths) -> Result<Option<PersistedState>,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(format!("Read state failed: {err}")),
     };
-    let state = serde_json::from_str(&text)
-        .map_err(|err| format!("Parse state failed: {err}"))?;
+    let state = serde_json::from_str(&text).map_err(|err| format!("Parse state failed: {err}"))?;
     Ok(Some(state))
 }
 
 pub(crate) fn save_state(paths: &StoragePaths, state: &PersistedState) -> Result<(), String> {
-    let data = serde_json::to_vec_pretty(state)
-        .map_err(|err| format!("Serialize state failed: {err}"))?;
+    let data =
+        serde_json::to_vec_pretty(state).map_err(|err| format!("Serialize state failed: {err}"))?;
     write_atomic(&paths.state_path, &data)
 }
 
@@ -134,8 +133,7 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
     // - 先写入临时文件，再原子替换，避免部分写入导致文件损坏；
     // - 如果目标已存在，先删除旧文件再替换，确保最终文件一致；
     // - 任何一步失败都返回错误，调用方会在 UI 中提示。
-    std::fs::write(&tmp_path, contents)
-        .map_err(|err| format!("Write temp file failed: {err}"))?;
+    std::fs::write(&tmp_path, contents).map_err(|err| format!("Write temp file failed: {err}"))?;
     if let Err(err) = std::fs::rename(&tmp_path, path) {
         if path.exists() {
             std::fs::remove_file(path)

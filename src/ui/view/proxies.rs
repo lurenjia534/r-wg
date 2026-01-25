@@ -2,9 +2,9 @@ use std::rc::Rc;
 
 use gpui::*;
 use gpui_component::{
+    button::Button, h_flex, input::Input, scroll::Scrollbar, tag::Tag, v_virtual_list,
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
-    VirtualListScrollHandle, button::Button, h_flex, input::Input, scroll::Scrollbar, tag::Tag,
-    v_virtual_list,
+    VirtualListScrollHandle,
 };
 
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
@@ -22,8 +22,7 @@ const PROXIES_SCROLL_STATE_ID: &str = "proxies-scroll";
 fn proxies_columns(window: &Window) -> usize {
     let viewport_width = window.viewport_size().width;
     // 可用宽度的估算值：窗口宽度减去左侧栏与内边距。
-    let available_width =
-        viewport_width - px(PROXIES_SIDEBAR_WIDTH + PROXIES_HORIZONTAL_PADDING);
+    let available_width = viewport_width - px(PROXIES_SIDEBAR_WIDTH + PROXIES_HORIZONTAL_PADDING);
     let available_width = available_width.max(px(PROXIES_CARD_WIDTH));
     let card_width = px(PROXIES_CARD_WIDTH);
     let gap = px(PROXIES_CARD_GAP);
@@ -34,11 +33,7 @@ fn proxies_columns(window: &Window) -> usize {
 }
 
 /// Proxies 页面：配置列表入口，用于快速选择隧道。
-pub(crate) fn render_proxies(
-    app: &mut WgApp,
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-) -> Div {
+pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) -> Div {
     // 初始化搜索输入框并读取当前查询，用于过滤节点列表。
     app.ensure_proxy_search_input(window, cx);
     let search_input = app
@@ -60,12 +55,7 @@ pub(crate) fn render_proxies(
                 .configs
                 .iter()
                 .enumerate()
-                .filter_map(|(idx, config)| {
-                    config
-                        .name_lower
-                        .contains(&query)
-                        .then_some(idx)
-                })
+                .filter_map(|(idx, config)| config.name_lower.contains(&query).then_some(idx))
                 .collect();
         }
         app.proxy_filtered_indices.len()
@@ -136,12 +126,7 @@ pub(crate) fn render_proxies(
                     .map(|row_ix| {
                         let start = row_ix * columns;
                         let end = (start + columns).min(total);
-                        let mut row = div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .w_full()
-                            .h(row_height);
+                        let mut row = div().flex().flex_row().gap_2().w_full().h(row_height);
                         // 从索引映射到真实配置，保证过滤后仍可正确选择。
                         for idx in start..end {
                             let config_idx = if use_filter { indices[idx] } else { idx };
@@ -245,9 +230,11 @@ fn config_list_item(
         cx.theme().border
     };
 
-    let mut badges = h_flex()
-        .gap_1()
-        .child(Tag::secondary().small().child(config_source_label(&config.source)));
+    let mut badges = h_flex().gap_1().child(
+        Tag::secondary()
+            .small()
+            .child(config_source_label(&config.source)),
+    );
     if is_running {
         badges = badges.child(Tag::success().small().child("Running"));
     }

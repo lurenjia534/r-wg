@@ -145,9 +145,7 @@ impl FromStr for Endpoint {
                 .ok_or("missing port in endpoint")?;
             (host, port_str)
         } else {
-            let (host, port_str) = value
-                .rsplit_once(':')
-                .ok_or("missing port in endpoint")?;
+            let (host, port_str) = value.rsplit_once(':').ok_or("missing port in endpoint")?;
             (host, port_str)
         };
 
@@ -155,7 +153,9 @@ impl FromStr for Endpoint {
             return Err("endpoint host is empty");
         }
 
-        let port = port_str.parse::<u16>().map_err(|_| "invalid endpoint port")?;
+        let port = port_str
+            .parse::<u16>()
+            .map_err(|_| "invalid endpoint port")?;
         if port == 0 {
             return Err("endpoint port must be non-zero");
         }

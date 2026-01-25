@@ -227,10 +227,7 @@ impl WgApp {
         if let Some(day) = self.traffic_days.iter_mut().find(|day| day.date == today) {
             day.bytes = day.bytes.saturating_add(bytes);
         } else {
-            self.traffic_days.push(TrafficDay {
-                date: today,
-                bytes,
-            });
+            self.traffic_days.push(TrafficDay { date: today, bytes });
             created = true;
         }
 

@@ -18,10 +18,10 @@ pub(crate) fn start_permission_message() -> Option<SharedString> {
         .ok()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "target/debug/r-wg".to_string());
-    Some(format!(
-        "需要 cap_net_admin 才能配置网络。请运行：sudo setcap cap_net_admin+ep {exe}"
+    Some(
+        format!("需要 cap_net_admin 才能配置网络。请运行：sudo setcap cap_net_admin+ep {exe}")
+            .into(),
     )
-    .into())
 }
 
 #[cfg(not(target_os = "linux"))]

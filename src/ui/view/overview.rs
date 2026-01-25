@@ -1,27 +1,28 @@
 use std::collections::HashMap;
 
 use chrono::{Duration as ChronoDuration, Local, NaiveDate};
-use gpui::*;
 use gpui::prelude::FluentBuilder as _;
+use gpui::*;
 
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, divider::Divider,
     chart::{BarChart, LineChart},
+    divider::Divider,
     group_box::{GroupBox, GroupBoxVariants},
-    h_flex, tag::Tag, v_flex,
-    plot::{AXIS_GAP, StrokeStyle, scale::{Scale, ScaleLinear}, shape::Line},
-    PixelsExt,
+    h_flex,
+    plot::{
+        scale::{Scale, ScaleLinear},
+        shape::Line,
+        StrokeStyle, AXIS_GAP,
+    },
+    tag::Tag,
+    v_flex, ActiveTheme as _, Icon, IconName, PixelsExt, Sizable as _, StyledExt as _,
 };
 
-use super::data::ViewData;
 use super::super::state::{WgApp, TRAFFIC_TREND_DAYS};
+use super::data::ViewData;
 
 /// Overview 页：两张状态卡片（运行状态 / 网络状态）。
-pub(crate) fn render_overview(
-    app: &mut WgApp,
-    data: &ViewData,
-    cx: &mut Context<WgApp>,
-) -> Div {
+pub(crate) fn render_overview(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
     let uptime = format_uptime(app);
     let memory = format_memory_usage();
     let rx = super::super::format::format_bytes(data.peer_summary.rx_bytes);
@@ -33,8 +34,7 @@ pub(crate) fn render_overview(
     let download_total = super::super::format::format_bytes(data.peer_summary.rx_bytes);
     let upload_series: Vec<f32> = app.tx_rate_history.iter().copied().collect();
     let download_series: Vec<f32> = app.rx_rate_history.iter().copied().collect();
-    let upload_sparkline =
-        sparkline_chart(build_sparkline_points(&upload_series), rgb(0x6366f1));
+    let upload_sparkline = sparkline_chart(build_sparkline_points(&upload_series), rgb(0x6366f1));
     let download_sparkline =
         sparkline_chart(build_sparkline_points(&download_series), rgb(0x22d3ee));
 
@@ -42,10 +42,7 @@ pub(crate) fn render_overview(
     let dns = format_dns(data);
     let endpoint = format_endpoint(data);
     let allowed = format_allowed_summary(data);
-    let network_name = app
-        .running_name
-        .clone()
-        .unwrap_or_else(|| "-".to_string());
+    let network_name = app.running_name.clone().unwrap_or_else(|| "-".to_string());
     let route_table = data
         .parsed_config
         .as_ref()
@@ -113,15 +110,12 @@ pub(crate) fn render_overview(
 /// 其它菜单项的占位页。
 pub(crate) fn render_placeholder(cx: &mut Context<WgApp>) -> Div {
     div().child(
-        GroupBox::new()
-            .fill()
-            .title("Coming Soon")
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("This section is under construction."),
-            ),
+        GroupBox::new().fill().title("Coming Soon").child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("This section is under construction."),
+        ),
     )
 }
 
@@ -149,25 +143,13 @@ fn running_status_card(
                 .gap_0()
                 .child(two_row_grid(
                     [
-                        metric_cell(
-                            IconName::LoaderCircle,
-                            "Uptime",
-                            uptime,
-                            rgb(0x3a8bd6),
-                            cx,
-                        ),
+                        metric_cell(IconName::LoaderCircle, "Uptime", uptime, rgb(0x3a8bd6), cx),
                         metric_cell(IconName::ArrowDown, "RX", rx, rgb(0xf59e0b), cx),
                         metric_cell(IconName::ArrowUp, "TX", tx, rgb(0x2dd4bf), cx),
                     ],
                     [
                         status_state_item(is_running, cx),
-                        status_item(
-                            IconName::CircleUser,
-                            "Peers",
-                            peers,
-                            rgb(0x60a5fa),
-                            cx,
-                        ),
+                        status_item(IconName::CircleUser, "Peers", peers, rgb(0x60a5fa), cx),
                         status_item(
                             IconName::ExternalLink,
                             "Handshake",
@@ -212,37 +194,13 @@ fn network_status_card(
         ))
         .child(two_row_grid(
             [
-                metric_cell(
-                    IconName::ArrowUp,
-                    "Local IP",
-                    local_ip,
-                    rgb(0x22c55e),
-                    cx,
-                ),
+                metric_cell(IconName::ArrowUp, "Local IP", local_ip, rgb(0x22c55e), cx),
                 metric_cell(IconName::Search, "DNS", dns, rgb(0x22c55e), cx),
-                metric_cell(
-                    IconName::Globe,
-                    "Endpoint",
-                    endpoint,
-                    rgb(0x22c55e),
-                    cx,
-                ),
+                metric_cell(IconName::Globe, "Endpoint", endpoint, rgb(0x22c55e), cx),
             ],
             [
-                status_item(
-                    IconName::Globe,
-                    "Network",
-                    network_name,
-                    rgb(0x38bdf8),
-                    cx,
-                ),
-                status_item(
-                    IconName::Map,
-                    "Route",
-                    route_table,
-                    rgb(0x60a5fa),
-                    cx,
-                ),
+                status_item(IconName::Globe, "Network", network_name, rgb(0x38bdf8), cx),
+                status_item(IconName::Map, "Route", route_table, rgb(0x60a5fa), cx),
                 status_item(
                     IconName::SortAscending,
                     "Allowed IPs",
@@ -360,16 +318,11 @@ fn traffic_trend_card(cx: &mut Context<WgApp>, trend: &TrafficTrendData) -> Grou
                                     }
                                 }),
                         )
-                        .child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .child(TrafficAvgLine::new(
-                                    trend.points.clone(),
-                                    trend.average_bytes,
-                                    avg_color,
-                                )),
-                        ),
+                        .child(div().absolute().inset_0().child(TrafficAvgLine::new(
+                            trend.points.clone(),
+                            trend.average_bytes,
+                            avg_color,
+                        ))),
                 ),
         )
 }
@@ -461,7 +414,11 @@ fn card_title(
             h_flex()
                 .items_center()
                 .gap_2()
-                .child(Icon::new(icon).size_4().text_color(cx.theme().accent_foreground))
+                .child(
+                    Icon::new(icon)
+                        .size_4()
+                        .text_color(cx.theme().accent_foreground),
+                )
                 .child(div().text_base().font_semibold().child(label.to_string())),
         )
         .when_some(trailing_icon, |this, icon| {
@@ -567,11 +524,7 @@ fn status_state_item(is_running: bool, cx: &mut Context<WgApp>) -> Div {
         )
 }
 
-fn two_row_grid(
-    top: [Div; 3],
-    bottom: [Div; 3],
-    cx: &mut Context<WgApp>,
-) -> Div {
+fn two_row_grid(top: [Div; 3], bottom: [Div; 3], cx: &mut Context<WgApp>) -> Div {
     let [top_left, top_mid, top_right] = top;
     let [bottom_left, bottom_mid, bottom_right] = bottom;
     let border = cx.theme().border;
@@ -582,26 +535,13 @@ fn two_row_grid(
         .child(top_left.border_r_1().border_color(border))
         .child(top_mid.border_r_1().border_color(border))
         .child(top_right)
-        .child(
-            bottom_left
-                .border_r_1()
-                .border_t_1()
-                .border_color(border),
-        )
-        .child(
-            bottom_mid
-                .border_r_1()
-                .border_t_1()
-                .border_color(border),
-        )
+        .child(bottom_left.border_r_1().border_t_1().border_color(border))
+        .child(bottom_mid.border_r_1().border_t_1().border_color(border))
         .child(bottom_right.border_t_1().border_color(border))
 }
 
 fn vertical_rule(cx: &mut Context<WgApp>) -> Div {
-    div()
-        .w(px(1.0))
-        .h(px(64.0))
-        .bg(cx.theme().border)
+    div().w(px(1.0)).h(px(64.0)).bg(cx.theme().border)
 }
 
 fn format_speeds(app: &WgApp, _data: &ViewData) -> (String, String) {
@@ -809,7 +749,12 @@ fn format_allowed_summary(data: &ViewData) -> String {
     let count = data
         .parsed_config
         .as_ref()
-        .map(|cfg| cfg.peers.iter().map(|peer| peer.allowed_ips.len()).sum::<usize>())
+        .map(|cfg| {
+            cfg.peers
+                .iter()
+                .map(|peer| peer.allowed_ips.len())
+                .sum::<usize>()
+        })
         .unwrap_or(0);
     if count == 0 {
         "-".to_string()

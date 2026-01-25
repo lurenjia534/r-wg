@@ -1,13 +1,13 @@
 use gpui::*;
 
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Selectable as _,
+    h_flex,
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
-    h_flex, v_flex,
+    v_flex, ActiveTheme as _, Icon, IconName, Selectable as _,
 };
 
-use super::data::ViewData;
 use super::super::state::{SidebarItem, WgApp};
+use super::data::ViewData;
 
 /// 左侧导航栏：分组 + 图标 + 选中态，仅负责布局与高亮。
 pub(crate) fn render_left_panel(
@@ -33,7 +33,12 @@ pub(crate) fn render_left_panel(
                 .text_sm()
                 .line_height(relative(1.2))
                 .child("r-wg")
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Dashboard")),
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Dashboard"),
+                ),
         );
 
     let footer = SidebarFooter::new()
@@ -46,10 +51,13 @@ pub(crate) fn render_left_panel(
         )
         .child(Icon::new(IconName::Settings).size_4())
         .selected(app.sidebar_active == SidebarItem::About)
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, _window, cx| {
-            this.sidebar_active = SidebarItem::About;
-            cx.notify();
-        }));
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _event, _window, cx| {
+                this.sidebar_active = SidebarItem::About;
+                cx.notify();
+            }),
+        );
 
     Sidebar::left()
         .collapsible(false)
@@ -98,16 +106,14 @@ fn sidebar_group(
     app: &WgApp,
     cx: &mut Context<WgApp>,
 ) -> SidebarGroup<SidebarMenu> {
-    SidebarGroup::new(label).child(
-        SidebarMenu::new().children(items.iter().map(|item| {
-            let item = *item;
-            SidebarMenuItem::new(item.label())
-                .icon(Icon::new(item.icon()).size_4())
-                .active(app.sidebar_active == item)
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.sidebar_active = item;
-                    cx.notify();
-                }))
-        })),
-    )
+    SidebarGroup::new(label).child(SidebarMenu::new().children(items.iter().map(|item| {
+        let item = *item;
+        SidebarMenuItem::new(item.label())
+            .icon(Icon::new(item.icon()).size_4())
+            .active(app.sidebar_active == item)
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.sidebar_active = item;
+                cx.notify();
+            }))
+    })))
 }

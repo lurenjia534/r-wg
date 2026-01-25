@@ -1,13 +1,14 @@
 use gpui::*;
-use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt,
-    button::{Button, ButtonGroup, ButtonVariants},
-    h_flex, tag::Tag,
-};
 use gpui_component::theme::{Theme, ThemeMode};
+use gpui_component::{
+    button::{Button, ButtonGroup, ButtonVariants},
+    h_flex,
+    tag::Tag,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt,
+};
 
-use super::data::ViewData;
 use super::super::state::WgApp;
+use super::data::ViewData;
 
 /// 顶部工具栏骨架：标题、配置切换、模式按钮、状态图标。
 pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
@@ -184,8 +185,5 @@ fn icon_button(id: &'static str, icon: IconName) -> Button {
 }
 
 fn vertical_divider(cx: &mut Context<WgApp>) -> Div {
-    div()
-        .w(px(1.0))
-        .h(px(20.0))
-        .bg(cx.theme().border)
+    div().w(px(1.0)).h(px(20.0)).bg(cx.theme().border)
 }

@@ -61,10 +61,7 @@ impl std::fmt::Display for NetworkError {
                 command,
                 status,
                 stderr,
-            } => write!(
-                f,
-                "command failed: {command} (status={status:?}) {stderr}"
-            ),
+            } => write!(f, "command failed: {command} (status={status:?}) {stderr}"),
             NetworkError::DnsVerifyFailed(message) => {
                 write!(f, "dns verification failed: {message}")
             }
@@ -170,7 +167,10 @@ pub async fn apply_network_config(
     if interface.table != Some(RouteTable::Off) {
         for route in &routes {
             let table = route_table_for(route, interface.table, policy.as_ref(), full_v4, full_v6);
-            log_net(format!("route: {}/{} table={:?}", route.addr, route.cidr, table));
+            log_net(format!(
+                "route: {}/{} table={:?}",
+                route.addr, route.cidr, table
+            ));
             match route.addr {
                 IpAddr::V4(addr) => {
                     let mut request = RouteMessageBuilder::<Ipv4Addr>::default()
@@ -264,7 +264,10 @@ pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), Ne
             .unwrap_or((false, false));
         for route in &state.routes {
             let table = route_table_for(route, state.table, policy, full_v4, full_v6);
-            log_net(format!("route del: {}/{} table={:?}", route.addr, route.cidr, table));
+            log_net(format!(
+                "route del: {}/{} table={:?}",
+                route.addr, route.cidr, table
+            ));
             if let Err(err) = delete_route(&handle, link_index, route, table).await {
                 log_net(format!("route del failed: {err}"));
             }

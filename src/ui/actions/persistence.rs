@@ -106,10 +106,7 @@ impl WgApp {
         cx: &mut Context<Self>,
     ) {
         if state.version != STATE_VERSION {
-            self.set_error(format!(
-                "Unsupported state version: {}",
-                state.version
-            ));
+            self.set_error(format!("Unsupported state version: {}", state.version));
             return;
         }
 
@@ -165,12 +162,10 @@ impl WgApp {
         // 刚加载的数据视为“干净”，只有新流量产生时才标记 dirty。
         self.traffic_dirty = false;
         self.traffic_last_persist_at = None;
-        self.selected = state.selected_id.and_then(|id| {
-            self.configs.iter().position(|cfg| cfg.id == id)
-        });
-        self.next_config_id = state
-            .next_id
-            .max(max_id.saturating_add(1));
+        self.selected = state
+            .selected_id
+            .and_then(|id| self.configs.iter().position(|cfg| cfg.id == id));
+        self.next_config_id = state.next_id.max(max_id.saturating_add(1));
         self.proxy_filter_total = 0;
         self.parse_cache = None;
         self.loaded_config = None;

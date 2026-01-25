@@ -113,9 +113,9 @@ pub(super) async fn resolve_endpoint_ips(
         if host.is_empty() {
             continue;
         }
-        let lookup = lookup_host((host, endpoint.port)).await.map_err(|_| {
-            NetworkError::EndpointResolve(format!("failed to resolve {host}"))
-        })?;
+        let lookup = lookup_host((host, endpoint.port))
+            .await
+            .map_err(|_| NetworkError::EndpointResolve(format!("failed to resolve {host}")))?;
         for addr in lookup {
             seen.insert(addr.ip());
         }

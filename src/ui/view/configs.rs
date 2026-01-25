@@ -1,14 +1,15 @@
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants},
     group_box::{GroupBox, GroupBoxVariants},
-    h_flex, input::{Input, InputState}, v_flex,
+    h_flex,
+    input::{Input, InputState},
+    v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
 };
 
+use super::super::state::WgApp;
 use super::data::ViewData;
 use super::widgets::status_badge;
-use super::super::state::WgApp;
 
 /// Configs 页面：显示隧道名与配置内容输入框。
 pub(crate) fn render_configs_editor(
@@ -44,18 +45,15 @@ pub(crate) fn render_configs_editor(
                 .child(action_bar),
         )
         .child(
-            GroupBox::new()
-                .fill()
-                .title("Tunnel Name")
-                .child(
-                    div()
-                        .w_full()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(cx.theme().secondary)
-                        .child(Input::new(name_input).appearance(false).bordered(false)),
-                ),
+            GroupBox::new().fill().title("Tunnel Name").child(
+                div()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(cx.theme().secondary)
+                    .child(Input::new(name_input).appearance(false).bordered(false)),
+            ),
         )
         .child(
             GroupBox::new()
@@ -69,7 +67,12 @@ pub(crate) fn render_configs_editor(
                         .p_2()
                         .rounded_md()
                         .bg(cx.theme().secondary)
-                        .child(Input::new(config_input).appearance(false).bordered(false).h_full()),
+                        .child(
+                            Input::new(config_input)
+                                .appearance(false)
+                                .bordered(false)
+                                .h_full(),
+                        ),
                 )
                 .flex_grow(),
         )
@@ -168,5 +171,8 @@ fn config_action_bar(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
                 })),
         );
 
-    v_flex().gap_2().child(primary_actions).child(secondary_actions)
+    v_flex()
+        .gap_2()
+        .child(primary_actions)
+        .child(secondary_actions)
 }

@@ -7,11 +7,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gotatun::device::{self, Device, DefaultDeviceTransports};
+use gotatun::device::{self, DefaultDeviceTransports, Device};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::dns::{apply_dns_selection, DnsSelection};
 use super::config::{self, ConfigError};
+use crate::dns::{apply_dns_selection, DnsSelection};
 use crate::log;
 use crate::platform;
 
@@ -163,8 +163,8 @@ impl Engine {
             .name("wg-backend".to_string())
             .spawn(move || {
                 // 独立 runtime，避免与 UI 线程/其它 runtime 交叉干扰。
-                let runtime = tokio::runtime::Runtime::new()
-                    .expect("failed to create backend runtime");
+                let runtime =
+                    tokio::runtime::Runtime::new().expect("failed to create backend runtime");
                 runtime.block_on(async move {
                     run(rx).await;
                 });
@@ -394,9 +394,9 @@ fn log_engine(message: String) {
 
 fn wants_full_tunnel(peers: &[config::PeerConfig]) -> bool {
     peers.iter().any(|peer| {
-        peer.allowed_ips.iter().any(|allowed| {
-            allowed.addr.is_unspecified() && allowed.cidr == 0
-        })
+        peer.allowed_ips
+            .iter()
+            .any(|allowed| allowed.addr.is_unspecified() && allowed.cidr == 0)
     })
 }
 

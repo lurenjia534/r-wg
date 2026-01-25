@@ -28,9 +28,9 @@ struct InterfaceBuilder {
 impl InterfaceBuilder {
     /// 完成构建并校验必填项。
     fn finish(self, line: Option<usize>) -> Result<InterfaceConfig, ConfigError> {
-        let private_key = self.private_key.ok_or_else(|| {
-            ConfigError::new(line, "missing PrivateKey in [Interface] section")
-        })?;
+        let private_key = self
+            .private_key
+            .ok_or_else(|| ConfigError::new(line, "missing PrivateKey in [Interface] section"))?;
         Ok(InterfaceConfig {
             private_key,
             listen_port: self.listen_port,
@@ -70,10 +70,7 @@ impl PeerBuilder {
     /// 完成构建并校验必填项。
     fn finish(self) -> Result<PeerConfig, ConfigError> {
         let public_key = self.public_key.ok_or_else(|| {
-            ConfigError::new(
-                Some(self.start_line),
-                "missing PublicKey in [Peer] section",
-            )
+            ConfigError::new(Some(self.start_line), "missing PublicKey in [Peer] section")
         })?;
         Ok(PeerConfig {
             public_key,
@@ -150,9 +147,7 @@ pub fn parse_config(input: &str) -> Result<WireGuardConfig, ConfigError> {
         let (key, value) = split_key_value(line, line_no)?;
 
         match active {
-            Section::Interface => {
-                parse_interface_kv(&mut interface_builder, &key, value, line_no)?
-            }
+            Section::Interface => parse_interface_kv(&mut interface_builder, &key, value, line_no)?,
             Section::Peer => {
                 let Some(peer) = current_peer.as_mut() else {
                     return Err(ConfigError::new(
@@ -204,10 +199,7 @@ fn parse_section_header(line: &str) -> Option<&str> {
 /// 拆分 `key = value`。
 fn split_key_value(line: &str, line_no: usize) -> Result<(String, &str), ConfigError> {
     let Some((key, value)) = line.split_once('=') else {
-        return Err(ConfigError::new(
-            Some(line_no),
-            "expected key = value",
-        ));
+        return Err(ConfigError::new(Some(line_no), "expected key = value"));
     };
     let key = key.trim();
     let value = value.trim();
@@ -341,8 +333,7 @@ fn parse_peer_kv(
                     "duplicate PersistentKeepalive in [Peer] section",
                 ));
             }
-            builder.persistent_keepalive =
-                Some(parse_u16(value, line_no, "PersistentKeepalive")?);
+            builder.persistent_keepalive = Some(parse_u16(value, line_no, "PersistentKeepalive")?);
         }
         _ => {
             return Err(ConfigError::new(
@@ -357,9 +348,9 @@ fn parse_peer_kv(
 
 /// 解析密钥并包装成 ConfigError。
 fn parse_key(value: &str, line_no: usize) -> Result<Key, ConfigError> {
-    value.parse::<Key>().map_err(|err| {
-        ConfigError::new(Some(line_no), format!("invalid key: {err}"))
-    })
+    value
+        .parse::<Key>()
+        .map_err(|err| ConfigError::new(Some(line_no), format!("invalid key: {err}")))
 }
 
 /// 解析 AllowedIPs，逗号分隔。
@@ -450,9 +441,9 @@ fn parse_table(value: &str, line_no: usize) -> Result<RouteTable, ConfigError> {
 
 /// 解析 u16 类型字段。
 fn parse_u16(value: &str, line_no: usize, name: &str) -> Result<u16, ConfigError> {
-    value.parse::<u16>().map_err(|_| {
-        ConfigError::new(Some(line_no), format!("invalid {name} value"))
-    })
+    value
+        .parse::<u16>()
+        .map_err(|_| ConfigError::new(Some(line_no), format!("invalid {name} value")))
 }
 
 /// 解析 FwMark，支持 `off`、`0`、十六进制与十进制。

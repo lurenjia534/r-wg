@@ -294,13 +294,9 @@ impl WgApp {
                     }
                     // 导入结束后给出总结提示（成功/失败数）。
                     if imported == 0 && failed > 0 {
-                        this.set_error(
-                            last_error.unwrap_or_else(|| "Import failed".to_string()),
-                        );
+                        this.set_error(last_error.unwrap_or_else(|| "Import failed".to_string()));
                     } else if failed > 0 {
-                        this.set_status(format!(
-                            "Imported {imported} configs, {failed} failed"
-                        ));
+                        this.set_status(format!("Imported {imported} configs, {failed} failed"));
                     } else {
                         this.set_status(format!("Imported {imported} configs"));
                     }
@@ -504,14 +500,23 @@ fn pick_file_fallback(prompt: &str) -> Result<Option<Vec<PathBuf>>, String> {
 
 fn pick_with_zenity(prompt: &str) -> Result<Option<Vec<PathBuf>>, String> {
     let title = format!("--title={prompt}");
-    pick_with_command("zenity", &["--file-selection", "--multiple", "--separator=|", &title])
+    pick_with_command(
+        "zenity",
+        &["--file-selection", "--multiple", "--separator=|", &title],
+    )
 }
 
 fn pick_with_kdialog(prompt: &str) -> Result<Option<Vec<PathBuf>>, String> {
     let title = format!("--title={prompt}");
     pick_with_command(
         "kdialog",
-        &["--getopenfilename", ".", "--multiple", "--separate-output", &title],
+        &[
+            "--getopenfilename",
+            ".",
+            "--multiple",
+            "--separate-output",
+            &title,
+        ],
     )
 }
 

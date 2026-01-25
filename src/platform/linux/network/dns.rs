@@ -7,9 +7,9 @@
 //! - NM 路径在必要时触发 down/up 重连以清掉残留 DNS。
 //! - 失败向上抛错，由上层决定是否允许继续启动。
 
-use std::net::IpAddr;
 use std::collections::HashSet;
 use std::fs;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -115,7 +115,10 @@ pub(super) async fn apply_dns(
                     log_net("dns resolvectl not found".to_string());
                     continue;
                 };
-                log_net(format!("dns backend: resolvectl ({})", resolvectl.display()));
+                log_net(format!(
+                    "dns backend: resolvectl ({})",
+                    resolvectl.display()
+                ));
                 match apply_resolved(&resolvectl, tun_name, servers, search).await {
                     Ok(()) => {
                         return Ok(DnsState {
@@ -133,7 +136,10 @@ pub(super) async fn apply_dns(
                     log_net("dns resolvconf not found".to_string());
                     continue;
                 };
-                log_net(format!("dns backend: resolvconf ({})", resolvconf.display()));
+                log_net(format!(
+                    "dns backend: resolvconf ({})",
+                    resolvconf.display()
+                ));
                 match apply_resolvconf(&resolvconf, tun_name, servers, search).await {
                     Ok(()) => {
                         return Ok(DnsState {
@@ -160,15 +166,13 @@ pub(super) async fn apply_dns(
                     }
                 }
             }
-            DnsBackendKind::ResolvConf => {
-                match apply_resolv_conf_file(&info, servers, search) {
-                    Ok(state) => return Ok(state),
-                    Err(err) => {
-                        log_net(format!("dns resolv.conf failed: {err}"));
-                        last_error = Some(err);
-                    }
+            DnsBackendKind::ResolvConf => match apply_resolv_conf_file(&info, servers, search) {
+                Ok(state) => return Ok(state),
+                Err(err) => {
+                    log_net(format!("dns resolv.conf failed: {err}"));
+                    last_error = Some(err);
                 }
-            }
+            },
         }
     }
 
@@ -185,7 +189,11 @@ pub(super) async fn cleanup_dns(tun_name: &str, state: DnsState) -> Result<(), N
             if let Some(resolvectl) = resolve_command("resolvectl") {
                 // resolvectl revert 会撤销该接口的 DNS 配置。
                 log_net(format!("dns revert: resolvectl ({})", resolvectl.display()));
-                run_cmd(&resolvectl, &vec!["revert".to_string(), tun_name.to_string()]).await?
+                run_cmd(
+                    &resolvectl,
+                    &vec!["revert".to_string(), tun_name.to_string()],
+                )
+                .await?
             }
         }
         DnsBackend::Resolvconf => {
@@ -198,10 +206,7 @@ pub(super) async fn cleanup_dns(tun_name: &str, state: DnsState) -> Result<(), N
         DnsBackend::NetworkManager { connections } => {
             if let Some(nmcli) = resolve_command("nmcli") {
                 for conn in connections {
-                    log_net(format!(
-                        "dns revert: nmcli connection={}",
-                        conn.name
-                    ));
+                    log_net(format!("dns revert: nmcli connection={}", conn.name));
                     if let Err(err) = restore_nm_connection(&nmcli, &conn).await {
                         log_net(format!("dns nmcli revert failed: {err}"));
                     }
@@ -252,10 +257,7 @@ fn resolve_command(program: &str) -> Option<PathBuf> {
 async fn run_cmd(program: &Path, args: &[String]) -> Result<(), NetworkError> {
     // 将实际执行的命令记录到日志，便于排查系统调用失败。
     log_command(program, args);
-    let output = Command::new(program)
-        .args(args)
-        .output()
-        .await?;
+    let output = Command::new(program).args(args).output().await?;
 
     if output.status.success() {
         return Ok(());
@@ -396,10 +398,7 @@ fn read_resolv_conf_info() -> ResolvConfInfo {
 fn log_resolv_conf_info(info: &ResolvConfInfo) {
     if info.is_symlink {
         if let Some(target) = &info.target {
-            log_net(format!(
-                "dns resolv.conf: symlink -> {}",
-                target.display()
-            ));
+            log_net(format!("dns resolv.conf: symlink -> {}", target.display()));
         } else {
             log_net("dns resolv.conf: symlink (target unknown)".to_string());
         }
@@ -477,16 +476,15 @@ async fn apply_network_manager(
     let mut touched = Vec::new();
     for conn in connections {
         let state = read_nm_connection_state(nmcli, &conn.name, &conn.device).await?;
-        if let Err(err) =
-            apply_nm_connection(
-                nmcli,
-                &conn.name,
-                &conn.device,
-                &v4_dns,
-                &v6_dns,
-                &search_value,
-            )
-            .await
+        if let Err(err) = apply_nm_connection(
+            nmcli,
+            &conn.name,
+            &conn.device,
+            &v4_dns,
+            &v6_dns,
+            &search_value,
+        )
+        .await
         {
             for restored in touched.iter().rev() {
                 let _ = restore_nm_connection(nmcli, restored).await;
@@ -538,7 +536,9 @@ async fn apply_network_manager(
     }
 
     Ok(DnsState {
-        backend: DnsBackend::NetworkManager { connections: touched },
+        backend: DnsBackend::NetworkManager {
+            connections: touched,
+        },
     })
 }
 
@@ -594,11 +594,13 @@ async fn read_nm_connection_state(
 ) -> Result<NmConnectionState, NetworkError> {
     // 读取连接现有 DNS 设置，供失败时回滚。
     let ipv4_dns = nmcli_get(nmcli, name, "ipv4.dns").await?;
-    let ipv4_ignore_auto = normalize_nmcli_bool(nmcli_get(nmcli, name, "ipv4.ignore-auto-dns").await?);
+    let ipv4_ignore_auto =
+        normalize_nmcli_bool(nmcli_get(nmcli, name, "ipv4.ignore-auto-dns").await?);
     let ipv4_search = nmcli_get(nmcli, name, "ipv4.dns-search").await?;
     let ipv4_priority = nmcli_get(nmcli, name, "ipv4.dns-priority").await?;
     let ipv6_dns = nmcli_get(nmcli, name, "ipv6.dns").await?;
-    let ipv6_ignore_auto = normalize_nmcli_bool(nmcli_get(nmcli, name, "ipv6.ignore-auto-dns").await?);
+    let ipv6_ignore_auto =
+        normalize_nmcli_bool(nmcli_get(nmcli, name, "ipv6.ignore-auto-dns").await?);
     let ipv6_search = nmcli_get(nmcli, name, "ipv6.dns-search").await?;
     let ipv6_priority = nmcli_get(nmcli, name, "ipv6.dns-priority").await?;
 
@@ -616,11 +618,7 @@ async fn read_nm_connection_state(
     })
 }
 
-async fn nmcli_get(
-    nmcli: &Path,
-    name: &str,
-    field: &str,
-) -> Result<String, NetworkError> {
+async fn nmcli_get(nmcli: &Path, name: &str, field: &str) -> Result<String, NetworkError> {
     let args = vec![
         "-g".to_string(),
         field.to_string(),
@@ -715,7 +713,10 @@ async fn nmcli_reapply(nmcli: &Path, device: &str) -> Result<(), NetworkError> {
     run_cmd(nmcli, &args).await
 }
 
-async fn nmcli_reconnect(nmcli: &Path, connections: &[NmConnectionState]) -> Result<(), NetworkError> {
+async fn nmcli_reconnect(
+    nmcli: &Path,
+    connections: &[NmConnectionState],
+) -> Result<(), NetworkError> {
     // down/up 会短暂断网，但可强制 NM 重新应用连接设置。
     for conn in connections {
         let args = vec![
@@ -892,10 +893,7 @@ fn verify_resolv_conf_servers(path: &Path, servers: &[IpAddr]) -> Result<(), Net
     Ok(())
 }
 
-async fn wait_for_resolv_conf_servers(
-    path: &Path,
-    servers: &[IpAddr],
-) -> Result<(), NetworkError> {
+async fn wait_for_resolv_conf_servers(path: &Path, servers: &[IpAddr]) -> Result<(), NetworkError> {
     // 允许系统异步写入（如 NM reapply/RA），短暂重试等待稳定态。
     let mut last_error: Option<NetworkError> = None;
     for _ in 0..5 {

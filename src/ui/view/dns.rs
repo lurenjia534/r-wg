@@ -1,11 +1,12 @@
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, Selectable, Sizable as _, StyledExt as _,
-    Icon, IconName,
     button::{Button, ButtonGroup},
     group_box::GroupBox,
-    h_flex, scroll::ScrollableElement, tag::Tag, v_flex,
+    h_flex,
+    scroll::ScrollableElement,
+    tag::Tag,
+    v_flex, ActiveTheme as _, Icon, IconName, Selectable, Sizable as _, StyledExt as _,
 };
 
 use super::super::state::WgApp;
@@ -101,10 +102,7 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
     if show_cards {
         let cloudflare_cards = v_flex()
             .gap_3()
-            .child(dns_section_title(
-                "Cloudflare (1.1.1.1)",
-                "Plain / 53",
-            ))
+            .child(dns_section_title("Cloudflare (1.1.1.1)", "Plain / 53"))
             .child(
                 div()
                     .grid()
@@ -131,10 +129,7 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         content = content.child(cloudflare_cards).child(adguard_cards);
     }
 
-    let group = GroupBox::new()
-        .title("DNS")
-        .w_full()
-        .child(content);
+    let group = GroupBox::new().title("DNS").w_full().child(content);
     let scrollable = v_flex()
         .id("dns-scroll")
         .w_full()
@@ -220,11 +215,7 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stat
                     h_flex()
                         .items_center()
                         .gap_2()
-                        .child(
-                            Tag::success()
-                                .small()
-                                .child("Selected"),
-                        )
+                        .child(Tag::success().small().child("Selected"))
                         .child(
                             Icon::new(IconName::CircleCheck)
                                 .size_4()
@@ -273,14 +264,12 @@ fn dns_address_block(
     addrs: &'static [&'static str],
     cx: &mut Context<WgApp>,
 ) -> Div {
-    let mut list = v_flex()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(label),
-        );
+    let mut list = v_flex().gap_1().child(
+        div()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(label),
+    );
     for addr in addrs {
         list = list.child(div().text_sm().child(*addr));
     }

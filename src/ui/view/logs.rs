@@ -1,9 +1,11 @@
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _,
     button::Button,
     group_box::{GroupBox, GroupBoxVariants},
-    h_flex, input::{Input, Position}, switch::Switch, v_flex, Size,
+    h_flex,
+    input::{Input, Position},
+    switch::Switch,
+    v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, Size,
 };
 use r_wg::log;
 

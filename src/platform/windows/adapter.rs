@@ -11,8 +11,8 @@ use tokio::time::sleep;
 use windows::core::{GUID, PSTR};
 use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, NO_ERROR, WIN32_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetAdaptersAddresses, IP_ADAPTER_ADDRESSES_LH, GAA_FLAG_SKIP_ANYCAST,
-    GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
+    GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
+    IP_ADAPTER_ADDRESSES_LH,
 };
 use windows::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows::Win32::Networking::WinSock::AF_UNSPEC;
@@ -109,7 +109,11 @@ fn pstr_to_string(ptr: PSTR) -> String {
     if ptr.0.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(ptr.0 as *const i8).to_string_lossy().into_owned() }
+    unsafe {
+        CStr::from_ptr(ptr.0 as *const i8)
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 fn extract_guid_from_adapter_name(name: &str) -> Option<GUID> {

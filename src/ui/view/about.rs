@@ -2,13 +2,15 @@ use std::env::consts::{ARCH, OS};
 
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
     alert::Alert,
     avatar::Avatar,
     button::Button,
     description_list::DescriptionList,
     group_box::{GroupBox, GroupBoxVariants},
-    h_flex, scroll::ScrollableElement, tag::Tag, v_flex,
+    h_flex,
+    scroll::ScrollableElement,
+    tag::Tag,
+    v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
 use super::super::state::WgApp;
@@ -48,7 +50,12 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                         .items_center()
                         .gap_2()
                         .child(div().text_lg().font_semibold().child("r-wg"))
-                        .child(Tag::secondary().small().rounded_full().child(version_text.clone()))
+                        .child(
+                            Tag::secondary()
+                                .small()
+                                .rounded_full()
+                                .child(version_text.clone()),
+                        )
                         .child(Tag::info().small().rounded_full().child("WireGuard Client")),
                 )
                 .child(
@@ -60,16 +67,13 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         );
 
     let summary = GroupBox::new().fill().title("About").child(
-        v_flex()
-            .gap_3()
-            .child(header)
-            .child(
-                Alert::info(
-                    "about-status",
-                    "Linux networking is production-ready. macOS/Windows are scaffolding only.",
-                )
-                .text_xs(),
-            ),
+        v_flex().gap_3().child(header).child(
+            Alert::info(
+                "about-status",
+                "Linux networking is production-ready. macOS/Windows are scaffolding only.",
+            )
+            .text_xs(),
+        ),
     );
 
     let build_info = GroupBox::new().fill().title("Build & Runtime").child(
@@ -117,8 +121,18 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                     .items_center()
                     .gap_2()
                     .child(Tag::success().small().rounded_full().child("Linux ready"))
-                    .child(Tag::warning().small().rounded_full().child("macOS scaffold"))
-                    .child(Tag::warning().small().rounded_full().child("Windows scaffold")),
+                    .child(
+                        Tag::warning()
+                            .small()
+                            .rounded_full()
+                            .child("macOS scaffold"),
+                    )
+                    .child(
+                        Tag::warning()
+                            .small()
+                            .rounded_full()
+                            .child("Windows scaffold"),
+                    ),
             ),
     );
 
@@ -146,9 +160,7 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                     .small()
                     .compact()
                     .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(
-                            copy_version_text.clone(),
-                        ));
+                        cx.write_to_clipboard(ClipboardItem::new_string(copy_version_text.clone()));
                     })),
             )
             .child(
@@ -158,9 +170,7 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                     .small()
                     .compact()
                     .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(
-                            copy_build_text.clone(),
-                        ));
+                        cx.write_to_clipboard(ClipboardItem::new_string(copy_build_text.clone()));
                     })),
             ),
     );

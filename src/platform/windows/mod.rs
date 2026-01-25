@@ -15,9 +15,7 @@ mod sockaddr;
 use std::fmt;
 
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{
-    ERROR_ALREADY_EXISTS, ERROR_OBJECT_ALREADY_EXISTS, WIN32_ERROR,
-};
+use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_OBJECT_ALREADY_EXISTS, WIN32_ERROR};
 use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 
 use crate::backend::wg::config::{InterfaceAddress, InterfaceConfig, PeerConfig, RouteTable};
@@ -239,10 +237,7 @@ pub async fn apply_network_config(
         for entry in bypass_routes {
             match add_route(&entry) {
                 Ok(()) => state.bypass_routes.push(entry),
-                Err(err) => log_net(format!(
-                    "bypass route add failed for {}: {err}",
-                    entry.dest
-                )),
+                Err(err) => log_net(format!("bypass route add failed for {}: {err}", entry.dest)),
             }
         }
     }

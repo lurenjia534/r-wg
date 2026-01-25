@@ -184,10 +184,7 @@ impl WgApp {
             self.loading_config = None;
             self.loading_config_path = None;
             self.update_parse_cache(&name, text.as_ref(), text_hash);
-            self.loaded_config = Some(LoadedConfigState {
-                name,
-                text_hash,
-            });
+            self.loaded_config = Some(LoadedConfigState { name, text_hash });
             return;
         }
 
@@ -210,10 +207,7 @@ impl WgApp {
             self.loading_config = None;
             self.loading_config_path = None;
             self.update_parse_cache(&name, text.as_ref(), text_hash);
-            self.loaded_config = Some(LoadedConfigState {
-                name,
-                text_hash,
-            });
+            self.loaded_config = Some(LoadedConfigState { name, text_hash });
             return;
         }
 
@@ -269,10 +263,7 @@ impl WgApp {
                             }
                             let text_hash = text_hash(text.as_ref());
                             this.update_parse_cache(&name, text.as_ref(), text_hash);
-                            this.loaded_config = Some(LoadedConfigState {
-                                name,
-                                text_hash,
-                            });
+                            this.loaded_config = Some(LoadedConfigState { name, text_hash });
                             this.set_status("Loaded config");
                         }
                         Err(err) => {
@@ -601,9 +592,8 @@ impl WgApp {
         cx.spawn(async move |view, cx| {
             // 后台删除磁盘文件：避免阻塞 UI，
             // 同时允许文件不存在的情况（已经手动删除）。
-            let delete_task = cx.background_spawn(async move {
-                std::fs::remove_file(&storage_path)
-            });
+            let delete_task =
+                cx.background_spawn(async move { std::fs::remove_file(&storage_path) });
             if let Err(err) = delete_task.await {
                 if err.kind() != ErrorKind::NotFound {
                     view.update(cx, |this, cx| {
@@ -643,9 +633,8 @@ impl WgApp {
 
         cx.spawn(async move |view, cx| {
             let path_for_cache = selected.storage_path.clone();
-            let read_task = cx.background_spawn(async move {
-                std::fs::read_to_string(&selected.storage_path)
-            });
+            let read_task =
+                cx.background_spawn(async move { std::fs::read_to_string(&selected.storage_path) });
             let result = read_task.await;
             view.update(cx, |this, cx| {
                 // 注意：复制场景不改变选中项，因此只需检查是否仍选中同一索引。
