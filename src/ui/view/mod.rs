@@ -12,7 +12,7 @@ mod top_bar;
 mod widgets;
 
 use gpui::*;
-use gpui_component::ActiveTheme as _;
+use gpui_component::{scroll::ScrollableElement as _, ActiveTheme as _};
 
 use super::state::{SidebarItem, WgApp};
 use data::ViewData;
@@ -86,14 +86,20 @@ impl Render for WgApp {
                     .p_3()
                     // 顶部工具栏
                     .child(top_bar::render_top_bar(self, &data, cx))
-                    .child(
-                        div()
+                    .child({
+                        let body = div()
                             .flex()
                             .flex_col()
                             .flex_1()
                             .min_h(px(0.0))
-                            .child(main_body),
-                    )
+                            .child(main_body);
+                        let body = if self.sidebar_active == SidebarItem::Overview {
+                            body.overflow_y_scrollbar().into_any_element()
+                        } else {
+                            body.into_any_element()
+                        };
+                        body
+                    })
             })
     }
 }
