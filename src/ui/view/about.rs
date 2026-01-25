@@ -127,12 +127,7 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                             .rounded_full()
                             .child("macOS scaffold"),
                     )
-                    .child(
-                        Tag::success()
-                            .small()
-                            .rounded_full()
-                            .child("Windows ready"),
-                    ),
+                    .child(Tag::success().small().rounded_full().child("Windows ready")),
             ),
     );
 
