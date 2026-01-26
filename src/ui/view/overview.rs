@@ -5,7 +5,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 
 use gpui_component::{
-    button::{Button, ButtonGroup},
+    button::{Button, ButtonGroup, ButtonVariants},
     chart::{BarChart, LineChart, PieChart},
     divider::Divider,
     group_box::{GroupBox, GroupBoxVariants},
@@ -273,8 +273,15 @@ struct TrafficTrendData {
 
 fn traffic_trend_card(cx: &mut Context<WgApp>, trend: &TrafficTrendData) -> GroupBox {
     let avg_color: Hsla = rgb(0xf59e0b).into();
-    let bar_color = cx.theme().muted_foreground.alpha(0.25);
-    let bar_highlight = cx.theme().muted_foreground.alpha(0.5);
+    let avg_line_color = avg_color.alpha(if cx.theme().is_dark() { 0.55 } else { 0.45 });
+    let bar_color = cx
+        .theme()
+        .muted_foreground
+        .alpha(if cx.theme().is_dark() { 0.16 } else { 0.12 });
+    let bar_highlight = cx
+        .theme()
+        .accent
+        .alpha(if cx.theme().is_dark() { 0.32 } else { 0.24 });
     let avg_text = format_avg_bytes(trend.average_bytes);
 
     GroupBox::new()
@@ -326,7 +333,7 @@ fn traffic_trend_card(cx: &mut Context<WgApp>, trend: &TrafficTrendData) -> Grou
                         .child(div().absolute().inset_0().child(TrafficAvgLine::new(
                             trend.points.clone(),
                             trend.average_bytes,
-                            avg_color,
+                            avg_line_color,
                         ))),
                 ),
         )
@@ -357,15 +364,12 @@ fn traffic_summary_card(
     cx: &mut Context<WgApp>,
     summary: &TrafficSummaryData,
 ) -> GroupBox {
-    let upload_color: Hsla = rgb(0x6366f1).into();
-    let download_color: Hsla = rgb(0x22d3ee).into();
-    let rank_color: Hsla = rgb(0xa855f7).into();
+    let upload_color: Hsla = rgb(0x818cf8).into(); // Indigo-400
+    let download_color: Hsla = rgb(0x34d399).into(); // Emerald-400
+    let rank_color: Hsla = rgb(0xa78bfa).into(); // Violet-400
+
     let total_bytes = summary.total_rx.saturating_add(summary.total_tx);
-    let upload_text = super::super::format::format_bytes(summary.total_tx);
-    let download_text = super::super::format::format_bytes(summary.total_rx);
     let total_text = super::super::format::format_bytes(total_bytes);
-    let upload_pct = percent(summary.total_tx, total_bytes);
-    let download_pct = percent(summary.total_rx, total_bytes);
 
     let period_toggle = ButtonGroup::new("traffic-summary-period")
         .outline()
@@ -402,29 +406,42 @@ fn traffic_summary_card(
                 })),
         );
 
-    let ranking_tabs = ButtonGroup::new("traffic-summary-ranking")
-        .outline()
-        .compact()
-        .xsmall()
+    // Ranking tabs - simplified visual
+    let ranking_tabs = h_flex()
+        .gap_2()
+        .items_center()
         .child(
-            Button::new("traffic-ranking-proxy")
-                .label("Proxy")
-                .selected(true),
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().muted_foreground)
+                .child("RANKING BY:"),
         )
         .child(
-            Button::new("traffic-ranking-process")
-                .label("Process")
-                .disabled(true),
-        )
-        .child(
-            Button::new("traffic-ranking-interface")
-                .label("Interface")
-                .disabled(true),
-        )
-        .child(
-            Button::new("traffic-ranking-host")
-                .label("Hostname")
-                .disabled(true),
+            ButtonGroup::new("traffic-summary-ranking")
+                .ghost()
+                .compact()
+                .xsmall()
+                .child(
+                    Button::new("traffic-ranking-proxy")
+                        .label("Proxy")
+                        .selected(true),
+                )
+                .child(
+                    Button::new("traffic-ranking-process")
+                        .label("Process")
+                        .disabled(true),
+                )
+                .child(
+                    Button::new("traffic-ranking-interface")
+                        .label("Interface")
+                        .disabled(true),
+                )
+                .child(
+                    Button::new("traffic-ranking-host")
+                        .label("Hostname")
+                        .disabled(true),
+                ),
         );
 
     let pie_data = vec![
@@ -438,15 +455,16 @@ fn traffic_summary_card(
         },
     ];
 
+    // Modern donut chart with thinner ring
     let donut = div()
-        .size(px(160.0))
+        .size(px(180.0)) // Slightly larger container
         .relative()
         .child(
             PieChart::new(pie_data)
                 .value(|slice| slice.value as f32)
-                .inner_radius(44.0)
-                .outer_radius(60.0)
-                .pad_angle(0.04)
+                .inner_radius(65.0) // Thinner ring
+                .outer_radius(80.0)
+                .pad_angle(0.02)
                 .color(|slice| slice.color)
                 .into_any_element(),
         )
@@ -458,76 +476,85 @@ fn traffic_summary_card(
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .gap_1()
                 .child(
                     div()
                         .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Total"),
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(cx.theme().muted_foreground.opacity(0.7))
+                        // .uppercase() // Not supported on Div
+                        .child("TOTAL TRAFFIC"),
                 )
-                .child(div().text_2xl().font_semibold().child(total_text)),
+                .child(
+                    div()
+                        .text_3xl()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(cx.theme().foreground)
+                        .child(total_text),
+                ),
         );
 
     let breakdown = v_flex()
-        .gap_3()
-        .min_w(px(220.0))
-        .child(metric_progress(
+        .gap_6()
+        .w_full()
+        .child(metric_progress_modern(
             IconName::ArrowUp,
             "Upload",
-            &upload_text,
-            upload_pct,
+            summary.total_tx,
+            total_bytes,
             upload_color,
             cx,
         ))
-        .child(metric_progress(
+        .child(metric_progress_modern(
             IconName::ArrowDown,
             "Download",
-            &download_text,
-            download_pct,
+            summary.total_rx,
+            total_bytes,
             download_color,
             cx,
         ));
 
-    let ranking = traffic_ranking_list(&summary.ranked, rank_color, cx);
+    let ranking = traffic_ranking_list_modern(&summary.ranked, rank_color, cx);
 
+    // Main layout
     GroupBox::new()
         .fill()
         .title(card_title(IconName::ChartPie, "Traffic Summary", None, cx))
+        .child(Divider::horizontal().color(cx.theme().border))
         .child(
             v_flex()
-                .gap_3()
+                .gap_6()
+                .p_4()
                 .child(
                     h_flex()
                         .items_center()
                         .justify_between()
+                        .flex_wrap()
+                        .gap_4()
                         .child(period_toggle)
-                        .child(
-                            h_flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child("Ranking"),
-                                )
-                                .child(ranking_tabs),
-                        ),
+                        .child(ranking_tabs),
                 )
                 .child(
                     h_flex()
-                        .gap_6()
                         .items_start()
-                        .flex_wrap()
-                        .child(donut)
-                        .child(breakdown)
+                        .gap_8()
+                        // Chart Section
                         .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
+                            v_flex()
+                                .w(relative(0.4))
+                                .min_w(px(300.0))
+                                .items_center()
+                                .gap_8()
+                                .child(donut)
+                                .child(breakdown),
+                        )
+                        // Divider
+                        .child(vertical_rule(cx))
+                        // Ranking Section
+                        .child(
+                            v_flex()
                                 .flex_grow()
-                                .min_w(px(220.0))
+                                .w(relative(0.6))
+                                .gap_4()
                                 .child(ranking),
                         ),
                 ),
@@ -539,16 +566,20 @@ struct TrafficSlice {
     color: Hsla,
 }
 
-fn metric_progress(
+fn metric_progress_modern(
     icon: IconName,
     label: &str,
-    value: &str,
-    pct: f32,
+    value: u64,
+    total: u64,
     color: Hsla,
     cx: &mut Context<WgApp>,
 ) -> Div {
+    let pct = percent(value, total);
+    let value_text = super::super::format::format_bytes(value);
+
     v_flex()
         .gap_1()
+        .w_full()
         .child(
             h_flex()
                 .items_center()
@@ -557,26 +588,64 @@ fn metric_progress(
                     h_flex()
                         .items_center()
                         .gap_2()
-                        .child(Icon::new(icon).size_3().text_color(color))
-                        .child(label.to_string()),
+                        .child(Icon::new(icon).size(px(14.0)).text_color(color))
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().muted_foreground)
+                                .child(label.to_string()),
+                        ),
                 )
-                .child(div().text_sm().font_semibold().child(value.to_string())),
+                .child(
+                    h_flex()
+                        .items_baseline()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::BOLD) // Emphasize number
+                                .text_color(cx.theme().foreground)
+                                .child(value_text),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground.opacity(0.7))
+                                .child(format!("({:.1}%)", pct)),
+                        ),
+                ),
         )
-        .child(Progress::new().value(pct).bg(color).h(px(6.0)))
         .child(
             div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(format!("{pct:.0}%")),
+                .h(px(6.0))
+                .w_full()
+                .bg(cx.theme().secondary) // Background track
+                .rounded_full()
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(pct / 100.0))
+                        .bg(color)
+                        .rounded_full(),
+                ),
         )
 }
 
-fn traffic_ranking_list(ranked: &[TrafficRankItem], color: Hsla, cx: &mut Context<WgApp>) -> Div {
+fn traffic_ranking_list_modern(
+    ranked: &[TrafficRankItem],
+    color: Hsla,
+    cx: &mut Context<WgApp>,
+) -> Div {
     if ranked.is_empty() {
         return div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(100.0))
             .text_sm()
             .text_color(cx.theme().muted_foreground)
-            .child("No traffic data yet");
+            .child("No traffic data available");
     }
 
     let max_total = ranked
@@ -584,34 +653,70 @@ fn traffic_ranking_list(ranked: &[TrafficRankItem], color: Hsla, cx: &mut Contex
         .map(|item| item.total_bytes())
         .max()
         .unwrap_or(0);
-    let rows = ranked.iter().map(|item| {
+
+    let rows = ranked.iter().enumerate().map(|(i, item)| {
         let total = item.total_bytes();
         let pct = percent(total, max_total);
-        v_flex()
-            .gap_1()
+        let rank_num = i + 1;
+
+        h_flex()
+            .items_center()
+            .gap_3()
+            .py_1()
             .child(
-                h_flex()
-                    .items_center()
-                    .justify_between()
+                div()
+                    .w(px(20.0))
+                    .text_xs()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(cx.theme().muted_foreground.opacity(0.5))
+                    .child(rank_num.to_string()),
+            )
+            .child(
+                v_flex()
+                    .flex_grow()
+                    .gap_1()
                     .child(
-                        div()
-                            .text_sm()
-                            .flex_grow()
-                            .min_w(px(0.0))
-                            .truncate()
-                            .child(item.name.clone()),
+                        h_flex()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().foreground)
+                                    .child(item.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(super::super::format::format_bytes(total)),
+                            ),
                     )
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(super::super::format::format_bytes(total)),
+                            .h(px(4.0))
+                            .w_full()
+                            .bg(cx.theme().secondary)
+                            .rounded_full()
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(pct / 100.0))
+                                    .bg(color.opacity(0.8)) // Slightly softer for list
+                                    .rounded_full(),
+                            ),
                     ),
             )
-            .child(Progress::new().value(pct).bg(color).h(px(6.0)))
     });
 
-    v_flex().gap_2().children(rows)
+    v_flex()
+        .gap_2()
+        .p_2()
+        .bg(cx.theme().secondary.opacity(0.3))
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().border.opacity(0.5))
+        .children(rows)
 }
 
 fn percent(value: u64, total: u64) -> f32 {
@@ -1113,7 +1218,7 @@ impl Element for TrafficAvgLine {
             .x(|point| Some(point.0))
             .y(|point| Some(point.1))
             .stroke(self.avg_color)
-            .stroke_width(px(2.0))
+            .stroke_width(px(1.0))
             .stroke_style(StrokeStyle::Linear);
 
         avg_line.paint(&bounds, window);
