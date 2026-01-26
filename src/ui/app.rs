@@ -73,7 +73,7 @@ pub fn run() {
                                 // 停止成功（或已停止/通道关闭）：更新 UI 并关闭窗口。
                                 if was_running {
                                     if let Some(view) = view_handle.upgrade() {
-                                        view.update(cx, |this, cx| {
+                                        let _ = view.update(cx, |this, cx| {
                                             this.busy = false;
                                             this.running = false;
                                             this.running_name = None;
@@ -91,7 +91,7 @@ pub fn run() {
                             Err(err) => {
                                 // 停止失败：保留窗口，提示错误，允许再次尝试关闭。
                                 if let Some(view) = view_handle.upgrade() {
-                                    view.update(cx, |this, cx| {
+                                    let _ = view.update(cx, |this, cx| {
                                         if was_running {
                                             this.busy = false;
                                         }
