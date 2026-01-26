@@ -274,10 +274,10 @@ struct TrafficTrendData {
 fn traffic_trend_card(cx: &mut Context<WgApp>, trend: &TrafficTrendData) -> GroupBox {
     let avg_color: Hsla = rgb(0xf59e0b).into();
     let avg_line_color = avg_color.alpha(if cx.theme().is_dark() { 0.55 } else { 0.45 });
-    let bar_color = cx
-        .theme()
-        .muted_foreground
-        .alpha(if cx.theme().is_dark() { 0.16 } else { 0.12 });
+    let bar_color =
+        cx.theme()
+            .muted_foreground
+            .alpha(if cx.theme().is_dark() { 0.16 } else { 0.12 });
     let bar_highlight = cx
         .theme()
         .accent
@@ -550,13 +550,7 @@ fn traffic_summary_card(
                         // Divider
                         .child(vertical_rule(cx))
                         // Ranking Section
-                        .child(
-                            v_flex()
-                                .flex_grow()
-                                .w(relative(0.6))
-                                .gap_4()
-                                .child(ranking),
-                        ),
+                        .child(v_flex().flex_grow().w(relative(0.6)).gap_4().child(ranking)),
                 ),
         )
 }
