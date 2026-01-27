@@ -201,7 +201,10 @@ fn shared(value: &'static str) -> SharedString {
 }
 
 fn theme_mode_options() -> Vec<(SharedString, SharedString)> {
-    vec![(shared("light"), shared("Light")), (shared("dark"), shared("Dark"))]
+    vec![
+        (shared("light"), shared("Light")),
+        (shared("dark"), shared("Dark")),
+    ]
 }
 
 fn theme_mode_value(mode: ThemeMode) -> SharedString {
@@ -217,9 +220,15 @@ fn theme_mode_from_value(value: &SharedString) -> ThemeMode {
 
 fn dns_mode_options() -> Vec<(SharedString, SharedString)> {
     vec![
-        (shared("follow_config"), shared(DnsMode::FollowConfig.label())),
+        (
+            shared("follow_config"),
+            shared(DnsMode::FollowConfig.label()),
+        ),
         (shared("system"), shared(DnsMode::UseSystemDns.label())),
-        (shared("auto_fill"), shared(DnsMode::AutoFillMissingFamilies.label())),
+        (
+            shared("auto_fill"),
+            shared(DnsMode::AutoFillMissingFamilies.label()),
+        ),
         (shared("override"), shared(DnsMode::OverrideAll.label())),
     ]
 }
@@ -244,7 +253,10 @@ fn dns_mode_from_value(value: &SharedString) -> DnsMode {
 
 fn dns_preset_options() -> Vec<(SharedString, SharedString)> {
     vec![
-        (shared("cloudflare_standard"), shared("Cloudflare: Standard")),
+        (
+            shared("cloudflare_standard"),
+            shared("Cloudflare: Standard"),
+        ),
         (shared("cloudflare_malware"), shared("Cloudflare: Malware")),
         (
             shared("cloudflare_malware_adult"),
@@ -303,7 +315,10 @@ fn traffic_period_from_value(value: &SharedString) -> TrafficPeriod {
 }
 
 fn right_tab_options() -> Vec<(SharedString, SharedString)> {
-    vec![(shared("status"), shared("Status")), (shared("logs"), shared("Logs"))]
+    vec![
+        (shared("status"), shared("Status")),
+        (shared("logs"), shared("Logs")),
+    ]
 }
 
 fn right_tab_value(tab: RightTab) -> SharedString {
