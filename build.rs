@@ -1,3 +1,5 @@
+#![allow(clippy::print_stdout)]
+
 use std::{env, fs, path::PathBuf};
 
 fn main() {
