@@ -187,9 +187,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
 }
 
 fn icon_button(id: &'static str, icon: IconName) -> Button {
-    Button::new(id)
-        .ghost()
-        .icon(Icon::new(icon).size_5())
+    Button::new(id).ghost().icon(Icon::new(icon).size_5())
 }
 
 fn vertical_divider(cx: &mut Context<WgApp>) -> Div {
