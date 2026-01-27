@@ -11,12 +11,14 @@ static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 // 只初始化一次全局日志（避免多次设置全局 subscriber 造成 panic）。
 fn test_init() {
     INIT.call_once(|| {
-        std::env::set_var("RWG_LOG", "1");
-        std::env::set_var("RWG_LOG_LEVEL", "info");
-        std::env::set_var("RWG_LOG_SCOPES", "net,engine");
         // 先关闭缓冲，验证运行时开启是否生效。
-        std::env::set_var("RWG_LOG_BUFFER", "0");
-        let _ = log::init();
+        let config = log::LogConfig::builder()
+            .level(LogLevel::Info)
+            .stderr_enabled(true)
+            .buffer_enabled(false)
+            .scopes(["net", "engine"])
+            .build();
+        let _ = log::init_with(config);
     });
 }
 

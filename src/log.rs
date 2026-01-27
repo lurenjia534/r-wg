@@ -87,7 +87,25 @@ pub struct LogConfig {
     buffer_enabled: bool,
 }
 
+// LogConfig 构建器：便于测试或嵌入方注入配置。
+pub struct LogConfigBuilder {
+    level: LogLevel,
+    scopes: Option<HashSet<String>>,
+    stderr_enabled: bool,
+    buffer_enabled: bool,
+}
+
 impl LogConfig {
+    // 构建器入口，用于绕过环境变量配置。
+    pub fn builder() -> LogConfigBuilder {
+        LogConfigBuilder {
+            level: LogLevel::Info,
+            scopes: None,
+            stderr_enabled: false,
+            buffer_enabled: true,
+        }
+    }
+
     // 从环境变量读取配置。
     // - RWG_LOG 控制 stderr 输出。
     // - RWG_LOG_LEVEL 控制等级。
@@ -132,6 +150,64 @@ impl LogConfig {
     }
 }
 
+impl LogConfigBuilder {
+    // 设置日志等级。
+    pub fn level(mut self, level: LogLevel) -> Self {
+        self.level = level;
+        self
+    }
+
+    // 是否启用 stderr 输出。
+    pub fn stderr_enabled(mut self, enabled: bool) -> Self {
+        self.stderr_enabled = enabled;
+        self
+    }
+
+    // 是否启用 UI 缓冲写入。
+    pub fn buffer_enabled(mut self, enabled: bool) -> Self {
+        self.buffer_enabled = enabled;
+        self
+    }
+
+    // 设置 scope 白名单；传入 "*" 或 "all" 表示全部允许。
+    pub fn scopes<I, S>(mut self, scopes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut set = HashSet::new();
+        for item in scopes {
+            let item = item.as_ref().trim();
+            if item.is_empty() {
+                continue;
+            }
+            if item == "*" || item.eq_ignore_ascii_case("all") {
+                self.scopes = None;
+                return self;
+            }
+            set.insert(item.to_string());
+        }
+        self.scopes = if set.is_empty() { None } else { Some(set) };
+        self
+    }
+
+    // 解析逗号分隔的 scope 白名单字符串。
+    pub fn scopes_csv(mut self, value: &str) -> Self {
+        self.scopes = parse_scopes(value);
+        self
+    }
+
+    // 生成最终配置。
+    pub fn build(self) -> LogConfig {
+        LogConfig {
+            level: self.level,
+            scopes: self.scopes,
+            stderr_enabled: self.stderr_enabled,
+            buffer_enabled: self.buffer_enabled,
+        }
+    }
+}
+
 // 使用无锁环形队列保存最近日志，供 UI 快速读取。
 static LOG_BUFFER: OnceLock<ArrayQueue<String>> = OnceLock::new();
 // 日志缓冲开关默认开启，与 stderr 输出开关独立。
@@ -152,8 +228,12 @@ fn buffer() -> &'static ArrayQueue<String> {
 
 // 初始化日志系统：注册全局 subscriber + 两个 sink（buffer 与 stderr）。
 pub fn init() -> &'static LogConfig {
+    init_with(LogConfig::from_env())
+}
+
+// 使用指定配置初始化（用于测试或嵌入场景）。
+pub fn init_with(config: LogConfig) -> &'static LogConfig {
     LOG_CONFIG.get_or_init(|| {
-        let config = LogConfig::from_env();
         LOG_BUFFER_ENABLED.store(config.buffer_enabled, Ordering::Relaxed);
         LOG_STDERR_ENABLED.store(config.stderr_enabled, Ordering::Relaxed);
 
@@ -245,6 +325,7 @@ pub fn event(level: LogLevel, scope: &str, args: fmt::Arguments) {
         return;
     }
     if !LOG_SUBSCRIBER_READY.load(Ordering::Relaxed) {
+        // 全局 subscriber 已被占用时走直接输出兜底。
         let timestamp = format_timestamp();
         let message = format!("{args}");
         let line = format!("[{timestamp}][r-wg][{scope}] {message}");
