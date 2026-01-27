@@ -7,7 +7,7 @@ use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt,
 };
 
-use super::super::state::WgApp;
+use super::super::state::{SidebarItem, WgApp};
 use super::data::ViewData;
 
 /// 顶部工具栏骨架：标题、配置切换、模式按钮、状态图标。
@@ -17,7 +17,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .gap_3()
         .child(
             div()
-                .size(px(36.0))
+                .size(px(40.0))
                 .rounded_md()
                 .bg(cx.theme().secondary)
                 .border_1()
@@ -27,7 +27,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .justify_center()
                 .child(
                     Icon::new(IconName::LayoutDashboard)
-                        .size_5()
+                        .size_6()
                         .text_color(cx.theme().accent),
                 ),
         )
@@ -125,12 +125,21 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         Tag::secondary().small().rounded_full().child("Idle")
     };
 
+    let settings_button = Button::new("settings")
+        .ghost()
+        .icon(Icon::new(IconName::Settings).size_5())
+        .tooltip("Open settings")
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.sidebar_active = SidebarItem::Advanced;
+            cx.notify();
+        }));
+
     let tools = h_flex()
         .items_center()
         .gap_2()
         .child(icon_button("notif", IconName::Bell))
         .child(icon_button("health", IconName::CircleCheck))
-        .child(icon_button("settings", IconName::Settings));
+        .child(settings_button);
 
     h_flex()
         .items_center()
@@ -180,8 +189,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
 fn icon_button(id: &'static str, icon: IconName) -> Button {
     Button::new(id)
         .ghost()
-        .xsmall()
-        .icon(Icon::new(icon).size_4())
+        .icon(Icon::new(icon).size_5())
 }
 
 fn vertical_divider(cx: &mut Context<WgApp>) -> Div {
