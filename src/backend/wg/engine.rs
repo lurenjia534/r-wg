@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::config::{self, ConfigError};
 use crate::dns::{apply_dns_selection, DnsSelection};
-use crate::log;
+use crate::log::events::engine as log_engine;
 use crate::platform;
 
 const DEFAULT_FWMARK: u32 = 0x5257;
@@ -255,11 +255,7 @@ impl EngineState {
             return Err(EngineError::AlreadyRunning);
         }
 
-        log_engine(format!(
-            "start: tun={} config_len={}",
-            request.tun_name,
-            request.config_text.len()
-        ));
+        log_engine::start(&request.tun_name, request.config_text.len());
 
         // 解析配置并映射为 gotatun 的 DeviceSettings。
         let mut parsed = config::parse_config(&request.config_text)?;
@@ -270,10 +266,10 @@ impl EngineState {
         );
         if wants_full_tunnel(&parsed.peers) && parsed.interface.fwmark.is_none() {
             parsed.interface.fwmark = Some(DEFAULT_FWMARK);
-            log_engine(format!("auto fwmark: 0x{DEFAULT_FWMARK:x}"));
+            log_engine::auto_fwmark(DEFAULT_FWMARK);
         }
         let settings = parsed.to_device_settings().await?;
-        log_engine("config parsed".to_string());
+        log_engine::config_parsed();
 
         // 使用 DeviceBuilder 创建 gotatun 设备。
         let handle = device::build()
@@ -281,7 +277,7 @@ impl EngineState {
             .create_tun(&request.tun_name)?
             .build()
             .await?;
-        log_engine("device created".to_string());
+        log_engine::device_created();
 
         // 配置 gotatun 设备；失败则立即停止设备。
         let config_result = handle
@@ -304,7 +300,7 @@ impl EngineState {
             handle.stop().await;
             return Err(EngineError::Device(err));
         }
-        log_engine("device configured".to_string());
+        log_engine::device_configured();
 
         // 应用系统网络配置；失败时回滚 gotatun 设备。
         let net_state = match platform::apply_network_config(
@@ -320,7 +316,7 @@ impl EngineState {
                 return Err(EngineError::Network(err));
             }
         };
-        log_engine("network configured".to_string());
+        log_engine::network_configured();
 
         // 保存运行态状态，便于后续 stop/cleanup。
         self.device = Some(handle);
@@ -337,7 +333,7 @@ impl EngineState {
             return Err(EngineError::NotRunning);
         };
 
-        log_engine("stop requested".to_string());
+        log_engine::stop_requested();
 
         // 优先回滚系统网络配置，避免留下路由/DNS 污染。
         let cleanup_result = if let Some(state) = self.net_state.take() {
@@ -350,7 +346,7 @@ impl EngineState {
 
         // 停止 gotatun 设备。
         handle.stop().await;
-        log_engine("device stopped".to_string());
+        log_engine::device_stopped();
 
         // 若回滚失败，仍然返回错误以便上层提示。
         cleanup_result
@@ -386,10 +382,6 @@ impl EngineState {
 
         Ok(EngineStats { peers })
     }
-}
-
-fn log_engine(message: String) {
-    log::log("engine", message);
 }
 
 fn wants_full_tunnel(peers: &[config::PeerConfig]) -> bool {

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use chrono::Local;
 use gpui::{AppContext, Context};
 use r_wg::backend::wg::EngineStats;
-use r_wg::log;
+use r_wg::log::events::stats as log_stats;
 
 use super::super::state::{
     SidebarItem, TrafficDay, TrafficDayStats, TrafficHour, WgApp, SPARKLINE_SAMPLES,
@@ -160,26 +160,20 @@ impl WgApp {
             }
         }
 
-        if log::enabled() {
-            let name = self.running_name.as_deref().unwrap_or("-");
-            let elapsed_text = elapsed_secs
-                .map(|value| format!("{value:.2}s"))
-                .unwrap_or_else(|| "-".to_string());
-            let iface_text = match (iface_rx, iface_tx) {
-                (Some(rx), Some(tx)) => format!(
-                    "iface_rx={rx} iface_tx={tx} iface_rx_rate={:.0}B/s iface_tx_rate={:.0}B/s",
-                    self.iface_rx_rate_bps, self.iface_tx_rate_bps
-                ),
-                _ => "iface_stats=unavailable".to_string(),
-            };
-            log::log(
-                "stats",
-                format!(
-                    "tun={name} elapsed={elapsed_text} rx_total={total_rx} tx_total={total_tx} rx_delta={rx_delta} tx_delta={tx_delta} rx_rate={:.0}B/s tx_rate={:.0}B/s {iface_text}",
-                    self.rx_rate_bps, self.tx_rate_bps
-                ),
-            );
-        }
+        log_stats::snapshot(
+            self.running_name.as_deref(),
+            elapsed_secs,
+            total_rx,
+            total_tx,
+            rx_delta,
+            tx_delta,
+            self.rx_rate_bps,
+            self.tx_rate_bps,
+            iface_rx,
+            iface_tx,
+            self.iface_rx_rate_bps,
+            self.iface_tx_rate_bps,
+        );
 
         persist_due
     }

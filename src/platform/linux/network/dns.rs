@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
-use super::logging::log_net;
 use super::NetworkError;
+use crate::log::events::dns as log_dns;
 
 #[derive(Debug)]
 pub(super) struct DnsState {
@@ -97,14 +97,12 @@ pub(super) async fn apply_dns(
     log_resolv_conf_info(&info);
 
     let backends = dns_backend_order(&info);
-    log_net(format!(
-        "dns backend order: {}",
-        backends
-            .iter()
-            .map(|backend| backend.as_str())
-            .collect::<Vec<_>>()
-            .join(" -> ")
-    ));
+    let backend_order = backends
+        .iter()
+        .map(|backend| backend.as_str())
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    log_dns::backend_order(&backend_order);
 
     let mut last_error: Option<NetworkError> = None;
 
@@ -112,13 +110,10 @@ pub(super) async fn apply_dns(
         match backend {
             DnsBackendKind::Resolved => {
                 let Some(resolvectl) = resolve_command("resolvectl") else {
-                    log_net("dns resolvectl not found".to_string());
+                    log_dns::backend_not_found("resolvectl");
                     continue;
                 };
-                log_net(format!(
-                    "dns backend: resolvectl ({})",
-                    resolvectl.display()
-                ));
+                log_dns::backend_selected("resolvectl", &resolvectl);
                 match apply_resolved(&resolvectl, tun_name, servers, search).await {
                     Ok(()) => {
                         return Ok(DnsState {
@@ -126,20 +121,17 @@ pub(super) async fn apply_dns(
                         });
                     }
                     Err(err) => {
-                        log_net(format!("dns resolvectl failed: {err}"));
+                        log_dns::backend_failed("resolvectl", &err);
                         last_error = Some(err);
                     }
                 }
             }
             DnsBackendKind::Resolvconf => {
                 let Some(resolvconf) = resolve_command("resolvconf") else {
-                    log_net("dns resolvconf not found".to_string());
+                    log_dns::backend_not_found("resolvconf");
                     continue;
                 };
-                log_net(format!(
-                    "dns backend: resolvconf ({})",
-                    resolvconf.display()
-                ));
+                log_dns::backend_selected("resolvconf", &resolvconf);
                 match apply_resolvconf(&resolvconf, tun_name, servers, search).await {
                     Ok(()) => {
                         return Ok(DnsState {
@@ -147,21 +139,21 @@ pub(super) async fn apply_dns(
                         });
                     }
                     Err(err) => {
-                        log_net(format!("dns resolvconf failed: {err}"));
+                        log_dns::backend_failed("resolvconf", &err);
                         last_error = Some(err);
                     }
                 }
             }
             DnsBackendKind::NetworkManager => {
                 let Some(nmcli) = resolve_command("nmcli") else {
-                    log_net("dns nmcli not found".to_string());
+                    log_dns::backend_not_found("nmcli");
                     continue;
                 };
-                log_net(format!("dns backend: nmcli ({})", nmcli.display()));
+                log_dns::backend_selected("nmcli", &nmcli);
                 match apply_network_manager(&nmcli, servers, search).await {
                     Ok(state) => return Ok(state),
                     Err(err) => {
-                        log_net(format!("dns nmcli failed: {err}"));
+                        log_dns::backend_failed("nmcli", &err);
                         last_error = Some(err);
                     }
                 }
@@ -169,7 +161,7 @@ pub(super) async fn apply_dns(
             DnsBackendKind::ResolvConf => match apply_resolv_conf_file(&info, servers, search) {
                 Ok(state) => return Ok(state),
                 Err(err) => {
-                    log_net(format!("dns resolv.conf failed: {err}"));
+                    log_dns::resolv_conf_failed(&err);
                     last_error = Some(err);
                 }
             },
@@ -188,7 +180,7 @@ pub(super) async fn cleanup_dns(tun_name: &str, state: DnsState) -> Result<(), N
         DnsBackend::Resolved => {
             if let Some(resolvectl) = resolve_command("resolvectl") {
                 // resolvectl revert 会撤销该接口的 DNS 配置。
-                log_net(format!("dns revert: resolvectl ({})", resolvectl.display()));
+                log_dns::resolvectl_revert(&resolvectl);
                 run_cmd(
                     &resolvectl,
                     &vec!["revert".to_string(), tun_name.to_string()],
@@ -199,22 +191,22 @@ pub(super) async fn cleanup_dns(tun_name: &str, state: DnsState) -> Result<(), N
         DnsBackend::Resolvconf => {
             if let Some(resolvconf) = resolve_command("resolvconf") {
                 // resolvconf -d 删除该接口的 DNS 记录。
-                log_net(format!("dns revert: resolvconf ({})", resolvconf.display()));
+                log_dns::resolvconf_revert(&resolvconf);
                 run_cmd(&resolvconf, &vec!["-d".to_string(), tun_name.to_string()]).await?
             }
         }
         DnsBackend::NetworkManager { connections } => {
             if let Some(nmcli) = resolve_command("nmcli") {
                 for conn in connections {
-                    log_net(format!("dns revert: nmcli connection={}", conn.name));
+                    log_dns::nmcli_revert(&conn.name);
                     if let Err(err) = restore_nm_connection(&nmcli, &conn).await {
-                        log_net(format!("dns nmcli revert failed: {err}"));
+                        log_dns::nmcli_revert_failed(&err);
                     }
                 }
             }
         }
         DnsBackend::ResolvConf { path, original } => {
-            log_net(format!("dns revert: resolv.conf ({})", path.display()));
+            log_dns::resolv_conf_revert(&path);
             write_resolv_conf(&path, &original)?;
         }
     }
@@ -307,7 +299,7 @@ async fn run_cmd_with_input(
 }
 
 fn log_command(program: &Path, args: &[String]) {
-    log_net(format!("exec: {}", format_command(program, args)));
+    log_dns::exec(&format_command(program, args));
 }
 
 /// 组装可读的命令文本用于错误提示。
@@ -398,12 +390,12 @@ fn read_resolv_conf_info() -> ResolvConfInfo {
 fn log_resolv_conf_info(info: &ResolvConfInfo) {
     if info.is_symlink {
         if let Some(target) = &info.target {
-            log_net(format!("dns resolv.conf: symlink -> {}", target.display()));
+            log_dns::resolv_conf_symlink(Some(target.as_path()));
         } else {
-            log_net("dns resolv.conf: symlink (target unknown)".to_string());
+            log_dns::resolv_conf_symlink(None);
         }
     } else {
-        log_net("dns resolv.conf: regular file".to_string());
+        log_dns::resolv_conf_regular();
     }
 }
 
@@ -505,9 +497,9 @@ async fn apply_network_manager(
         let mut final_err = err;
         if matches!(final_err, NetworkError::DnsVerifyFailed(_)) {
             // reapply 有时无法清掉 RDNSS 注入（如 fe80::1），尝试 down/up 强制刷新。
-            log_net("dns nmcli verify failed, attempting reconnect".to_string());
+            log_dns::nmcli_verify_failed();
             if let Err(err) = nmcli_reconnect(nmcli, &touched).await {
-                log_net(format!("dns nmcli reconnect failed: {err}"));
+                log_dns::nmcli_reconnect_failed(&err);
             } else {
                 // 重新连接后再次采样并验证，确认是否仍残留意外 DNS。
                 log_nmcli_dns_snapshot(nmcli, &touched, "post-reconnect").await;
@@ -746,7 +738,7 @@ fn apply_resolv_conf_file(
 ) -> Result<DnsState, NetworkError> {
     // 仅允许在 resolv.conf 是普通文件时写入，避免与系统管理器冲突。
     if info.is_symlink {
-        log_net("dns resolv.conf skipped: symlink".to_string());
+        log_dns::resolv_conf_skipped_symlink();
         return Err(NetworkError::DnsNotSupported);
     }
 
@@ -925,22 +917,13 @@ async fn log_nmcli_dns_snapshot(nmcli: &Path, connections: &[NmConnectionState],
             Ok(output) => {
                 let output = output.trim();
                 if output.is_empty() {
-                    log_net(format!(
-                        "dns nmcli {label}: device={} (empty)",
-                        state.device
-                    ));
+                    log_dns::nmcli_snapshot_empty(label, &state.device);
                 } else {
-                    log_net(format!(
-                        "dns nmcli {label}: device={}\n{}",
-                        state.device, output
-                    ));
+                    log_dns::nmcli_snapshot(label, &state.device, output);
                 }
             }
             Err(err) => {
-                log_net(format!(
-                    "dns nmcli {label} failed: device={} err={err}",
-                    state.device
-                ));
+                log_dns::nmcli_snapshot_failed(label, &state.device, &err);
             }
         }
     }
@@ -950,14 +933,10 @@ fn log_resolv_conf_snapshot(path: &Path, label: &str) {
     // resolv.conf 里的 nameserver 可能包含 zone index（%eth0），读时剥离。
     match read_resolv_conf_servers(path) {
         Ok((v4, v6)) => {
-            log_net(format!(
-                "dns resolv.conf {label}: v4=[{}] v6=[{}]",
-                format_ip_list(&v4),
-                format_ip_list(&v6)
-            ));
+            log_dns::resolv_conf_snapshot(label, &v4, &v6);
         }
         Err(err) => {
-            log_net(format!("dns resolv.conf {label} read failed: {err}"));
+            log_dns::resolv_conf_snapshot_failed(label, &err);
         }
     }
 }

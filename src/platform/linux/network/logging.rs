@@ -1,22 +1,19 @@
 //! 网络相关日志与诊断输出。
 //!
 //! 说明：
-//! - 日志仅在 `log::enabled()` 时生效，避免无谓 IO。
+//! - 日志仅在 `log::enabled_for(LogLevel::Debug, "net")` 时生效，避免无谓 IO。
 //! - 默认路由与权限信息用于现场排障，不影响主逻辑。
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::log;
-
-pub(super) fn log_net(message: String) {
-    log::log("net", message);
-}
+use crate::log::events::net as log_net;
+use crate::log::{self, LogLevel};
 
 /// 打印系统默认路由（IPv4 / IPv6）。
 ///
 /// 说明：直接读取 /proc，避免依赖外部命令，便于在最小环境下排查问题。
 pub(super) fn log_default_routes() {
-    if !log::enabled() {
+    if !log::enabled_for(LogLevel::Debug, "net") {
         return;
     }
 
@@ -39,18 +36,16 @@ pub(super) fn log_default_routes() {
                     let gw = parse_ipv4_hex_le(gateway)
                         .map(|addr| addr.to_string())
                         .unwrap_or_else(|| "-".to_string());
-                    log_net(format!(
-                        "default route v4: iface={iface} gw={gw} metric={metric}"
-                    ));
+                    log_net::default_route_v4(iface, &gw, metric);
                     found = true;
                 }
             }
             if !found {
-                log_net("default route v4: not found".to_string());
+                log_net::default_route_v4_not_found();
             }
         }
         Err(err) => {
-            log_net(format!("default route v4 read failed: {err}"));
+            log_net::default_route_v4_read_failed(&err);
         }
     }
 
@@ -74,32 +69,30 @@ pub(super) fn log_default_routes() {
                     let metric = u32::from_str_radix(metric, 16)
                         .map(|value| value.to_string())
                         .unwrap_or_else(|_| metric.to_string());
-                    log_net(format!(
-                        "default route v6: iface={iface} gw={gw} metric={metric}"
-                    ));
+                    log_net::default_route_v6(iface, &gw, &metric);
                     found = true;
                 }
             }
             if !found {
-                log_net("default route v6: not found".to_string());
+                log_net::default_route_v6_not_found();
             }
         }
         Err(err) => {
-            log_net(format!("default route v6 read failed: {err}"));
+            log_net::default_route_v6_read_failed(&err);
         }
     }
 }
 
 pub(super) fn log_privileges() {
     // 读取 /proc/self/status 判断是否具备 CAP_NET_ADMIN。
-    if !log::enabled() {
+    if !log::enabled_for(LogLevel::Debug, "net") {
         return;
     }
 
     let status = match std::fs::read_to_string("/proc/self/status") {
         Ok(status) => status,
         Err(err) => {
-            log_net(format!("proc status read failed: {err}"));
+            log_net::proc_status_read_failed(&err);
             return;
         }
     };
@@ -110,12 +103,10 @@ pub(super) fn log_privileges() {
         (Some(euid), Some(cap_eff)) => {
             let cap_net_admin = 1u64 << 12;
             let has_net_admin = (cap_eff & cap_net_admin) != 0;
-            log_net(format!(
-                "euid={euid} cap_eff=0x{cap_eff:x} net_admin={has_net_admin}"
-            ));
+            log_net::proc_status_capabilities(euid, cap_eff, has_net_admin);
         }
         _ => {
-            log_net("proc status parse failed".to_string());
+            log_net::proc_status_parse_failed();
         }
     }
 }

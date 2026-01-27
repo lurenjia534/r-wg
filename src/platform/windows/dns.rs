@@ -15,7 +15,8 @@ use windows::Win32::NetworkManagement::IpHelper::{
 };
 
 use super::adapter::AdapterInfo;
-use super::{log_net, pwstr_to_string, NetworkError};
+use super::{pwstr_to_string, NetworkError};
+use crate::log::events::dns as log_dns;
 
 #[derive(Clone)]
 pub(super) struct DnsState {
@@ -42,7 +43,7 @@ pub(super) fn apply_dns(
         return primary;
     }
     if let Some(fallback) = adapter.dns_guid_fallback {
-        log_net("dns apply retry with fallback guid".to_string());
+        log_dns::apply_retry_fallback_guid();
         return apply_dns_with_guid(fallback, servers, search);
     }
     primary
@@ -191,7 +192,7 @@ fn read_interface_dns_settings(
     let result = unsafe { GetInterfaceDnsSettings(guid, &mut settings) };
     if result == ERROR_FILE_NOT_FOUND {
         // 某些接口没有 DNS 记录，视为“空配置”。
-        log_net("dns settings not found for interface, assuming empty".to_string());
+        log_dns::settings_not_found();
         return Ok((None, None));
     }
     if result != NO_ERROR {

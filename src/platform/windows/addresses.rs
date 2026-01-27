@@ -18,7 +18,8 @@ use crate::backend::wg::config::InterfaceAddress;
 
 use super::adapter::AdapterInfo;
 use super::sockaddr::{ip_from_socket_address, sockaddr_inet_from_ip};
-use super::{is_already_exists, log_net, NetworkError};
+use super::{is_already_exists, NetworkError};
+use crate::log::events::net as log_net;
 
 pub(super) fn add_unicast_address(
     adapter: AdapterInfo,
@@ -72,7 +73,7 @@ pub(super) fn cleanup_stale_unicast_addresses(
         if desired_set.contains(&(ip, prefix)) {
             continue;
         }
-        log_net(format!("address remove: {}/{}", ip, prefix));
+        log_net::address_remove(ip, prefix);
         let address = InterfaceAddress {
             addr: ip,
             cidr: prefix,
@@ -81,7 +82,7 @@ pub(super) fn cleanup_stale_unicast_addresses(
         removed += 1;
     }
     if removed > 0 {
-        log_net(format!("stale address cleanup removed={removed}"));
+        log_net::stale_address_cleanup_removed(removed);
     }
     Ok(())
 }

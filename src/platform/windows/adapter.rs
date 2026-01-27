@@ -17,7 +17,8 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows::Win32::Networking::WinSock::AF_UNSPEC;
 
-use super::{log_net, pwstr_to_string, NetworkError};
+use super::{pwstr_to_string, NetworkError};
+use crate::log::events::net as log_net;
 
 const ADAPTER_RETRY_COUNT: usize = 10;
 const ADAPTER_RETRY_DELAY: Duration = Duration::from_millis(200);
@@ -80,7 +81,7 @@ fn find_adapter_by_name(name: &str) -> Result<Option<AdapterInfo>, NetworkError>
                 let guid = match extract_guid_from_adapter_name(&adapter_name) {
                     Some(guid) => guid,
                     None => {
-                        log_net("adapter guid parse failed, using NetworkGuid".to_string());
+                        log_net::adapter_guid_parse_failed();
                         current.NetworkGuid
                     }
                 };

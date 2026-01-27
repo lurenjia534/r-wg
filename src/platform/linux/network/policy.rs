@@ -13,9 +13,9 @@ use netlink_packet_route::route::{RouteHeader, RouteMessage};
 use netlink_packet_route::rule::{RuleAction, RuleAttribute, RuleFlags, RuleMessage};
 use rtnetlink::{Handle, IpVersion, RouteMessageBuilder};
 
-use super::logging::log_net;
 use super::netlink::{route_message_oif, route_message_table_id};
 use super::NetworkError;
+use crate::log::events::net as log_net;
 
 // 规则优先级：越小优先级越高，保持稳定顺序，便于排错。
 const RULE_PRIORITY_FWMARK: u32 = 10000;
@@ -62,9 +62,7 @@ async fn apply_policy_rules_family(
     let main_table = RouteHeader::RT_TABLE_MAIN as u32;
 
     if v6 {
-        log_net(format!(
-            "policy rule add: v6 fwmark=0x{fwmark:x} table=main pref={RULE_PRIORITY_FWMARK}"
-        ));
+        log_net::policy_rule_add_v6_fwmark(fwmark, main_table, RULE_PRIORITY_FWMARK);
         rule.add()
             .v6()
             .fw_mark(fwmark)
@@ -74,9 +72,7 @@ async fn apply_policy_rules_family(
             .execute()
             .await?;
 
-        log_net(format!(
-            "policy rule add: v6 not fwmark=0x{fwmark:x} table={table_id} pref={RULE_PRIORITY_TUNNEL}"
-        ));
+        log_net::policy_rule_add_v6_not_fwmark(fwmark, table_id, RULE_PRIORITY_TUNNEL);
         let mut tunnel_rule = rule
             .add()
             .v6()
@@ -88,9 +84,7 @@ async fn apply_policy_rules_family(
         tunnel_rule.message_mut().header.flags |= RuleFlags::Invert;
         tunnel_rule.execute().await?;
 
-        log_net(format!(
-            "policy rule add: v6 suppress main pref={RULE_PRIORITY_SUPPRESS}"
-        ));
+        log_net::policy_rule_add_v6_suppress(RULE_PRIORITY_SUPPRESS);
         let mut suppress_rule = rule
             .add()
             .v6()
@@ -104,9 +98,7 @@ async fn apply_policy_rules_family(
             .push(RuleAttribute::SuppressPrefixLen(0));
         suppress_rule.execute().await?;
     } else {
-        log_net(format!(
-            "policy rule add: v4 fwmark=0x{fwmark:x} table=main pref={RULE_PRIORITY_FWMARK}"
-        ));
+        log_net::policy_rule_add_v4_fwmark(fwmark, main_table, RULE_PRIORITY_FWMARK);
         rule.add()
             .v4()
             .fw_mark(fwmark)
@@ -116,9 +108,7 @@ async fn apply_policy_rules_family(
             .execute()
             .await?;
 
-        log_net(format!(
-            "policy rule add: v4 not fwmark=0x{fwmark:x} table={table_id} pref={RULE_PRIORITY_TUNNEL}"
-        ));
+        log_net::policy_rule_add_v4_not_fwmark(fwmark, table_id, RULE_PRIORITY_TUNNEL);
         let mut tunnel_rule = rule
             .add()
             .v4()
@@ -130,9 +120,7 @@ async fn apply_policy_rules_family(
         tunnel_rule.message_mut().header.flags |= RuleFlags::Invert;
         tunnel_rule.execute().await?;
 
-        log_net(format!(
-            "policy rule add: v4 suppress main pref={RULE_PRIORITY_SUPPRESS}"
-        ));
+        log_net::policy_rule_add_v4_suppress(RULE_PRIORITY_SUPPRESS);
         let mut suppress_rule = rule
             .add()
             .v4()
@@ -257,7 +245,7 @@ async fn cleanup_stale_default_routes_family(
         if !is_tun_interface(&name) {
             continue;
         }
-        log_net(format!("stale default route del: iface={name}"));
+        log_net::stale_default_route_del(&name);
         handle.route().del(message).execute().await?;
     }
     Ok(())
