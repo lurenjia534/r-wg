@@ -35,6 +35,8 @@ To run with logs:
 RWG_LOG=1 scripts/linux/run_with_cap.sh
 ```
 
+For more options (levels, scopes, buffer), see `docs/logging.md`.
+
 If you build manually, set the capability on the binary:
 
 ```sh
