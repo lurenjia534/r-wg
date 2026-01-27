@@ -4733,6 +4733,7 @@ version = "0.2.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "crossbeam-queue",
  "dirs 5.0.1",
  "futures-util",
  "gotatun",
