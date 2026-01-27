@@ -492,7 +492,7 @@ impl tracing::field::Visit for FieldVisitor {
         if field.name() == "message" {
             self.message = Some(format!("{value:?}"));
         } else if field.name() == "scope" {
-            self.scope = Some(format!("{value:?}"));
+            self.scope = Some(normalize_scope_debug(&format!("{value:?}")));
         } else {
             self.fields.push(format!("{}={value:?}", field.name()));
         }
@@ -534,6 +534,49 @@ fn format_event_line(event: &Event<'_>) -> String {
     format!("[{timestamp}][r-wg][{scope}] {message}")
 }
 
+// 仅用于 scope 过滤，避免构建完整日志文本。
+#[derive(Default)]
+struct ScopeVisitor {
+    scope: Option<String>,
+}
+
+impl tracing::field::Visit for ScopeVisitor {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "scope" {
+            self.scope = Some(value.to_string());
+        }
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+        if field.name() == "scope" {
+            self.scope = Some(normalize_scope_debug(&format!("{value:?}")));
+        }
+    }
+}
+
+fn normalize_scope_debug(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return trimmed[1..trimmed.len() - 1].to_string();
+    }
+    trimmed.to_string()
+}
+
+fn scope_allowed_for_event(event: &Event<'_>) -> bool {
+    let Some(config) = LOG_CONFIG.get() else {
+        return true;
+    };
+    if config.scopes.is_none() {
+        return true;
+    }
+    let mut visitor = ScopeVisitor::default();
+    event.record(&mut visitor);
+    let Some(scope) = visitor.scope else {
+        return false;
+    };
+    config.scope_allowed(&scope)
+}
+
 // 缓冲层：把事件写入环形队列供 UI 读取。
 struct BufferLayer {
     buffer: &'static ArrayQueue<String>,
@@ -556,6 +599,9 @@ where
         if event.metadata().target() != LOG_TARGET {
             return;
         }
+        if !scope_allowed_for_event(event) {
+            return;
+        }
         let line = format_event_line(event);
         let _ = self.buffer.force_push(line);
     }
@@ -574,6 +620,9 @@ where
             return;
         }
         if event.metadata().target() != LOG_TARGET {
+            return;
+        }
+        if !scope_allowed_for_event(event) {
             return;
         }
         let line = format_event_line(event);
