@@ -1,5 +1,6 @@
 // UI 视图入口：负责把三栏布局拼装起来，并将派生数据交给各面板渲染。
 mod about;
+mod advanced;
 mod configs;
 mod data;
 mod dns;
@@ -74,6 +75,9 @@ impl Render for WgApp {
                     SidebarItem::Logs => logs::render_logs(self, window, cx).into_any_element(),
                     SidebarItem::Dns => dns::render_dns(self, cx).into_any_element(),
                     SidebarItem::About => about::render_about(self, cx).into_any_element(),
+                    SidebarItem::Advanced => {
+                        advanced::render_advanced(self, cx).into_any_element()
+                    }
                     _ => overview::render_placeholder(cx).into_any_element(),
                 };
 
