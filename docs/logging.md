@@ -5,15 +5,14 @@ All message text lives under `src/log/events/*`, and call sites only trigger eve
 
 ## Environment variables
 
-- `RWG_LOG`: global switch (default: off). Accepts `1/0`, `true/false`, `yes/no`, `on/off`.
+- `RWG_LOG`: stderr switch (default: off). Accepts `1/0`, `true/false`, `yes/no`, `on/off`.
 - `RWG_LOG_LEVEL`: `error|warn|info|debug|trace` (or `1..5`). Default: `info`.
 - `RWG_LOG_SCOPES`: comma-separated scopes (e.g. `net,engine,dns`).
   - If unset, all scopes are enabled.
   - `*` or `all` enables all scopes.
-- `RWG_LOG_BUFFER`: enable UI ring buffer (default: on when `RWG_LOG=1`).
+- `RWG_LOG_BUFFER`: enable UI ring buffer (default: on).
 
-Note: `RWG_LOG` is the master switch. If `RWG_LOG` is off, both stderr output and the buffer are disabled,
-regardless of `RWG_LOG_BUFFER`.
+Note: `RWG_LOG` only controls stderr output. The UI buffer is controlled by `RWG_LOG_BUFFER`.
 
 ## Outputs
 
@@ -21,6 +20,9 @@ Two sinks are registered:
 
 - **Stderr sink** for developer debugging (controlled by `RWG_LOG`).
 - **Ring buffer sink** for UI (controlled by `RWG_LOG_BUFFER`).
+
+Note: disabling `RWG_LOG_BUFFER` stops new writes, but `log::snapshot()` and `log::clear()` still
+operate on the existing buffer contents.
 
 The ring buffer uses a lock-free `ArrayQueue` with a capacity of 2000 lines. UI reads it via
 `log::snapshot()` and clears via `log::clear()`.

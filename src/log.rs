@@ -89,22 +89,18 @@ pub struct LogConfig {
 
 impl LogConfig {
     // 从环境变量读取配置。
-    // - RWG_LOG 为总开关（关闭时 stderr + buffer 都关闭）。
+    // - RWG_LOG 控制 stderr 输出。
     // - RWG_LOG_LEVEL 控制等级。
     // - RWG_LOG_SCOPES 控制 scope 白名单。
-    // - RWG_LOG_BUFFER 控制 UI 缓冲是否记录。
+    // - RWG_LOG_BUFFER 控制 UI 缓冲是否记录（默认开启）。
     fn from_env() -> Self {
-        let log_enabled = match env::var("RWG_LOG") {
+        let stderr_enabled = match env::var("RWG_LOG") {
             Ok(value) => parse_bool(&value).unwrap_or(true),
             Err(_) => false,
         };
-        let buffer_enabled = if log_enabled {
-            match env::var("RWG_LOG_BUFFER") {
-                Ok(value) => parse_bool(&value).unwrap_or(true),
-                Err(_) => true,
-            }
-        } else {
-            false
+        let buffer_enabled = match env::var("RWG_LOG_BUFFER") {
+            Ok(value) => parse_bool(&value).unwrap_or(true),
+            Err(_) => true,
         };
         let level = env::var("RWG_LOG_LEVEL")
             .ok()
@@ -117,7 +113,7 @@ impl LogConfig {
         LogConfig {
             level,
             scopes,
-            stderr_enabled: log_enabled,
+            stderr_enabled,
             buffer_enabled,
         }
     }
@@ -142,8 +138,12 @@ static LOG_BUFFER: OnceLock<ArrayQueue<String>> = OnceLock::new();
 static LOG_BUFFER_ENABLED: AtomicBool = AtomicBool::new(true);
 // stderr 输出开关（来自 RWG_LOG）。
 static LOG_STDERR_ENABLED: AtomicBool = AtomicBool::new(false);
+// 全局 subscriber 是否成功安装。
+static LOG_SUBSCRIBER_READY: AtomicBool = AtomicBool::new(false);
 // 全局配置只初始化一次。
 static LOG_CONFIG: OnceLock<LogConfig> = OnceLock::new();
+// 初始化失败原因（例如已有全局 subscriber）。
+static LOG_INIT_ERROR: OnceLock<String> = OnceLock::new();
 
 // 统一创建环形缓冲。
 fn buffer() -> &'static ArrayQueue<String> {
@@ -172,7 +172,15 @@ pub fn init() -> &'static LogConfig {
             .with(filter)
             .with(buffer_layer)
             .with(stderr_layer);
-        let _ = tracing::subscriber::set_global_default(subscriber);
+        match tracing::subscriber::set_global_default(subscriber) {
+            Ok(()) => {
+                LOG_SUBSCRIBER_READY.store(true, Ordering::Relaxed);
+            }
+            Err(err) => {
+                LOG_SUBSCRIBER_READY.store(false, Ordering::Relaxed);
+                let _ = LOG_INIT_ERROR.set(err.to_string());
+            }
+        }
 
         config
     })
@@ -188,6 +196,11 @@ pub fn config() -> &'static LogConfig {
     init()
 }
 
+// 获取初始化失败原因（若有）。
+pub fn init_error() -> Option<&'static str> {
+    LOG_INIT_ERROR.get().map(|value| value.as_str())
+}
+
 // UI 缓冲是否开启。
 pub fn buffer_enabled() -> bool {
     ensure_init();
@@ -197,12 +210,6 @@ pub fn buffer_enabled() -> bool {
 // 运行时切换 UI 缓冲开关（仅影响缓冲，不影响 stderr）。
 pub fn set_buffer_enabled(enabled: bool) {
     ensure_init();
-    let config = LOG_CONFIG.get().expect("log config initialized");
-    if !config.stderr_enabled {
-        // RWG_LOG 为总开关：关闭时不允许启用缓冲。
-        LOG_BUFFER_ENABLED.store(false, Ordering::Relaxed);
-        return;
-    }
     LOG_BUFFER_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
@@ -235,6 +242,21 @@ pub fn log(scope: &str, message: String) {
 pub fn event(level: LogLevel, scope: &str, args: fmt::Arguments) {
     ensure_init();
     if !enabled_for(level, scope) {
+        return;
+    }
+    if !LOG_SUBSCRIBER_READY.load(Ordering::Relaxed) {
+        let timestamp = format_timestamp();
+        let message = format!("{args}");
+        let line = format!("[{timestamp}][r-wg][{scope}] {message}");
+        if LOG_BUFFER_ENABLED.load(Ordering::Relaxed) {
+            let _ = buffer().force_push(line.clone());
+        }
+        if LOG_STDERR_ENABLED.load(Ordering::Relaxed) {
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("{line}");
+            }
+        }
         return;
     }
     match level {
@@ -369,9 +391,6 @@ macro_rules! log_trace {
 // 获取当前缓冲快照（用于 UI 展示）。
 pub fn snapshot() -> Vec<String> {
     ensure_init();
-    if !LOG_BUFFER_ENABLED.load(Ordering::Relaxed) {
-        return Vec::new();
-    }
     let Some(buffer) = LOG_BUFFER.get() else {
         return Vec::new();
     };
@@ -397,9 +416,6 @@ pub fn snapshot() -> Vec<String> {
 // 清空缓冲（用于 UI 清除按钮）。
 pub fn clear() {
     ensure_init();
-    if !LOG_BUFFER_ENABLED.load(Ordering::Relaxed) {
-        return;
-    }
     let Some(buffer) = LOG_BUFFER.get() else {
         return;
     };
