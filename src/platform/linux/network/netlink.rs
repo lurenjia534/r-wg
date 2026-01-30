@@ -9,16 +9,35 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use futures_util::stream::TryStreamExt;
 use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteHeader, RouteMessage};
 use rtnetlink::{new_connection, Handle, RouteMessageBuilder};
+use tokio::task::JoinHandle;
 
 use crate::backend::wg::config::{AllowedIp, InterfaceAddress};
 
 use super::NetworkError;
 
-pub(super) fn netlink_handle() -> Result<Handle, NetworkError> {
+pub(super) struct NetlinkConnection {
+    handle: Handle,
+    task: JoinHandle<()>,
+}
+
+impl NetlinkConnection {
+    pub(super) fn handle(&self) -> &Handle {
+        &self.handle
+    }
+
+    pub(super) async fn shutdown(self) {
+        let NetlinkConnection { handle, task } = self;
+        drop(handle);
+        task.abort();
+        let _ = task.await;
+    }
+}
+
+pub(super) fn netlink_handle() -> Result<NetlinkConnection, NetworkError> {
     // netlink 连接需要在 tokio 中驻留，避免请求悬挂。
     let (connection, handle, _) = new_connection()?;
-    tokio::spawn(connection);
-    Ok(handle)
+    let task = tokio::spawn(connection);
+    Ok(NetlinkConnection { handle, task })
 }
 
 pub(super) async fn link_index(handle: &Handle, tun_name: &str) -> Result<u32, NetworkError> {
@@ -59,7 +78,12 @@ pub(super) async fn delete_route(
     route: &AllowedIp,
     table: Option<u32>,
 ) -> Result<(), NetworkError> {
-    // 由于 netlink 删除需要完整 RouteMessage，这里先遍历再匹配。
+    let message = build_route_message(link_index, route, table);
+    if handle.route().del(message.clone()).execute().await.is_ok() {
+        return Ok(());
+    }
+
+    // 回退到全量遍历，确保删除到目标路由。
     let filter = match route.addr {
         IpAddr::V4(_) => RouteMessageBuilder::<Ipv4Addr>::default().build(),
         IpAddr::V6(_) => RouteMessageBuilder::<Ipv6Addr>::default().build(),
@@ -72,6 +96,33 @@ pub(super) async fn delete_route(
         }
     }
     Ok(())
+}
+
+pub(super) fn build_route_message(
+    link_index: u32,
+    route: &AllowedIp,
+    table: Option<u32>,
+) -> RouteMessage {
+    match route.addr {
+        IpAddr::V4(addr) => {
+            let mut request = RouteMessageBuilder::<Ipv4Addr>::default()
+                .destination_prefix(addr, route.cidr)
+                .output_interface(link_index);
+            if let Some(table) = table {
+                request = request.table_id(table);
+            }
+            request.build()
+        }
+        IpAddr::V6(addr) => {
+            let mut request = RouteMessageBuilder::<Ipv6Addr>::default()
+                .destination_prefix(addr, route.cidr)
+                .output_interface(link_index);
+            if let Some(table) = table {
+                request = request.table_id(table);
+            }
+            request.build()
+        }
+    }
 }
 
 fn route_message_matches(

@@ -7,9 +7,11 @@
 
 use std::fs;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::stream::TryStreamExt;
 use netlink_packet_route::route::{RouteHeader, RouteMessage};
+use netlink_packet_route::AddressFamily;
 use netlink_packet_route::rule::{RuleAction, RuleAttribute, RuleFlags, RuleMessage};
 use rtnetlink::{Handle, IpVersion, RouteMessageBuilder};
 
@@ -21,6 +23,9 @@ use crate::log::events::net as log_net;
 const RULE_PRIORITY_FWMARK: u32 = 10000;
 const RULE_PRIORITY_TUNNEL: u32 = 10001;
 const RULE_PRIORITY_SUPPRESS: u32 = 10002;
+
+static CLEANUP_POLICY_RULES_ONCE: AtomicBool = AtomicBool::new(false);
+static CLEANUP_STALE_DEFAULT_ROUTES_ONCE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 pub(super) struct PolicyRoutingState {
@@ -153,6 +158,27 @@ pub(super) async fn cleanup_policy_rules(
     Ok(())
 }
 
+pub(super) async fn cleanup_policy_rules_once(
+    handle: &Handle,
+) -> Result<(), NetworkError> {
+    if CLEANUP_POLICY_RULES_ONCE.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    cleanup_policy_rules(handle, true, true).await
+}
+
+pub(super) async fn cleanup_policy_rules_for_state(
+    handle: &Handle,
+    policy: &PolicyRoutingState,
+) -> Result<(), NetworkError> {
+    let messages =
+        policy_rule_messages(policy.fwmark, policy.table_id, policy.v4, policy.v6);
+    for message in messages {
+        handle.rule().del(message).execute().await?;
+    }
+    Ok(())
+}
+
 async fn cleanup_policy_rules_family(
     handle: &Handle,
     ip_version: IpVersion,
@@ -187,6 +213,69 @@ fn rule_priority(rule: &RuleMessage) -> Option<u32> {
     })
 }
 
+fn policy_rule_messages(
+    fwmark: u32,
+    table_id: u32,
+    v4: bool,
+    v6: bool,
+) -> Vec<RuleMessage> {
+    let mut messages = Vec::new();
+    if v4 {
+        push_policy_rule_messages(&mut messages, AddressFamily::Inet, fwmark, table_id);
+    }
+    if v6 {
+        push_policy_rule_messages(&mut messages, AddressFamily::Inet6, fwmark, table_id);
+    }
+    messages
+}
+
+fn push_policy_rule_messages(
+    messages: &mut Vec<RuleMessage>,
+    family: AddressFamily,
+    fwmark: u32,
+    table_id: u32,
+) {
+    let main_table = RouteHeader::RT_TABLE_MAIN as u8;
+
+    let mut fwmark_rule = RuleMessage::default();
+    fwmark_rule.header.family = family;
+    fwmark_rule.header.action = RuleAction::ToTable;
+    fwmark_rule.header.table = main_table;
+    fwmark_rule
+        .attributes
+        .push(RuleAttribute::Priority(RULE_PRIORITY_FWMARK));
+    fwmark_rule.attributes.push(RuleAttribute::FwMark(fwmark));
+    messages.push(fwmark_rule);
+
+    let mut tunnel_rule = RuleMessage::default();
+    tunnel_rule.header.family = family;
+    tunnel_rule.header.action = RuleAction::ToTable;
+    if table_id > 255 {
+        tunnel_rule.attributes.push(RuleAttribute::Table(table_id));
+        tunnel_rule.header.table = main_table;
+    } else {
+        tunnel_rule.header.table = table_id as u8;
+    }
+    tunnel_rule
+        .attributes
+        .push(RuleAttribute::Priority(RULE_PRIORITY_TUNNEL));
+    tunnel_rule.attributes.push(RuleAttribute::FwMark(fwmark));
+    tunnel_rule.header.flags |= RuleFlags::Invert;
+    messages.push(tunnel_rule);
+
+    let mut suppress_rule = RuleMessage::default();
+    suppress_rule.header.family = family;
+    suppress_rule.header.action = RuleAction::ToTable;
+    suppress_rule.header.table = main_table;
+    suppress_rule
+        .attributes
+        .push(RuleAttribute::Priority(RULE_PRIORITY_SUPPRESS));
+    suppress_rule
+        .attributes
+        .push(RuleAttribute::SuppressPrefixLen(0));
+    messages.push(suppress_rule);
+}
+
 pub(super) async fn cleanup_stale_default_routes(
     handle: &Handle,
     tun_name: &str,
@@ -196,6 +285,17 @@ pub(super) async fn cleanup_stale_default_routes(
     cleanup_stale_default_routes_v4(handle, tun_name, tun_index).await?;
     cleanup_stale_default_routes_v6(handle, tun_name, tun_index).await?;
     Ok(())
+}
+
+pub(super) async fn cleanup_stale_default_routes_once(
+    handle: &Handle,
+    tun_name: &str,
+    tun_index: u32,
+) -> Result<(), NetworkError> {
+    if CLEANUP_STALE_DEFAULT_ROUTES_ONCE.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    cleanup_stale_default_routes(handle, tun_name, tun_index).await
 }
 
 async fn cleanup_stale_default_routes_v4(
