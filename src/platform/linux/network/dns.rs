@@ -12,6 +12,7 @@ use std::fs;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use tokio::process::Command;
@@ -59,6 +60,8 @@ enum DnsBackendKind {
     ResolvConf,
 }
 
+static DNS_BACKEND_ORDER_CACHE: OnceLock<Vec<DnsBackendKind>> = OnceLock::new();
+
 impl DnsBackendKind {
     fn as_str(self) -> &'static str {
         match self {
@@ -96,7 +99,7 @@ pub(super) async fn apply_dns(
     let info = read_resolv_conf_info();
     log_resolv_conf_info(&info);
 
-    let backends = dns_backend_order(&info);
+    let backends = dns_backend_order(&info).await;
     let backend_order = backends
         .iter()
         .map(|backend| backend.as_str())
@@ -151,20 +154,26 @@ pub(super) async fn apply_dns(
                 };
                 log_dns::backend_selected("nmcli", &nmcli);
                 match apply_network_manager(&nmcli, servers, search).await {
-                    Ok(state) => return Ok(state),
+                    Ok(state) => {
+                        return Ok(state);
+                    }
                     Err(err) => {
                         log_dns::backend_failed("nmcli", &err);
                         last_error = Some(err);
                     }
                 }
             }
-            DnsBackendKind::ResolvConf => match apply_resolv_conf_file(&info, servers, search) {
-                Ok(state) => return Ok(state),
-                Err(err) => {
-                    log_dns::resolv_conf_failed(&err);
-                    last_error = Some(err);
+            DnsBackendKind::ResolvConf => {
+                match apply_resolv_conf_file(&info, servers, search) {
+                    Ok(state) => {
+                        return Ok(state);
+                    }
+                    Err(err) => {
+                        log_dns::resolv_conf_failed(&err);
+                        last_error = Some(err);
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -399,22 +408,96 @@ fn log_resolv_conf_info(info: &ResolvConfInfo) {
     }
 }
 
-fn dns_backend_order(info: &ResolvConfInfo) -> Vec<DnsBackendKind> {
-    // 默认顺序：系统后端优先，手写 resolv.conf 作为最终兜底。
-    let mut order = vec![
-        DnsBackendKind::Resolved,
-        DnsBackendKind::Resolvconf,
-        DnsBackendKind::NetworkManager,
-    ];
-    if let Some(preferred) = detect_preferred_backend(info) {
-        if preferred != DnsBackendKind::ResolvConf {
+async fn dns_backend_order(info: &ResolvConfInfo) -> Vec<DnsBackendKind> {
+    if let Some(cached) = DNS_BACKEND_ORDER_CACHE.get() {
+        return cached.clone();
+    }
+    // 运行时探测可用后端，避免仅凭 resolv.conf 推断导致误选。
+    let preferred = detect_preferred_backend(info);
+    let (resolved_ok, nm_ok) = tokio::join!(probe_resolved_backend(), probe_network_manager());
+    let resolvconf_ok = probe_resolvconf_backend();
+
+    // 默认顺序：系统后端优先，resolv.conf 作为最终兜底。
+    let mut order = Vec::new();
+    if resolved_ok {
+        order.push(DnsBackendKind::Resolved);
+    }
+    if resolvconf_ok {
+        order.push(DnsBackendKind::Resolvconf);
+    }
+    if nm_ok {
+        order.push(DnsBackendKind::NetworkManager);
+    }
+    if !info.is_symlink {
+        order.push(DnsBackendKind::ResolvConf);
+    }
+
+    if let Some(preferred) = preferred {
+        if order.contains(&preferred) {
             order.retain(|backend| *backend != preferred);
             order.insert(0, preferred);
         }
     }
 
-    order.push(DnsBackendKind::ResolvConf);
+    let _ = DNS_BACKEND_ORDER_CACHE.set(order.clone());
     order
+}
+
+/// 探测 systemd-resolved 是否可用（resolvectl status 成功即视为可用）。
+async fn probe_resolved_backend() -> bool {
+    let Some(resolvectl) = resolve_command("resolvectl") else {
+        return false;
+    };
+    let args = vec!["status".to_string()];
+    probe_command_status(&resolvectl, &args).await
+}
+
+/// 探测 resolvconf 是否存在（仅检查二进制）。
+fn probe_resolvconf_backend() -> bool {
+    resolve_command("resolvconf").is_some()
+}
+
+/// 探测 NetworkManager 是否处于运行态。
+async fn probe_network_manager() -> bool {
+    let Some(nmcli) = resolve_command("nmcli") else {
+        return false;
+    };
+    let args = vec![
+        "-t".to_string(),
+        "-f".to_string(),
+        "RUNNING".to_string(),
+        "general".to_string(),
+    ];
+    let output = probe_command_output(&nmcli, &args).await;
+    matches!(output.as_deref(), Some(value) if value.trim().eq_ignore_ascii_case("running"))
+}
+
+/// 探测命令是否能在超时内成功返回。
+async fn probe_command_status(program: &Path, args: &[String]) -> bool {
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    match tokio::time::timeout(Duration::from_millis(800), cmd.status()).await {
+        Ok(Ok(status)) => status.success(),
+        _ => false,
+    }
+}
+
+/// 探测命令输出（超时或失败返回 None）。
+async fn probe_command_output(program: &Path, args: &[String]) -> Option<String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let output = match tokio::time::timeout(Duration::from_millis(800), cmd.output()).await {
+        Ok(Ok(output)) => output,
+        _ => return None,
+    };
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn detect_preferred_backend(info: &ResolvConfInfo) -> Option<DnsBackendKind> {
