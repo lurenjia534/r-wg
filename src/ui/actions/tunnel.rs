@@ -58,24 +58,14 @@ impl WgApp {
 
                             // 如果 stop 期间有人点击 start，则现在补发启动。
                             if let Some(pending) = this.pending_start.take() {
-                                if let Some(selected) =
-                                    this.find_config_by_id(pending.config_id)
-                                {
+                                if let Some(selected) = this.find_config_by_id(pending.config_id) {
                                     let cached_text =
                                         this.cached_config_text(&selected.storage_path);
-                                    let initial_text =
-                                        selected.text.clone().or(cached_text);
+                                    let initial_text = selected.text.clone().or(cached_text);
                                     let delay = this.restart_delay();
-                                    this.start_with_config(
-                                        selected,
-                                        initial_text,
-                                        delay,
-                                        cx,
-                                    );
+                                    this.start_with_config(selected, initial_text, delay, cx);
                                 } else {
-                                    this.set_error(
-                                        "Pending start config not found".to_string(),
-                                    );
+                                    this.set_error("Pending start config not found".to_string());
                                 }
                             }
                         }
@@ -215,8 +205,7 @@ impl WgApp {
             .ok();
 
             // 组装 start 请求并交给后台线程。
-            let request =
-                StartRequest::new(selected.name.clone(), text.to_string(), dns_selection);
+            let request = StartRequest::new(selected.name.clone(), text.to_string(), dns_selection);
             let start_task = cx.background_spawn(async move { engine.start(request) });
             let result = start_task.await;
             view.update(cx, |this, cx| {
