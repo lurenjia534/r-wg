@@ -163,17 +163,15 @@ pub(super) async fn apply_dns(
                     }
                 }
             }
-            DnsBackendKind::ResolvConf => {
-                match apply_resolv_conf_file(&info, servers, search) {
-                    Ok(state) => {
-                        return Ok(state);
-                    }
-                    Err(err) => {
-                        log_dns::resolv_conf_failed(&err);
-                        last_error = Some(err);
-                    }
+            DnsBackendKind::ResolvConf => match apply_resolv_conf_file(&info, servers, search) {
+                Ok(state) => {
+                    return Ok(state);
                 }
-            }
+                Err(err) => {
+                    log_dns::resolv_conf_failed(&err);
+                    last_error = Some(err);
+                }
+            },
         }
     }
 
@@ -475,9 +473,7 @@ async fn probe_network_manager() -> bool {
 /// 探测命令是否能在超时内成功返回。
 async fn probe_command_status(program: &Path, args: &[String]) -> bool {
     let mut cmd = Command::new(program);
-    cmd.args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    cmd.args(args).stdout(Stdio::null()).stderr(Stdio::null());
     match tokio::time::timeout(Duration::from_millis(800), cmd.status()).await {
         Ok(Ok(status)) => status.success(),
         _ => false,
@@ -487,9 +483,7 @@ async fn probe_command_status(program: &Path, args: &[String]) -> bool {
 /// 探测命令输出（超时或失败返回 None）。
 async fn probe_command_output(program: &Path, args: &[String]) -> Option<String> {
     let mut cmd = Command::new(program);
-    cmd.args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::null());
     let output = match tokio::time::timeout(Duration::from_millis(800), cmd.output()).await {
         Ok(Ok(output)) => output,
         _ => return None,

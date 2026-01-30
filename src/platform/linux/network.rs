@@ -17,9 +17,7 @@ use crate::backend::wg::config::{
 
 use dns::{apply_dns, cleanup_dns, DnsState};
 use logging::{log_default_routes, log_privileges};
-use netlink::{
-    build_route_message, delete_address, delete_route, link_index, netlink_handle,
-};
+use netlink::{build_route_message, delete_address, delete_route, link_index, netlink_handle};
 use policy::{
     apply_policy_rules, cleanup_policy_rules_for_state, cleanup_policy_rules_once,
     cleanup_stale_default_routes_once, PolicyRoutingState,
@@ -116,9 +114,7 @@ pub async fn apply_network_config(
         let link_index = link_index(handle, tun_name).await?;
         log_net::link_index(link_index);
         // 清理历史遗留的 TUN 默认路由，避免新隧道误复用旧出口。
-        if let Err(err) =
-            cleanup_stale_default_routes_once(handle, tun_name, link_index).await
-        {
+        if let Err(err) = cleanup_stale_default_routes_once(handle, tun_name, link_index).await {
             log_net::stale_default_route_cleanup_failed(&err);
         }
 

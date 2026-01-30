@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::stream::TryStreamExt;
 use netlink_packet_route::route::{RouteHeader, RouteMessage};
-use netlink_packet_route::AddressFamily;
 use netlink_packet_route::rule::{RuleAction, RuleAttribute, RuleFlags, RuleMessage};
+use netlink_packet_route::AddressFamily;
 use rtnetlink::{Handle, IpVersion, RouteMessageBuilder};
 
 use super::netlink::{route_message_oif, route_message_table_id};
@@ -158,9 +158,7 @@ pub(super) async fn cleanup_policy_rules(
     Ok(())
 }
 
-pub(super) async fn cleanup_policy_rules_once(
-    handle: &Handle,
-) -> Result<(), NetworkError> {
+pub(super) async fn cleanup_policy_rules_once(handle: &Handle) -> Result<(), NetworkError> {
     if CLEANUP_POLICY_RULES_ONCE.swap(true, Ordering::AcqRel) {
         return Ok(());
     }
@@ -171,8 +169,7 @@ pub(super) async fn cleanup_policy_rules_for_state(
     handle: &Handle,
     policy: &PolicyRoutingState,
 ) -> Result<(), NetworkError> {
-    let messages =
-        policy_rule_messages(policy.fwmark, policy.table_id, policy.v4, policy.v6);
+    let messages = policy_rule_messages(policy.fwmark, policy.table_id, policy.v4, policy.v6);
     for message in messages {
         handle.rule().del(message).execute().await?;
     }
@@ -213,12 +210,7 @@ fn rule_priority(rule: &RuleMessage) -> Option<u32> {
     })
 }
 
-fn policy_rule_messages(
-    fwmark: u32,
-    table_id: u32,
-    v4: bool,
-    v6: bool,
-) -> Vec<RuleMessage> {
+fn policy_rule_messages(fwmark: u32, table_id: u32, v4: bool, v6: bool) -> Vec<RuleMessage> {
     let mut messages = Vec::new();
     if v4 {
         push_policy_rule_messages(&mut messages, AddressFamily::Inet, fwmark, table_id);
