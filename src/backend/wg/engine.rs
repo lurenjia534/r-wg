@@ -45,9 +45,9 @@ impl StartRequest {
     }
 }
 
-/// 引擎状态：是否已经持有 gotatun DeviceHandle。
+/// 引擎状态：是否处于“已启动并生效”状态。
 ///
-/// Running 代表已创建并持有设备句柄；Stopped 则表示未启动或已停止。
+/// Running 代表网络配置已应用且设备可用；Stopped 则表示未启动或已停止（设备可能被缓存复用）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineStatus {
     /// 未启动。
@@ -238,10 +238,18 @@ impl Engine {
 /// 该状态只在后台线程内访问，保证串行一致性。
 #[derive(Default)]
 struct EngineState {
-    /// gotatun 设备句柄；存在则代表已启动。
-    device: Option<Device<DefaultDeviceTransports>>,
+    /// gotatun 设备句柄；可能处于“运行中”或“暂停复用”状态。
+    device: Option<DeviceSlot>,
     /// 系统网络配置状态，用于停止时回滚。
     net_state: Option<platform::NetworkState>,
+    /// 是否处于“已启动并生效”的状态。
+    running: bool,
+}
+
+/// 缓存的 gotatun 设备与其 TUN 名称。
+struct DeviceSlot {
+    device: Device<DefaultDeviceTransports>,
+    tun_name: String,
 }
 
 impl EngineState {
@@ -251,7 +259,7 @@ impl EngineState {
     /// - 写入私钥/端口/peer 配置，若失败则停止设备。
     /// - 应用系统网络配置，失败则停止设备并返回错误。
     async fn start(&mut self, request: StartRequest) -> Result<(), EngineError> {
-        if self.device.is_some() {
+        if self.running {
             return Err(EngineError::AlreadyRunning);
         }
 
@@ -271,16 +279,37 @@ impl EngineState {
         let settings = parsed.to_device_settings().await?;
         log_engine::config_parsed();
 
-        // 使用 DeviceBuilder 创建 gotatun 设备。
-        let handle = device::build()
-            .with_default_udp()
-            .create_tun(&request.tun_name)?
-            .build()
-            .await?;
-        log_engine::device_created();
+        // 如已有设备但 TUN 名称不同，则先彻底停止旧设备。
+        if let Some(slot) = &self.device {
+            if slot.tun_name != request.tun_name {
+                self.shutdown_device().await;
+            }
+        }
+
+        let mut created_new = false;
+        if self.device.is_none() {
+            // 使用 DeviceBuilder 创建 gotatun 设备。
+            let handle = device::build()
+                .with_default_udp()
+                .create_tun(&request.tun_name)?
+                .build()
+                .await?;
+            self.device = Some(DeviceSlot {
+                device: handle,
+                tun_name: request.tun_name.clone(),
+            });
+            created_new = true;
+            log_engine::device_created();
+        }
+
+        let device = &self
+            .device
+            .as_ref()
+            .expect("device must exist after creation/reuse")
+            .device;
 
         // 配置 gotatun 设备；失败则立即停止设备。
-        let config_result = handle
+        let config_result = device
             .write(async |device| {
                 device.set_private_key(settings.private_key).await;
                 if let Some(port) = settings.listen_port {
@@ -297,7 +326,11 @@ impl EngineState {
             .await
             .and_then(|result| result);
         if let Err(err) = config_result {
-            handle.stop().await;
+            if created_new {
+                self.shutdown_device().await;
+            } else {
+                let _ = device.clear_peers().await;
+            }
             return Err(EngineError::Device(err));
         }
         log_engine::device_configured();
@@ -312,24 +345,28 @@ impl EngineState {
         {
             Ok(state) => state,
             Err(err) => {
-                handle.stop().await;
+                if created_new {
+                    self.shutdown_device().await;
+                } else {
+                    let _ = device.clear_peers().await;
+                }
                 return Err(EngineError::Network(err));
             }
         };
         log_engine::network_configured();
 
         // 保存运行态状态，便于后续 stop/cleanup。
-        self.device = Some(handle);
         self.net_state = Some(net_state);
+        self.running = true;
 
         Ok(())
     }
 
     /// 停止设备：
     /// - 先回滚系统网络配置（若存在）。
-    /// - 再停止 gotatun 设备并清空 API 客户端。
+    /// - 再清空 peers（保留 gotatun 设备以便复用）。
     async fn stop(&mut self) -> Result<(), EngineError> {
-        let Some(handle) = self.device.take() else {
+        if !self.running {
             return Err(EngineError::NotRunning);
         };
 
@@ -344,17 +381,29 @@ impl EngineState {
             Ok(())
         };
 
-        // 停止 gotatun 设备。
-        handle.stop().await;
-        log_engine::device_stopped();
+        // 保留 gotatun 设备，只清空 peers。
+        if let Some(slot) = &self.device {
+            slot.device.clear_peers().await?;
+        }
+        self.running = false;
 
         // 若回滚失败，仍然返回错误以便上层提示。
         cleanup_result
     }
 
+    /// 彻底停止并释放 gotatun 设备（用于后台线程退出或强制清理）。
+    async fn shutdown_device(&mut self) {
+        if let Some(slot) = self.device.take() {
+            slot.device.stop().await;
+            log_engine::device_stopped();
+        }
+        self.running = false;
+        self.net_state = None;
+    }
+
     /// 查询状态。
     fn status(&self) -> EngineStatus {
-        if self.device.is_some() {
+        if self.running {
             EngineStatus::Running
         } else {
             EngineStatus::Stopped
@@ -363,11 +412,15 @@ impl EngineState {
 
     /// 获取 gotatun 运行时统计信息。
     async fn stats(&self) -> Result<EngineStats, EngineError> {
+        if !self.running {
+            return Err(EngineError::NotRunning);
+        }
         let Some(device) = self.device.as_ref() else {
             return Err(EngineError::NotRunning);
         };
 
         let peers = device
+            .device
             .read(async |device| device.peers().await)
             .await
             .into_iter()
@@ -425,4 +478,5 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
 
     // 通道关闭，尝试优雅停止设备。
     let _ = state.stop().await;
+    state.shutdown_device().await;
 }
