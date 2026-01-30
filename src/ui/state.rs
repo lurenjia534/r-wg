@@ -45,6 +45,12 @@ pub(crate) struct TunnelConfig {
     pub(crate) storage_path: PathBuf,
 }
 
+/// 延迟启动请求（用于 stop -> start 过渡期间）。
+#[derive(Clone, Copy)]
+pub(crate) struct PendingStart {
+    pub(crate) config_id: u64,
+}
+
 impl TunnelConfig {
     pub(crate) fn label(&self) -> String {
         match &self.source {
@@ -208,6 +214,10 @@ pub(crate) struct WgApp {
     // 运行与连接状态。
     pub(crate) running: bool,
     pub(crate) busy: bool,
+    /// 停止过程中记录的“待启动”请求。
+    pub(crate) pending_start: Option<PendingStart>,
+    /// 最近一次停止完成的时间（用于冷却启动）。
+    pub(crate) last_stop_at: Option<Instant>,
     pub(crate) running_name: Option<String>,
     pub(crate) running_id: Option<u64>,
     pub(crate) peer_stats: Vec<PeerStats>,
@@ -273,6 +283,8 @@ impl WgApp {
             last_error: None,
             running: false,
             busy: false,
+            pending_start: None,
+            last_stop_at: None,
             running_name: None,
             running_id: None,
             peer_stats: Vec::new(),
