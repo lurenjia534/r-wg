@@ -1,6 +1,6 @@
 [package]
 name = "r-wg"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 build = "build.rs"
 
@@ -36,7 +36,9 @@ windows = { version = "0.56.0", features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 rtnetlink = "0.20.0"
 netlink-packet-route = "0.28.0"
+libc = "0.2.180"
 
 [patch.crates-io]
 # 临时补丁：ashpd 0.11.0 在 zvariant >= 5.9 的 dict key 约束下编译失败；上游修复后删除此 patch。
 ashpd = { path = "vendor/ashpd" }
+
