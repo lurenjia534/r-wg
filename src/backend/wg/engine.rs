@@ -16,6 +16,19 @@ use crate::log::events::engine as log_engine;
 use crate::platform;
 
 const DEFAULT_FWMARK: u32 = 0x5257;
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim_allocator() {
+    // 尝试让 glibc 将空闲堆页归还给 OS，尽量降低 RSS（不保证一定生效）。
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_allocator() {
+    // 非 glibc 平台不执行 trim，避免引入不兼容行为。
+}
 /// 启动请求：包含 TUN 设备名称与配置文本。
 ///
 /// 之所以传入完整配置文本，是为了让引擎在后台线程内完成解析与应用，
@@ -387,6 +400,8 @@ impl EngineState {
         }
         self.running = false;
 
+        trim_allocator();
+
         // 若回滚失败，仍然返回错误以便上层提示。
         cleanup_result
     }
@@ -399,6 +414,7 @@ impl EngineState {
         }
         self.running = false;
         self.net_state = None;
+        trim_allocator();
     }
 
     /// 查询状态。

@@ -4747,7 +4747,7 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "r-wg"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4759,6 +4759,7 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "ipnetwork",
+ "libc",
  "netlink-packet-route",
  "rtnetlink",
  "serde",
