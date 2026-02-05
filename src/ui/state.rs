@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -202,6 +202,10 @@ pub(crate) struct WgApp {
     pub(crate) proxy_filter_total: usize,
     /// 代理/节点过滤：缓存过滤后的索引列表，避免每帧全量扫描。
     pub(crate) proxy_filtered_indices: Vec<usize>,
+    /// 代理/节点多选模式开关。
+    pub(crate) proxy_select_mode: bool,
+    /// 代理/节点多选：选中的配置 ID 列表。
+    pub(crate) proxy_selected_ids: HashSet<u64>,
     // 输入控件句柄（懒创建，避免提前绑定窗口上下文）。
     pub(crate) name_input: Option<Entity<InputState>>,
     pub(crate) config_input: Option<Entity<InputState>>,
@@ -274,6 +278,8 @@ impl WgApp {
             proxy_filter_query: String::new(),
             proxy_filter_total: 0,
             proxy_filtered_indices: Vec::new(),
+            proxy_select_mode: false,
+            proxy_selected_ids: HashSet::new(),
             name_input: None,
             config_input: None,
             log_input: None,

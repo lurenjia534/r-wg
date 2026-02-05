@@ -1,4 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -6,11 +7,23 @@ use std::path::{Path, PathBuf};
 use gpui::{AppContext, ClipboardItem, Context, SharedString, Window};
 use gpui_component::input::InputState;
 use r_wg::backend::wg::config;
+use r_wg::log::{self, LogLevel};
 
 use super::super::persistence;
 use super::super::state::{ConfigSource, LoadedConfigState, ParseCache, TunnelConfig, WgApp};
 
 const CONFIG_TEXT_CACHE_LIMIT: usize = 32;
+
+/// 删除策略：遇到运行中配置时的处理方式。
+///
+/// 说明：
+/// - BlockRunning：遇到运行中配置直接阻止删除；
+/// - SkipRunning：跳过运行中配置，继续删除其余项。
+#[derive(Clone, Copy)]
+enum DeletePolicy {
+    BlockRunning,
+    SkipRunning,
+}
 
 impl WgApp {
     /// 确保输入控件已创建。
@@ -552,59 +565,209 @@ impl WgApp {
     ///
     /// 说明：运行中的配置禁止删除，避免状态错乱和用户误操作。
     pub(crate) fn handle_delete_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // 运行中的隧道不允许删除。
         let Some(idx) = self.selected else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
         };
         let config_id = self.configs[idx].id;
-        let name = self.configs[idx].name.clone();
-        let storage_path = self.configs[idx].storage_path.clone();
-        if self.running_name.as_deref() == Some(name.as_str()) {
-            self.set_error("Stop the tunnel before deleting");
+        self.delete_configs_blocking_running(&[config_id], window, cx);
+    }
+
+    /// 删除指定配置：遇到运行中则阻止删除。
+    ///
+    /// 说明：用于单个删除或严格保护运行中隧道的场景。
+    pub(crate) fn delete_configs_blocking_running(
+        &mut self,
+        ids: &[u64],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_configs_internal(ids, DeletePolicy::BlockRunning, window, cx);
+    }
+
+    /// 删除指定配置：遇到运行中则跳过。
+    ///
+    /// 说明：用于批量删除场景，避免“一条运行中配置”阻断整批操作。
+    pub(crate) fn delete_configs_skip_running(
+        &mut self,
+        ids: &[u64],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_configs_internal(ids, DeletePolicy::SkipRunning, window, cx);
+    }
+
+    /// 通用删除入口：负责执行删除、清理缓存与状态同步。
+    ///
+    /// 说明：
+    /// - ids 以配置 ID 为准，避免索引变动导致误删；
+    /// - 删除成功后会更新列表、缓存与持久化；
+    /// - 删除文件在后台执行，失败仅提示不阻断 UI。
+    fn delete_configs_internal(
+        &mut self,
+        ids: &[u64],
+        policy: DeletePolicy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::event(
+            LogLevel::Info,
+            "ui",
+            format_args!(
+                "delete_configs_internal: requested ids={:?} policy={} total_configs={}",
+                ids,
+                delete_policy_label(policy),
+                self.configs.len()
+            ),
+        );
+        if ids.is_empty() {
+            self.set_error("Select a tunnel first");
             cx.notify();
             return;
         }
 
-        self.configs.remove(idx);
-        self.config_traffic_days.remove(&config_id);
-        self.config_traffic_hours.remove(&config_id);
-        // 清理逻辑说明：
-        // - 删除配置不仅要移除内存列表，还要同步清理缓存和磁盘文件；
-        // - config_text_cache 里可能还保留该配置的文本，需显式移除；
-        // - storage_path 对应内部 configs/<id>.conf，避免留下无用文件；
-        // - 删除文件失败（例如用户手动删过）不算致命错误，仅做提示。
-        self.config_text_cache.remove(&storage_path);
+        let ids: HashSet<u64> = ids.iter().copied().collect();
+        let running_id = self.running_id;
+        let running_name = self.running_name.clone();
+
+        let mut to_delete_ids = HashSet::new();
+        let mut deleted_names = Vec::new();
+        let mut deleted_paths = Vec::new();
+        let mut skipped_running = Vec::new();
+
+        for cfg in &self.configs {
+            if !ids.contains(&cfg.id) {
+                continue;
+            }
+            let is_running = running_id == Some(cfg.id)
+                || running_name.as_deref() == Some(cfg.name.as_str());
+            if is_running {
+                match policy {
+                    DeletePolicy::BlockRunning => {
+                        log::event(
+                            LogLevel::Info,
+                            "ui",
+                            format_args!(
+                                "delete_configs_internal: blocked running config name=\"{}\" id={}",
+                                cfg.name, cfg.id
+                            ),
+                        );
+                        self.set_error("Stop the tunnel before deleting");
+                        cx.notify();
+                        return;
+                    }
+                    DeletePolicy::SkipRunning => {
+                        skipped_running.push(cfg.name.clone());
+                        continue;
+                    }
+                }
+            }
+
+            to_delete_ids.insert(cfg.id);
+            deleted_names.push(cfg.name.clone());
+            deleted_paths.push(cfg.storage_path.clone());
+        }
+
+        if to_delete_ids.is_empty() {
+            log::event(
+                LogLevel::Info,
+                "ui",
+                format_args!(
+                    "delete_configs_internal: nothing to delete (skipped_running={})",
+                    skipped_running.len()
+                ),
+            );
+            if !skipped_running.is_empty() {
+                self.set_status(format_delete_status(&[], skipped_running.len()));
+            } else {
+                self.set_error("No configs selected");
+            }
+            cx.notify();
+            return;
+        }
+
+        let prev_selected_id = self.selected_config().map(|cfg| cfg.id);
+        let prev_selected_idx = self.selected;
+
+        for id in &to_delete_ids {
+            self.config_traffic_days.remove(id);
+            self.config_traffic_hours.remove(id);
+        }
+
+        self.configs.retain(|cfg| !to_delete_ids.contains(&cfg.id));
+        log::event(
+            LogLevel::Info,
+            "ui",
+            format_args!(
+                "delete_configs_internal: deleted_ids={:?} skipped_running={} remaining={}",
+                to_delete_ids,
+                skipped_running.len(),
+                self.configs.len()
+            ),
+        );
+
+        let deleted_paths_set: HashSet<PathBuf> = deleted_paths.iter().cloned().collect();
+        self.config_text_cache
+            .retain(|path, _| !deleted_paths_set.contains(path));
         self.config_text_cache_order
-            .retain(|entry| entry != &storage_path);
+            .retain(|path| !deleted_paths_set.contains(path));
+        self.proxy_selected_ids
+            .retain(|id| !to_delete_ids.contains(id));
+        self.proxy_filter_total = 0;
+        self.proxy_filtered_indices.clear();
         self.loading_config = None;
         self.loading_config_path = None;
+
         if self.configs.is_empty() {
             self.selected = None;
             self.clear_inputs(window, cx);
+        } else if let Some(prev_id) = prev_selected_id {
+            if let Some(idx) = self.configs.iter().position(|cfg| cfg.id == prev_id) {
+                self.selected = Some(idx);
+                if prev_selected_idx != Some(idx) {
+                    self.load_config_into_inputs(idx, window, cx);
+                }
+            } else if let Some(prev_idx) = prev_selected_idx {
+                let idx = prev_idx.min(self.configs.len() - 1);
+                self.selected = Some(idx);
+                self.load_config_into_inputs(idx, window, cx);
+            } else {
+                self.selected = None;
+                self.clear_inputs(window, cx);
+            }
         } else {
-            let next_idx = idx.saturating_sub(1).min(self.configs.len() - 1);
-            self.selected = Some(next_idx);
-            self.load_config_into_inputs(next_idx, window, cx);
+            self.selected = None;
+            self.clear_inputs(window, cx);
         }
-        self.set_status(format!("Deleted {name}"));
+
+        self.set_status(format_delete_status(&deleted_names, skipped_running.len()));
         self.persist_state_async(cx);
         cx.notify();
 
         cx.spawn(async move |view, cx| {
             // 后台删除磁盘文件：避免阻塞 UI，
             // 同时允许文件不存在的情况（已经手动删除）。
-            let delete_task =
-                cx.background_spawn(async move { std::fs::remove_file(&storage_path) });
-            if let Err(err) = delete_task.await {
-                if err.kind() != ErrorKind::NotFound {
-                    view.update(cx, |this, cx| {
-                        this.set_error(format!("Remove file failed: {err}"));
-                        cx.notify();
-                    })
-                    .ok();
+            let delete_task = cx.background_spawn(async move {
+                let mut first_error: Option<std::io::Error> = None;
+                for path in deleted_paths {
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => {}
+                        Err(err) if err.kind() == ErrorKind::NotFound => {}
+                        Err(err) => {
+                            first_error = Some(err);
+                            break;
+                        }
+                    }
                 }
+                first_error
+            });
+            if let Some(err) = delete_task.await {
+                view.update(cx, |this, cx| {
+                    this.set_error(format!("Remove file failed: {err}"));
+                    cx.notify();
+                })
+                .ok();
             }
         })
         .detach();
@@ -707,4 +870,37 @@ fn text_hash(text: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
+}
+
+/// 格式化删除后的状态提示文案。
+///
+/// 说明：尽量简洁，同时覆盖“仅跳过/仅删除/删除+跳过”三类场景。
+fn format_delete_status(deleted_names: &[String], skipped_running: usize) -> String {
+    let deleted_count = deleted_names.len();
+    if deleted_count == 0 && skipped_running > 0 {
+        if skipped_running == 1 {
+            return "Skipped 1 running config".to_string();
+        }
+        return format!("Skipped {skipped_running} running configs");
+    }
+    if deleted_count == 1 && skipped_running == 0 {
+        return format!("Deleted {}", deleted_names[0]);
+    }
+    let config_word = if deleted_count == 1 { "config" } else { "configs" };
+    if skipped_running > 0 {
+        return format!(
+            "Deleted {deleted_count} {config_word}, skipped {skipped_running} running"
+        );
+    }
+    format!("Deleted {deleted_count} {config_word}")
+}
+
+/// 将删除策略转为日志标识。
+///
+/// 说明：用于统一日志输出，便于排查删除路径。
+fn delete_policy_label(policy: DeletePolicy) -> &'static str {
+    match policy {
+        DeletePolicy::BlockRunning => "block_running",
+        DeletePolicy::SkipRunning => "skip_running",
+    }
 }

@@ -1,11 +1,19 @@
 use std::rc::Rc;
 
 use gpui::*;
+use gpui::prelude::FluentBuilder as _;
 use gpui_component::{
-    button::Button, h_flex, input::Input, scroll::Scrollbar, tag::Tag, v_virtual_list,
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
-    VirtualListScrollHandle,
+    button::{Button, ButtonVariant, ButtonVariants},
+    dialog::DialogButtonProps,
+    h_flex,
+    input::Input,
+    scroll::Scrollbar,
+    tag::Tag,
+    v_virtual_list,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt as _,
+    VirtualListScrollHandle, WindowExt,
 };
+use r_wg::log::{self, LogLevel};
 
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
 
@@ -69,6 +77,10 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
         format!("{filtered_nodes}/{total_nodes} nodes")
     };
     let nodes_tag = Tag::secondary().small().child(nodes_text);
+    let selected_count = app.proxy_selected_ids.len();
+    let selected_tag = Tag::info()
+        .small()
+        .child(format!("{selected_count} selected"));
 
     let list_scroll = if app.configs.is_empty() {
         div()
@@ -192,6 +204,116 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                                 ),
                         )
                         .child(nodes_tag)
+                        .when(app.proxy_select_mode, |this| this.child(selected_tag))
+                        .child(
+                            Button::new("proxy-select")
+                                .label(if app.proxy_select_mode {
+                                    "Done"
+                                } else {
+                                    "Select"
+                                })
+                                .outline()
+                                .xsmall()
+                                .selected(app.proxy_select_mode)
+                                .disabled(app.busy)
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.proxy_select_mode = !this.proxy_select_mode;
+                                    if !this.proxy_select_mode {
+                                        this.proxy_selected_ids.clear();
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("proxy-delete-selected")
+                                .label("Delete Selected")
+                                .danger()
+                                .xsmall()
+                                .disabled(
+                                    app.busy
+                                        || !app.proxy_select_mode
+                                        || app.proxy_selected_ids.is_empty(),
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    log::event(
+                                        LogLevel::Info,
+                                        "ui",
+                                        format_args!(
+                                            "proxies: click delete selected (count={})",
+                                            this.proxy_selected_ids.len()
+                                        ),
+                                    );
+                                    if this.proxy_selected_ids.is_empty() {
+                                        this.set_error("Select configs first");
+                                        cx.notify();
+                                        return;
+                                    }
+                                    let ids: Vec<u64> =
+                                        this.proxy_selected_ids.iter().copied().collect();
+                                    let count = ids.len();
+                                    let body = if count == 1 {
+                                        "Delete 1 selected config? This cannot be undone."
+                                            .to_string()
+                                    } else {
+                                        format!(
+                                            "Delete {count} selected configs? This cannot be undone."
+                                        )
+                                    };
+                                    open_delete_dialog(
+                                        window,
+                                        cx,
+                                        "Delete selected configs?",
+                                        body,
+                                        Some("Running tunnels will be skipped.".to_string()),
+                                        ids,
+                                        true,
+                                        true,
+                                    );
+                                })),
+                        )
+                        .child(
+                            Button::new("proxy-delete")
+                                .label("Delete")
+                                .danger()
+                                .xsmall()
+                                .disabled(app.busy || app.proxy_select_mode || app.selected.is_none())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    log::event(
+                                        LogLevel::Info,
+                                        "ui",
+                                        format_args!("proxies: click delete single"),
+                                    );
+                                    let Some(idx) = this.selected else {
+                                        this.set_error("Select a tunnel first");
+                                        cx.notify();
+                                        return;
+                                    };
+                                    let config = &this.configs[idx];
+                                    let is_running = this.running_id == Some(config.id)
+                                        || this.running_name.as_deref()
+                                            == Some(config.name.as_str());
+                                    if is_running {
+                                        this.set_error("Stop the tunnel before deleting");
+                                        cx.notify();
+                                        return;
+                                    }
+                                    let name = config.name.clone();
+                                    let id = config.id;
+                                    let body = format!(
+                                        "Delete \"{name}\"? This cannot be undone."
+                                    );
+                                    open_delete_dialog(
+                                        window,
+                                        cx,
+                                        "Delete config?",
+                                        body,
+                                        None,
+                                        vec![id],
+                                        false,
+                                        false,
+                                    );
+                                })),
+                        )
                         .child(
                             Button::new("cfg-list-import")
                                 .icon(Icon::new(IconName::FolderOpen).size_3())
@@ -215,15 +337,20 @@ fn config_list_item(
     cx: &mut Context<WgApp>,
 ) -> Stateful<Div> {
     let is_selected = app.selected == Some(idx);
+    let is_multi_selected = app.proxy_select_mode && app.proxy_selected_ids.contains(&config.id);
     let is_running = app.running_name.as_deref() == Some(config.name.as_str());
     let name_color = cx.theme().foreground;
     let bg = if is_selected {
         cx.theme().accent.alpha(0.16)
+    } else if is_multi_selected {
+        cx.theme().accent.alpha(0.08)
     } else {
         cx.theme().secondary
     };
     let border_color = if is_selected {
         cx.theme().accent_foreground
+    } else if is_multi_selected {
+        cx.theme().accent.alpha(0.6)
     } else if cx.theme().is_dark() {
         cx.theme().foreground.alpha(0.12)
     } else {
@@ -235,6 +362,9 @@ fn config_list_item(
             .small()
             .child(config_source_label(&config.source)),
     );
+    if is_multi_selected {
+        badges = badges.child(Tag::info().small().child("Selected"));
+    }
     if is_running {
         badges = badges.child(Tag::success().small().child("Running"));
     }
@@ -268,9 +398,19 @@ fn config_list_item(
         item = item.cursor_pointer();
     }
 
+    let config_id = config.id;
     let item = item.id(("config-item", idx));
     item.on_click(cx.listener(move |this, _event, window, cx| {
         if this.busy {
+            return;
+        }
+        if this.proxy_select_mode {
+            if this.proxy_selected_ids.contains(&config_id) {
+                this.proxy_selected_ids.remove(&config_id);
+            } else {
+                this.proxy_selected_ids.insert(config_id);
+            }
+            cx.notify();
             return;
         }
         this.select_tunnel(idx, window, cx);
@@ -282,4 +422,140 @@ fn config_source_label(source: &ConfigSource) -> &'static str {
         ConfigSource::File { .. } => "File",
         ConfigSource::Paste => "Pasted",
     }
+}
+
+fn open_delete_dialog(
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+    title: impl Into<String>,
+    body: impl Into<String>,
+    note: Option<String>,
+    ids: Vec<u64>,
+    skip_running: bool,
+    clear_selection: bool,
+) {
+    let app_handle = cx.entity();
+    let title = title.into();
+    let body = body.into();
+    let note = note.clone();
+
+    log::event(
+        LogLevel::Info,
+        "ui",
+        format_args!(
+            "proxies: open delete dialog title=\"{}\" ids={:?} skip_running={} clear_selection={}",
+            title, ids, skip_running, clear_selection
+        ),
+    );
+
+    window.open_dialog(cx, move |dialog, _window, cx| {
+        let app_handle = app_handle.clone();
+        let ids = ids.clone();
+        let note_skip = skip_running;
+        let clear_selection = clear_selection;
+        let mut dialog = dialog
+            .title(div().text_lg().child(title.clone()))
+            .confirm()
+            .button_props(
+                DialogButtonProps::default()
+                    .ok_text("Delete")
+                    .ok_variant(ButtonVariant::Danger)
+                    .cancel_text("Cancel"),
+            )
+            .child(div().text_sm().child(body.clone()));
+
+        if let Some(note) = note.clone() {
+            dialog = dialog.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(note),
+            );
+        }
+
+        let delete_action = {
+            let app_handle = app_handle.clone();
+            let ids = ids.clone();
+            move |window: &mut Window, cx: &mut App| {
+                perform_delete(
+                    &app_handle,
+                    &ids,
+                    note_skip,
+                    clear_selection,
+                    window,
+                    cx,
+                );
+            }
+        };
+
+        dialog = dialog.footer(move |_ok, _cancel, _window, _cx| {
+            let app_handle = app_handle.clone();
+            let ids = ids.clone();
+            let delete_button = Button::new("proxy-dialog-delete")
+                .label("Delete")
+                .danger()
+                .on_click(move |_, window, cx| {
+                    perform_delete(&app_handle, &ids, note_skip, clear_selection, window, cx);
+                    window.close_dialog(cx);
+                });
+            let cancel_button = Button::new("proxy-dialog-cancel")
+                .label("Cancel")
+                .outline()
+                .on_click(|_, window, cx| {
+                    window.close_dialog(cx);
+                });
+            vec![
+                cancel_button.into_any_element(),
+                delete_button.into_any_element(),
+            ]
+        });
+
+        dialog = dialog.on_ok(move |_, window, cx| {
+            delete_action(window, cx);
+            true
+        });
+
+        dialog
+    });
+}
+
+fn perform_delete(
+    app_handle: &Entity<WgApp>,
+    ids: &[u64],
+    skip_running: bool,
+    clear_selection: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    log::event(
+        LogLevel::Info,
+        "ui",
+        format_args!(
+            "proxies: confirm delete ids={:?} skip_running={} clear_selection={}",
+            ids, skip_running, clear_selection
+        ),
+    );
+    // 延迟到下一帧执行，避免 dialog 渲染期借用冲突。
+    let app_handle = app_handle.clone();
+    let ids = ids.to_vec();
+    let note_skip = skip_running;
+    let clear_selection = clear_selection;
+    window.on_next_frame(move |window, cx| {
+        app_handle.update(cx, |this, cx| {
+            if note_skip {
+                this.delete_configs_skip_running(&ids, window, cx);
+            } else {
+                this.delete_configs_blocking_running(&ids, window, cx);
+            }
+            if clear_selection {
+                this.proxy_select_mode = false;
+                this.proxy_selected_ids.clear();
+            }
+        });
+        log::event(
+            LogLevel::Info,
+            "ui",
+            format_args!("proxies: delete update scheduled"),
+        );
+    });
 }
