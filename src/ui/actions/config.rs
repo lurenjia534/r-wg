@@ -152,6 +152,11 @@ impl WgApp {
             }
         };
 
+        if let Some(cfg) = self.configs.get(idx) {
+            self.proxy_endpoint_family.remove(&cfg.id);
+            self.proxy_endpoint_loading.remove(&cfg.id);
+        }
+
         self.selected = Some(idx);
         self.load_config_into_inputs(idx, window, cx);
     }
@@ -676,6 +681,10 @@ impl WgApp {
         self.config_text_cache_order
             .retain(|path| !deleted_paths_set.contains(path));
         self.proxy_selected_ids
+            .retain(|id| !to_delete_ids.contains(id));
+        self.proxy_endpoint_family
+            .retain(|id, _| !to_delete_ids.contains(id));
+        self.proxy_endpoint_loading
             .retain(|id| !to_delete_ids.contains(id));
         self.proxy_filter_total = 0;
         self.proxy_filtered_indices.clear();

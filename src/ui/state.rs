@@ -28,6 +28,15 @@ pub(crate) enum ConfigSource {
     Paste,
 }
 
+/// Endpoint 地址族标识（基于配置文本解析）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EndpointFamily {
+    V4,
+    V6,
+    Dual,
+    Unknown,
+}
+
 /// 隧道配置条目：用于配置列表与编辑器。
 #[derive(Clone)]
 pub(crate) struct TunnelConfig {
@@ -202,6 +211,10 @@ pub(crate) struct WgApp {
     pub(crate) proxy_filter_total: usize,
     /// 代理/节点过滤：缓存过滤后的索引列表，避免每帧全量扫描。
     pub(crate) proxy_filtered_indices: Vec<usize>,
+    /// 代理/节点 Endpoint 地址族缓存（按配置 ID）。
+    pub(crate) proxy_endpoint_family: HashMap<u64, EndpointFamily>,
+    /// 代理/节点 Endpoint 地址族计算中（按配置 ID）。
+    pub(crate) proxy_endpoint_loading: HashSet<u64>,
     /// 代理/节点多选模式开关。
     pub(crate) proxy_select_mode: bool,
     /// 代理/节点多选：选中的配置 ID 列表。
@@ -278,6 +291,8 @@ impl WgApp {
             proxy_filter_query: String::new(),
             proxy_filter_total: 0,
             proxy_filtered_indices: Vec::new(),
+            proxy_endpoint_family: HashMap::new(),
+            proxy_endpoint_loading: HashSet::new(),
             proxy_select_mode: false,
             proxy_selected_ids: HashSet::new(),
             name_input: None,
