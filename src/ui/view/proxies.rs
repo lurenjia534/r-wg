@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
-use gpui::*;
 use gpui::prelude::FluentBuilder as _;
+use gpui::*;
 use gpui_component::{
     button::{Button, ButtonVariant, ButtonVariants},
     dialog::DialogButtonProps,
@@ -9,9 +9,8 @@ use gpui_component::{
     input::Input,
     scroll::Scrollbar,
     tag::Tag,
-    v_virtual_list,
-    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt as _,
-    VirtualListScrollHandle, WindowExt,
+    v_virtual_list, ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _,
+    StyledExt as _, VirtualListScrollHandle, WindowExt,
 };
 use r_wg::log::{self, LogLevel};
 
@@ -477,14 +476,7 @@ fn open_delete_dialog(
             let app_handle = app_handle.clone();
             let ids = ids.clone();
             move |window: &mut Window, cx: &mut App| {
-                perform_delete(
-                    &app_handle,
-                    &ids,
-                    note_skip,
-                    clear_selection,
-                    window,
-                    cx,
-                );
+                perform_delete(&app_handle, &ids, note_skip, clear_selection, window, cx);
             }
         };
 

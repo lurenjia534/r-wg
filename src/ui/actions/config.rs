@@ -640,8 +640,8 @@ impl WgApp {
             if !ids.contains(&cfg.id) {
                 continue;
             }
-            let is_running = running_id == Some(cfg.id)
-                || running_name.as_deref() == Some(cfg.name.as_str());
+            let is_running =
+                running_id == Some(cfg.id) || running_name.as_deref() == Some(cfg.name.as_str());
             if is_running {
                 match policy {
                     DeletePolicy::BlockRunning => {
@@ -886,11 +886,13 @@ fn format_delete_status(deleted_names: &[String], skipped_running: usize) -> Str
     if deleted_count == 1 && skipped_running == 0 {
         return format!("Deleted {}", deleted_names[0]);
     }
-    let config_word = if deleted_count == 1 { "config" } else { "configs" };
+    let config_word = if deleted_count == 1 {
+        "config"
+    } else {
+        "configs"
+    };
     if skipped_running > 0 {
-        return format!(
-            "Deleted {deleted_count} {config_word}, skipped {skipped_running} running"
-        );
+        return format!("Deleted {deleted_count} {config_word}, skipped {skipped_running} running");
     }
     format!("Deleted {deleted_count} {config_word}")
 }
