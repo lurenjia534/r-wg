@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use gpui::{AppContext, ClipboardItem, Context, SharedString, Window};
 use gpui_component::input::InputState;
 use r_wg::backend::wg::config;
-use r_wg::log::{self, LogLevel};
 
 use super::super::persistence;
 use super::super::state::{ConfigSource, LoadedConfigState, ParseCache, TunnelConfig, WgApp};
@@ -611,16 +610,6 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        log::event(
-            LogLevel::Info,
-            "ui",
-            format_args!(
-                "delete_configs_internal: requested ids={:?} policy={} total_configs={}",
-                ids,
-                delete_policy_label(policy),
-                self.configs.len()
-            ),
-        );
         if ids.is_empty() {
             self.set_error("Select a tunnel first");
             cx.notify();
@@ -645,14 +634,6 @@ impl WgApp {
             if is_running {
                 match policy {
                     DeletePolicy::BlockRunning => {
-                        log::event(
-                            LogLevel::Info,
-                            "ui",
-                            format_args!(
-                                "delete_configs_internal: blocked running config name=\"{}\" id={}",
-                                cfg.name, cfg.id
-                            ),
-                        );
                         self.set_error("Stop the tunnel before deleting");
                         cx.notify();
                         return;
@@ -670,14 +651,6 @@ impl WgApp {
         }
 
         if to_delete_ids.is_empty() {
-            log::event(
-                LogLevel::Info,
-                "ui",
-                format_args!(
-                    "delete_configs_internal: nothing to delete (skipped_running={})",
-                    skipped_running.len()
-                ),
-            );
             if !skipped_running.is_empty() {
                 self.set_status(format_delete_status(&[], skipped_running.len()));
             } else {
@@ -696,16 +669,6 @@ impl WgApp {
         }
 
         self.configs.retain(|cfg| !to_delete_ids.contains(&cfg.id));
-        log::event(
-            LogLevel::Info,
-            "ui",
-            format_args!(
-                "delete_configs_internal: deleted_ids={:?} skipped_running={} remaining={}",
-                to_delete_ids,
-                skipped_running.len(),
-                self.configs.len()
-            ),
-        );
 
         let deleted_paths_set: HashSet<PathBuf> = deleted_paths.iter().cloned().collect();
         self.config_text_cache
@@ -895,14 +858,4 @@ fn format_delete_status(deleted_names: &[String], skipped_running: usize) -> Str
         return format!("Deleted {deleted_count} {config_word}, skipped {skipped_running} running");
     }
     format!("Deleted {deleted_count} {config_word}")
-}
-
-/// 将删除策略转为日志标识。
-///
-/// 说明：用于统一日志输出，便于排查删除路径。
-fn delete_policy_label(policy: DeletePolicy) -> &'static str {
-    match policy {
-        DeletePolicy::BlockRunning => "block_running",
-        DeletePolicy::SkipRunning => "skip_running",
-    }
 }

@@ -12,7 +12,6 @@ use gpui_component::{
     v_virtual_list, ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _,
     StyledExt as _, VirtualListScrollHandle, WindowExt,
 };
-use r_wg::log::{self, LogLevel};
 
 use super::super::state::{ConfigSource, TunnelConfig, WgApp};
 
@@ -234,14 +233,6 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                                         || app.proxy_selected_ids.is_empty(),
                                 )
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    log::event(
-                                        LogLevel::Info,
-                                        "ui",
-                                        format_args!(
-                                            "proxies: click delete selected (count={})",
-                                            this.proxy_selected_ids.len()
-                                        ),
-                                    );
                                     if this.proxy_selected_ids.is_empty() {
                                         this.set_error("Select configs first");
                                         cx.notify();
@@ -277,11 +268,6 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                                 .xsmall()
                                 .disabled(app.busy || app.proxy_select_mode || app.selected.is_none())
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    log::event(
-                                        LogLevel::Info,
-                                        "ui",
-                                        format_args!("proxies: click delete single"),
-                                    );
                                     let Some(idx) = this.selected else {
                                         this.set_error("Select a tunnel first");
                                         cx.notify();
@@ -438,15 +424,6 @@ fn open_delete_dialog(
     let body = body.into();
     let note = note.clone();
 
-    log::event(
-        LogLevel::Info,
-        "ui",
-        format_args!(
-            "proxies: open delete dialog title=\"{}\" ids={:?} skip_running={} clear_selection={}",
-            title, ids, skip_running, clear_selection
-        ),
-    );
-
     window.open_dialog(cx, move |dialog, _window, cx| {
         let app_handle = app_handle.clone();
         let ids = ids.clone();
@@ -517,16 +494,8 @@ fn perform_delete(
     skip_running: bool,
     clear_selection: bool,
     window: &mut Window,
-    cx: &mut App,
+    _cx: &mut App,
 ) {
-    log::event(
-        LogLevel::Info,
-        "ui",
-        format_args!(
-            "proxies: confirm delete ids={:?} skip_running={} clear_selection={}",
-            ids, skip_running, clear_selection
-        ),
-    );
     // 延迟到下一帧执行，避免 dialog 渲染期借用冲突。
     let app_handle = app_handle.clone();
     let ids = ids.to_vec();
@@ -544,10 +513,5 @@ fn perform_delete(
                 this.proxy_selected_ids.clear();
             }
         });
-        log::event(
-            LogLevel::Info,
-            "ui",
-            format_args!("proxies: delete update scheduled"),
-        );
     });
 }
