@@ -12,37 +12,16 @@ use super::data::ViewData;
 
 /// 顶部工具栏骨架：标题、配置切换、模式按钮、状态图标。
 pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
+    let display_font = "Space Grotesk";
+    let ui_font = "Plus Jakarta Sans";
+
     let title = h_flex()
         .items_center()
         .gap_3()
         .child(
-            div()
-                .size(px(40.0))
-                .rounded_md()
-                .bg(cx.theme().secondary)
-                .border_1()
-                .border_color(cx.theme().border)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    Icon::new(IconName::LayoutDashboard)
-                        .size_6()
-                        .text_color(cx.theme().accent),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_lg().font_semibold().child("r-wg"))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Dashboard"),
-                ),
+            Icon::new(IconName::LayoutDashboard)
+                .size_6()
+                .text_color(cx.theme().accent),
         );
 
     let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
@@ -50,6 +29,22 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
     let can_stop = app.running && !app.busy;
 
     let is_dark = cx.theme().is_dark();
+    let bar_bg = linear_gradient(
+        120.0,
+        linear_color_stop(cx.theme().title_bar, 0.0),
+        linear_color_stop(cx.theme().secondary, 1.0),
+    );
+    let chip_bg = if is_dark {
+        cx.theme().background.alpha(0.45)
+    } else {
+        cx.theme().secondary
+    };
+    let chip_border = if is_dark {
+        cx.theme().foreground.alpha(0.12)
+    } else {
+        cx.theme().border
+    };
+
     let theme_toggle = ButtonGroup::new("theme-group")
         .outline()
         .compact()
@@ -119,10 +114,42 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 })),
         );
 
-    let status_tag = if app.running {
-        Tag::success().small().rounded_full().child("Connected")
-    } else {
-        Tag::secondary().small().rounded_full().child("Idle")
+    let status_chip = {
+        let (label, dot_color, text_color, bg, border) = if app.running {
+            (
+                "Connected",
+                cx.theme().accent,
+                cx.theme().accent,
+                cx.theme().accent.alpha(0.18),
+                cx.theme().accent.alpha(0.35),
+            )
+        } else {
+            (
+                "Idle",
+                cx.theme().muted_foreground,
+                cx.theme().muted_foreground,
+                chip_bg,
+                chip_border,
+            )
+        };
+
+        h_flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .rounded_full()
+            .border_1()
+            .border_color(border)
+            .bg(bg)
+            .child(div().size(px(6.0)).rounded_full().bg(dot_color))
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(text_color)
+                    .child(label),
+            )
     };
 
     let settings_button = Button::new("settings")
@@ -137,6 +164,12 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
     let tools = h_flex()
         .items_center()
         .gap_2()
+        .px_2()
+        .py_1()
+        .rounded_full()
+        .border_1()
+        .border_color(chip_border)
+        .bg(chip_bg)
         .child(icon_button("notif", IconName::Bell))
         .child(icon_button("health", IconName::CircleCheck))
         .child(settings_button);
@@ -145,17 +178,17 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .items_center()
         .justify_between()
         .gap_6()
-        .px_3()
-        .py_2()
-        .rounded_lg()
-        .border_1()
-        .border_color(cx.theme().title_bar_border)
-        .bg(cx.theme().title_bar)
         .child(title)
         .child(
             h_flex()
                 .items_center()
-                .gap_2()
+                .gap_3()
+                .px_3()
+                .py_2()
+                .rounded_full()
+                .border_1()
+                .border_color(chip_border)
+                .bg(chip_bg)
                 .child(
                     h_flex()
                         .items_center()
@@ -163,6 +196,8 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                         .child(
                             div()
                                 .text_xs()
+                                .font_family(ui_font)
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_color(cx.theme().muted_foreground)
                                 .child("Theme"),
                         )
@@ -170,18 +205,25 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 )
                 .child(vertical_divider(cx))
                 .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Tunnel"),
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family(ui_font)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Tunnel"),
+                        )
                 )
                 .child(modes),
         )
         .child(
             h_flex()
                 .items_center()
-                .gap_3()
-                .child(status_tag)
+                .gap_2()
+                .child(status_chip)
                 .child(tools),
         )
 }
@@ -191,5 +233,10 @@ fn icon_button(id: &'static str, icon: IconName) -> Button {
 }
 
 fn vertical_divider(cx: &mut Context<WgApp>) -> Div {
-    div().w(px(1.0)).h(px(20.0)).bg(cx.theme().border)
+    let color = if cx.theme().is_dark() {
+        cx.theme().foreground.alpha(0.12)
+    } else {
+        cx.theme().border
+    };
+    div().w(px(1.0)).h(px(22.0)).bg(color)
 }
