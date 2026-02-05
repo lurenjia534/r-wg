@@ -15,14 +15,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
     let display_font = "Space Grotesk";
     let ui_font = "Plus Jakarta Sans";
 
-    let title = h_flex()
-        .items_center()
-        .gap_3()
-        .child(
-            Icon::new(IconName::LayoutDashboard)
-                .size_6()
-                .text_color(cx.theme().accent),
-        );
+    let title = div();
 
     let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
     let can_start = config_valid && !app.running && !app.busy;
