@@ -13,7 +13,7 @@ use gpui_component::{
     StyledExt as _, VirtualListScrollHandle, WindowExt,
 };
 
-use super::super::state::{ConfigSource, TunnelConfig, WgApp};
+use super::super::state::{TunnelConfig, WgApp};
 
 // 卡片固定尺寸用于虚拟化行高计算与渲染稳定性。
 const PROXIES_CARD_WIDTH: f32 = 240.0;
@@ -342,11 +342,7 @@ fn config_list_item(
         cx.theme().border
     };
 
-    let mut badges = h_flex().gap_1().child(
-        Tag::secondary()
-            .small()
-            .child(config_source_label(&config.source)),
-    );
+    let mut badges = h_flex().gap_1();
     if is_multi_selected {
         badges = badges.child(Tag::info().small().child("Selected"));
     }
@@ -400,13 +396,6 @@ fn config_list_item(
         }
         this.select_tunnel(idx, window, cx);
     }))
-}
-
-fn config_source_label(source: &ConfigSource) -> &'static str {
-    match source {
-        ConfigSource::File { .. } => "File",
-        ConfigSource::Paste => "Pasted",
-    }
 }
 
 fn open_delete_dialog(
