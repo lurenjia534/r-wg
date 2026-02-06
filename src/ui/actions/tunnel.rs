@@ -16,6 +16,10 @@ impl WgApp {
     /// - 根据当前运行状态分支处理 start/stop。
     /// - 所有耗时操作都放到后台执行，完成后回到 UI 线程更新状态。
     pub(crate) fn handle_start_stop(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.handle_start_stop_core(cx);
+    }
+
+    fn handle_start_stop_core(&mut self, cx: &mut Context<Self>) {
         // 统一入口：所有 Start/Stop 点击都会走这里。
         // busy=true 表示已有异步流程在执行，避免并发触发导致状态错乱。
         if self.busy {
@@ -98,6 +102,22 @@ impl WgApp {
         // stop 后的冷却时间：避免“刚停就起”的抖动。
         let delay = self.restart_delay();
         self.start_with_config(selected, initial_text, delay, cx);
+    }
+
+    /// 托盘菜单：仅在未运行时启动。
+    pub(crate) fn handle_start_from_tray(&mut self, cx: &mut Context<Self>) {
+        if self.running || self.busy {
+            return;
+        }
+        self.handle_start_stop_core(cx);
+    }
+
+    /// 托盘菜单：仅在运行中停止。
+    pub(crate) fn handle_stop_from_tray(&mut self, cx: &mut Context<Self>) {
+        if !self.running || self.busy {
+            return;
+        }
+        self.handle_start_stop_core(cx);
     }
 
     /// 计算重启冷却时间。

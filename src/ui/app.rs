@@ -13,6 +13,7 @@ use std::sync::{
 
 use super::persistence;
 use super::state::WgApp;
+use super::tray;
 
 pub fn run() {
     // 在 UI 启动前先创建后端引擎，供整个应用生命周期复用。
@@ -32,13 +33,25 @@ pub fn run() {
                 let view = cx.new(|_cx| WgApp::new(engine.clone(), theme_mode));
                 // 弱引用：窗口关闭后不会阻止资源释放。
                 let view_handle = view.downgrade();
+                // 初始化系统托盘并启动命令监听。
+                tray::init(
+                    window.window_handle(),
+                    view_handle.clone(),
+                    engine.clone(),
+                    cx,
+                );
                 // 防止重复触发关闭逻辑（多次点击关闭按钮）。
                 let closing = Arc::new(AtomicBool::new(false));
                 let close_engine = engine.clone();
                 let close_flag = Arc::clone(&closing);
 
-                // 拦截窗口关闭：先停隧道并回滚 DNS，再真正关闭窗口。
+                // 拦截窗口关闭：托盘启用时仅隐藏窗口，否则停隧道并关闭窗口。
                 window.on_window_should_close(cx, move |window, cx| {
+                    if tray::should_minimize_on_close(cx) {
+                        tray::hide_window(window);
+                        return false;
+                    }
+
                     // 已经进入关闭流程则直接拒绝本次关闭请求。
                     if close_flag.swap(true, Ordering::SeqCst) {
                         return false;
