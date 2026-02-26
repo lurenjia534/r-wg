@@ -2,7 +2,7 @@
 //!
 //! 在全隧道场景下，降低 TUN 接口 metric 以获得更高路由优先级。
 
-use windows::Win32::Foundation::{BOOLEAN, NO_ERROR};
+use windows::Win32::Foundation::NO_ERROR;
 use windows::Win32::NetworkManagement::IpHelper::{
     GetIpInterfaceEntry, InitializeIpInterfaceEntry, SetIpInterfaceEntry, MIB_IPINTERFACE_ROW,
 };
@@ -16,7 +16,7 @@ pub(super) struct InterfaceMetricState {
     /// 地址族（IPv4/IPv6）。
     family: ADDRESS_FAMILY,
     /// 是否使用系统自动 metric。
-    use_auto: BOOLEAN,
+    use_auto: bool,
     /// 原始 metric 值（用于回滚）。
     metric: u32,
 }
@@ -50,7 +50,7 @@ pub(super) fn set_interface_metric(
     };
 
     // 关闭自动 metric，设置固定优先级。
-    row.UseAutomaticMetric = BOOLEAN(0);
+    row.UseAutomaticMetric = false;
     row.Metric = metric;
 
     let result = unsafe { SetIpInterfaceEntry(&mut row) };

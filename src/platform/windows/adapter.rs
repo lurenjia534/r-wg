@@ -134,7 +134,7 @@ fn extract_guid_from_adapter_name(name: &str) -> Option<GUID> {
     if !is_guid_string(candidate) {
         return None;
     }
-    Some(GUID::from(candidate))
+    GUID::try_from(candidate).ok()
 }
 
 fn is_guid_string(value: &str) -> bool {
