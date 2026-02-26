@@ -236,14 +236,14 @@ mod platform {
     use windows::core::PCWSTR;
     use windows::Win32::{
         Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
-        Graphics::Gdi::HICON,
         System::LibraryLoader::GetModuleHandleW,
         UI::Shell::{
             Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
         },
         UI::WindowsAndMessaging::{
             AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
-            DispatchMessageW, GetCursorPos, GetMessageW, GetWindowLongPtrW, LoadCursorW, LoadIconW,
+            DispatchMessageW, GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, LoadCursorW,
+            LoadIconW,
             PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW,
             ShowWindow, TrackPopupMenu, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HMENU,
             IDC_ARROW, IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_SHOW,
@@ -306,18 +306,18 @@ mod platform {
         let hwnd = TRAY_HWND.load(Ordering::Acquire);
         if hwnd != 0 {
             unsafe {
-                let _ = PostMessageW(HWND(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         }
     }
 
     /// 从 GPUI 窗口提取原生 `HWND` 并执行回调。
     fn with_hwnd(window: &gpui::Window, f: impl FnOnce(HWND)) {
-        let Ok(handle) = window.window_handle() else {
+        let Ok(handle) = HasWindowHandle::window_handle(window) else {
             return;
         };
         if let RawWindowHandle::Win32(raw) = handle.as_raw() {
-            let hwnd = HWND(raw.hwnd.get());
+            let hwnd = HWND(raw.hwnd.get() as *mut _);
             f(hwnd);
         }
     }
@@ -336,7 +336,7 @@ mod platform {
         let wnd_class = WNDCLASSW {
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             hInstance: hinstance.into(),
-            lpszClassName: class_name.as_ptr().into(),
+            lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
             lpfnWndProc: Some(wnd_proc),
             ..Default::default()
         };
@@ -345,7 +345,7 @@ mod platform {
         }
 
         let menu = build_menu();
-        if menu.0 == 0 {
+        if menu.0.is_null() {
             return;
         }
 
@@ -368,31 +368,32 @@ mod platform {
         // 创建隐藏窗口：不展示 UI，仅作为托盘事件接收端。
         let hwnd = CreateWindowExW(
             WS_EX_NOACTIVATE,
-            class_name.as_ptr().into(),
-            class_name.as_ptr().into(),
+            PCWSTR::from_raw(class_name.as_ptr()),
+            PCWSTR::from_raw(class_name.as_ptr()),
             WS_OVERLAPPED,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            HWND(0),
             None,
-            hinstance,
+            None,
+            Some(hinstance.into()),
             Some(context_ptr as *const _),
-        );
-        if hwnd.0 == 0 {
+        )
+        .unwrap_or_default();
+        if hwnd.0.is_null() {
             drop(Box::from_raw(context_ptr));
             return;
         }
 
         // 将图标真正添加到系统托盘区域。
-        TRAY_HWND.store(hwnd.0, Ordering::Release);
+        TRAY_HWND.store(hwnd.0 as isize, Ordering::Release);
         let context_ref = &mut *context_ptr;
         context_ref.icon_data.hWnd = hwnd;
         let _ = Shell_NotifyIconW(NIM_ADD, &context_ref.icon_data);
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, HWND(0), 0, 0).into() {
+        while GetMessageW(&mut msg, None, 0, 0).into() {
             DispatchMessageW(&msg);
         }
     }
@@ -471,18 +472,18 @@ mod platform {
     /// 在鼠标位置弹出托盘右键菜单。
     unsafe fn show_menu(hwnd: HWND, menu: HMENU) {
         let mut point = POINT::default();
-        if GetCursorPos(&mut point).as_bool() {
-            SetForegroundWindow(hwnd);
+        if GetCursorPos(&mut point).is_ok() {
+            let _ = SetForegroundWindow(hwnd);
             let _ = TrackPopupMenu(
                 menu,
                 TPM_RIGHTBUTTON | TPM_RIGHTALIGN | TPM_BOTTOMALIGN,
                 point.x,
                 point.y,
-                0,
+                None,
                 hwnd,
                 None,
             );
-            let _ = PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         }
     }
 
@@ -493,8 +494,8 @@ mod platform {
     /// - Close Tunnel
     fn build_menu() -> HMENU {
         unsafe {
-            let menu = CreatePopupMenu();
-            if menu.0 == 0 {
+            let menu = CreatePopupMenu().unwrap_or_default();
+            if menu.0.is_null() {
                 return menu;
             }
 
@@ -502,16 +503,16 @@ mod platform {
                 menu,
                 MF_STRING,
                 ID_START,
-                PCWSTR(to_wide("Open Tunnel").as_ptr()),
+                PCWSTR::from_raw(to_wide("Open Tunnel").as_ptr()),
             );
             let _ = AppendMenuW(
                 menu,
                 MF_STRING,
                 ID_STOP,
-                PCWSTR(to_wide("Close Tunnel").as_ptr()),
+                PCWSTR::from_raw(to_wide("Close Tunnel").as_ptr()),
             );
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-            let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, PCWSTR(to_wide("Quit").as_ptr()));
+            let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, PCWSTR::from_raw(to_wide("Quit").as_ptr()));
             menu
         }
     }
