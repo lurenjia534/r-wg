@@ -1287,15 +1287,40 @@ fn format_memory_usage() -> String {
 }
 
 fn read_process_rss_bytes() -> Option<u64> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    for line in status.lines() {
-        if let Some(rest) = line.strip_prefix("VmRSS:") {
-            let mut parts = rest.split_whitespace();
-            let kb = parts.next()?.parse::<u64>().ok()?;
-            return Some(kb.saturating_mul(1024));
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                let mut parts = rest.split_whitespace();
+                let kb = parts.next()?.parse::<u64>().ok()?;
+                return Some(kb.saturating_mul(1024));
+            }
         }
+        return None;
     }
-    None
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+        use windows::Win32::System::Threading::GetCurrentProcess;
+
+        let process = unsafe { GetCurrentProcess() };
+        let mut counters = PROCESS_MEMORY_COUNTERS::default();
+        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+
+        unsafe {
+            GetProcessMemoryInfo(process, &mut counters, counters.cb).ok()?;
+        }
+        return Some(counters.WorkingSetSize as u64);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
 }
 
 fn format_memory(bytes: u64) -> String {
