@@ -8,13 +8,13 @@ build = "build.rs"
 gpui = "0.2.2"
 gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
 gpui-component-assets = "0.5.1"
-gotatun = { version = "0.2.0", features = ["device", "tun"] }
+gotatun = { version = "0.4.0", features = ["device", "tun"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process"] }
 base64 = "0.22.1"
 chrono = "0.4.43"
 crossbeam-queue = "0.3.12"
 futures-util = "0.3"
-ipnetwork = "0.21.1" # gotatun 0.2.x 的公共 Peer/Allowed IPs 类型依赖
+ipnetwork = "0.21.1" # gotatun 公共 Peer/Allowed IPs 类型依赖
 dirs = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
