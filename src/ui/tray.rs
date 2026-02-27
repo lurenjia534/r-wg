@@ -242,10 +242,9 @@ mod platform {
         },
         UI::WindowsAndMessaging::{
             AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
-            DispatchMessageW, GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, LoadCursorW,
-            LoadIconW,
+            DispatchMessageW, GetCursorPos, GetMessageW, GetWindowLongPtrW, LoadCursorW, LoadIconW,
             PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW,
-            ShowWindow, TrackPopupMenu, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HMENU,
+            ShowWindow, TrackPopupMenu, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON, HMENU,
             IDC_ARROW, IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_SHOW,
             TPM_BOTTOMALIGN, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND,
             WM_DESTROY, WM_LBUTTONUP, WM_NCCREATE, WM_NULL, WM_RBUTTONUP, WM_USER, WNDCLASSW,
@@ -512,7 +511,12 @@ mod platform {
                 PCWSTR::from_raw(to_wide("Close Tunnel").as_ptr()),
             );
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-            let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, PCWSTR::from_raw(to_wide("Quit").as_ptr()));
+            let _ = AppendMenuW(
+                menu,
+                MF_STRING,
+                ID_QUIT,
+                PCWSTR::from_raw(to_wide("Quit").as_ptr()),
+            );
             menu
         }
     }
