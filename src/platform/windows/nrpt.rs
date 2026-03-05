@@ -1,3 +1,8 @@
+//! Windows NRPT（Name Resolution Policy Table）策略下发。
+//!
+//! 目的：在全隧道场景下，把系统默认 DNS 查询策略强制指向隧道 DNS，
+//! 避免仅靠接口 DNS 设置时出现的跨接口回退与超时。
+
 use std::net::IpAddr;
 use std::process::Command;
 
@@ -5,12 +10,18 @@ use super::adapter::AdapterInfo;
 use super::NetworkError;
 use crate::log::events::net as log_net;
 
+/// NRPT 规则回滚状态。
 #[derive(Clone)]
 pub(super) struct NrptState {
+    /// 规则实际 Name（用于精准删除）。
     rule_names: Vec<String>,
+    /// 本客户端规则标签（用于批量兜底清理）。
     tag: String,
 }
 
+/// 应用 NRPT 规则。
+///
+/// 策略：对 `.`（根命名空间）下发 NameServers，实现“全域 DNS 指向隧道 DNS”。
 pub(super) fn apply_nrpt_guard(
     adapter: AdapterInfo,
     dns_servers: &[IpAddr],
@@ -26,6 +37,7 @@ pub(super) fn apply_nrpt_guard(
         .collect::<Vec<_>>()
         .join(",");
 
+    // 先清理同标签旧规则，避免重连叠加。
     let _ = remove_rules_by_tag(&tag);
 
     let script = format!(
@@ -58,6 +70,7 @@ pub(super) fn apply_nrpt_guard(
     }))
 }
 
+/// 回滚 NRPT 规则。
 pub(super) fn cleanup_nrpt_guard(state: NrptState) -> Result<(), NetworkError> {
     let mut first_error: Option<NetworkError> = None;
 
@@ -69,6 +82,7 @@ pub(super) fn cleanup_nrpt_guard(state: NrptState) -> Result<(), NetworkError> {
         }
     }
 
+    // 再按 tag 清理一次，兜底处理异常中断场景。
     if let Err(err) = remove_rules_by_tag(&state.tag) {
         if first_error.is_none() {
             first_error = Some(err);
@@ -82,6 +96,7 @@ pub(super) fn cleanup_nrpt_guard(state: NrptState) -> Result<(), NetworkError> {
     }
 }
 
+/// 按规则 Name 删除 NRPT 规则。
 fn remove_rule_by_name(name: &str) -> Result<(), NetworkError> {
     let script = format!(
         "$ErrorActionPreference='SilentlyContinue'; \
@@ -90,6 +105,7 @@ fn remove_rule_by_name(name: &str) -> Result<(), NetworkError> {
     run_powershell(&script).map(|_| ())
 }
 
+/// 按 Comment 标签批量删除 NRPT 规则。
 fn remove_rules_by_tag(tag: &str) -> Result<(), NetworkError> {
     let script = format!(
         "$ErrorActionPreference='SilentlyContinue'; \
@@ -98,6 +114,7 @@ fn remove_rules_by_tag(tag: &str) -> Result<(), NetworkError> {
     run_powershell(&script).map(|_| ())
 }
 
+/// 执行 PowerShell 命令并返回 stdout。
 fn run_powershell(script: &str) -> Result<String, NetworkError> {
     let output = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
@@ -114,6 +131,7 @@ fn run_powershell(script: &str) -> Result<String, NetworkError> {
     )))
 }
 
+/// 从命令输出中提取错误详情。
 fn command_detail(stdout: &[u8], stderr: &[u8]) -> String {
     let stderr_text = String::from_utf8_lossy(stderr).trim().to_string();
     if !stderr_text.is_empty() {

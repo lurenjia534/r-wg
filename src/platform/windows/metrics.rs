@@ -1,6 +1,7 @@
-//! 接口 metric 调整与回滚。
+//! Windows 接口 metric 调整与回滚。
 //!
-//! 在全隧道场景下，降低 TUN 接口 metric 以获得更高路由优先级。
+//! 在全隧道模式下，通常需要降低隧道网卡的 metric，
+//! 以提升其默认路由优先级，减少系统走物理网卡造成的泄露风险。
 
 use windows::Win32::Foundation::NO_ERROR;
 use windows::Win32::NetworkManagement::IpHelper::{
@@ -11,22 +12,24 @@ use windows::Win32::Networking::WinSock::{ADDRESS_FAMILY, AF_INET, AF_INET6};
 use super::adapter::AdapterInfo;
 use super::NetworkError;
 
+/// 用于回滚 metric 的快照。
 #[derive(Clone, Copy)]
 pub(super) struct InterfaceMetricState {
-    /// 地址族（IPv4/IPv6）。
+    /// 地址族（IPv4 / IPv6）。
     family: ADDRESS_FAMILY,
-    /// 是否使用系统自动 metric。
+    /// 原始是否自动 metric。
     use_auto: bool,
-    /// 原始 metric 值（用于回滚）。
+    /// 原始 metric 值。
     metric: u32,
 }
 
+/// 设置指定地址族的接口 metric，并返回“设置前”的状态快照。
 pub(super) fn set_interface_metric(
     adapter: AdapterInfo,
     family: ADDRESS_FAMILY,
     metric: u32,
 ) -> Result<InterfaceMetricState, NetworkError> {
-    // 先读当前设置，保存旧值以便恢复。
+    // 先读取当前状态，后续用于回滚。
     let mut row: MIB_IPINTERFACE_ROW = unsafe { std::mem::zeroed() };
     unsafe {
         InitializeIpInterfaceEntry(&mut row);
@@ -49,10 +52,11 @@ pub(super) fn set_interface_metric(
         metric: row.Metric,
     };
 
-    // 关闭自动 metric，设置固定优先级。
+    // 写入目标值：关闭自动 metric，使用固定 metric。
     row.UseAutomaticMetric = false;
     row.Metric = metric;
 
+    // 修正结构体字段，避免 SetIpInterfaceEntry 参数校验失败。
     sanitize_site_prefix_length(family, &mut row);
 
     let result = unsafe { SetIpInterfaceEntry(&mut row) };
@@ -66,11 +70,11 @@ pub(super) fn set_interface_metric(
     Ok(previous)
 }
 
+/// 根据快照恢复接口 metric。
 pub(super) fn restore_interface_metric(
     adapter: AdapterInfo,
     state: InterfaceMetricState,
 ) -> Result<(), NetworkError> {
-    // 根据保存的旧值恢复接口 metric。
     let mut row: MIB_IPINTERFACE_ROW = unsafe { std::mem::zeroed() };
     unsafe {
         InitializeIpInterfaceEntry(&mut row);
@@ -103,8 +107,10 @@ pub(super) fn restore_interface_metric(
     Ok(())
 }
 
+/// 兼容性修正：
+/// - IPv4 时 SitePrefixLength 应为 0，否则某些系统会报 87；
+/// - IPv6 时做上限保护（0..=128）。
 fn sanitize_site_prefix_length(family: ADDRESS_FAMILY, row: &mut MIB_IPINTERFACE_ROW) {
-    // SetIpInterfaceEntry 在 IPv4 下要求 SitePrefixLength 为 0，否则可能返回 ERROR_INVALID_PARAMETER(87)。
     if family == AF_INET {
         row.SitePrefixLength = 0;
     } else if family == AF_INET6 && row.SitePrefixLength > 128 {

@@ -1,9 +1,14 @@
-// Network config event logs (scope = net).
+//! 网络配置事件日志（scope = net）。
+//!
+//! 该模块只负责输出日志，不执行网络配置逻辑。
+
 use std::fmt;
 use std::net::IpAddr;
 
 use crate::backend::wg::config::RouteTable;
 use crate::{log_debug, log_info};
+
+// ===== 应用阶段 =====
 
 pub fn apply_linux(
     tun_name: &str,
@@ -44,6 +49,8 @@ pub fn stale_default_route_cleanup_failed(err: &impl fmt::Display) {
     log_info!("net", "stale default route cleanup failed: {err}");
 }
 
+// ===== 地址与路由 =====
+
 pub fn address_add(addr: IpAddr, cidr: u8) {
     log_info!("net", "address: {}/{}", addr, cidr);
 }
@@ -82,6 +89,7 @@ pub fn route_add_windows(
     );
 }
 
+/// DNS 服务器 host 路由（IPv4 /32，IPv6 /128）。
 pub fn dns_route_add_windows(dest: IpAddr, prefix: u8, if_index: u32, metric: u32) {
     log_info!(
         "net",
@@ -92,6 +100,7 @@ pub fn dns_route_add_windows(dest: IpAddr, prefix: u8, if_index: u32, metric: u3
         metric
     );
 }
+
 pub fn bypass_route_add(dest: IpAddr, next_hop: Option<IpAddr>, if_index: u32) {
     log_info!(
         "net",
@@ -106,6 +115,7 @@ pub fn bypass_route_failed(ip: IpAddr, err: &impl fmt::Display) {
     log_info!("net", "bypass route failed for {ip}: {err}");
 }
 
+/// 全隧道安全护栏：缺失 bypass route 时拒绝继续。
 pub fn skip_default_route_v4() {
     log_info!(
         "net",
@@ -119,6 +129,8 @@ pub fn skip_default_route_v6() {
         "full-tunnel guard: missing IPv6 endpoint bypass route; aborting apply to avoid leak"
     );
 }
+
+// ===== DNS 防泄露 =====
 
 pub fn dns_guard_apply(blocked_server_count: usize) {
     log_info!(
@@ -144,9 +156,12 @@ pub fn nrpt_apply(dns_server_count: usize, rule_count: usize) {
 pub fn nrpt_cleanup_failed(err: &impl fmt::Display) {
     log_info!("net", "nrpt cleanup failed: {err}");
 }
+
 pub fn bypass_route_add_failed(dest: IpAddr, err: &impl fmt::Display) {
     log_info!("net", "bypass route add failed for {}: {err}", dest);
 }
+
+// ===== 清理阶段 =====
 
 pub fn cleanup_linux(
     tun_name: &str,
@@ -204,6 +219,8 @@ pub fn policy_rule_cleanup_failed(err: &impl fmt::Display) {
 pub fn stale_policy_rule_cleanup_failed(err: &impl fmt::Display) {
     log_info!("net", "stale policy rule cleanup failed: {err}");
 }
+
+// ===== metric 与策略规则 =====
 
 pub fn interface_metric_set_v4(metric: u32) {
     log_info!("net", "interface metric set: v4 metric={}", metric);
@@ -280,6 +297,8 @@ pub fn policy_rule_add_v4_suppress(pref: u32) {
 pub fn stale_default_route_del(iface: &str) {
     log_info!("net", "stale default route del: iface={iface}");
 }
+
+// ===== 调试级日志 =====
 
 pub fn default_route_v4(iface: &str, gw: &str, metric: &str) {
     log_debug!(

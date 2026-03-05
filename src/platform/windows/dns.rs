@@ -1,9 +1,10 @@
 //! Windows DNS 配置与回滚。
 //!
 //! 设计目标：
-//! - 使用 `SetInterfaceDnsSettings` 直接按接口 GUID 写入 DNS；
-//! - 同时兼容主 GUID 与回退 GUID（不同驱动/系统下可能不一致）；
-//! - 在写入 DNS 时启用 `DisableUnconstrainedQueries`，降低 Windows 回退到其他网卡 DNS 的概率。
+//! - 使用 `SetInterfaceDnsSettings` 按接口 GUID 写入 DNS；
+//! - 同时兼容主 GUID 与 fallback GUID；
+//! - 写入 DNS 时开启 `DisableUnconstrainedQueries`，降低跨接口 DNS 回退概率；
+//! - 写后回读校验关键字段，避免“看似成功、实际未生效”的隐患。
 
 use std::net::IpAddr;
 
@@ -24,24 +25,24 @@ use crate::log::events::dns as log_dns;
 struct DnsStateEntry {
     /// 变更目标接口 GUID。
     guid: GUID,
-    /// 本次是否写入过 NameServer。
+    /// 本次是否修改了 NameServer。
     touched_nameserver: bool,
-    /// 本次是否写入过 SearchList。
+    /// 本次是否修改了 SearchList。
     touched_search: bool,
-    /// 本次是否写入过 DisableUnconstrainedQueries。
+    /// 本次是否修改了 DisableUnconstrainedQueries。
     touched_disable_unconstrained_queries: bool,
-    /// 写入前 NameServer 原值（用于回滚）。
+    /// 修改前 NameServer（用于回滚）。
     original_nameserver: Option<String>,
-    /// 写入前 SearchList 原值（用于回滚）。
+    /// 修改前 SearchList（用于回滚）。
     original_searchlist: Option<String>,
-    /// 写入前 DisableUnconstrainedQueries 原值（用于回滚）。
+    /// 修改前 DisableUnconstrainedQueries（用于回滚）。
     original_disable_unconstrained_queries: u32,
 }
 
-/// 本次 DNS 应用操作的完整状态。
+/// 一次 DNS 应用操作的完整状态。
 #[derive(Clone)]
 pub(super) struct DnsState {
-    /// 可能包含 1~2 个 GUID 的写入记录；清理时按逆序回滚。
+    /// 可能包含 1~2 个 GUID 的写入记录；回滚按逆序执行。
     entries: Vec<DnsStateEntry>,
 }
 
@@ -49,8 +50,8 @@ pub(super) struct DnsState {
 ///
 /// 策略：
 /// 1. 优先写主 GUID；
-/// 2. 主 GUID 失败时使用 fallback GUID 兜底；
-/// 3. 主 GUID 成功且 fallback GUID 不同，则再做一次 best-effort 补写。
+/// 2. 主 GUID 失败时尝试 fallback GUID；
+/// 3. 主 GUID 成功且 fallback 不同，额外 best-effort 补写 fallback。
 pub(super) fn apply_dns(
     adapter: AdapterInfo,
     servers: &[IpAddr],
@@ -196,7 +197,7 @@ fn apply_dns_with_guid(
 
     let touched_nameserver = !servers.is_empty();
     let touched_search = !search_items.is_empty();
-    // 只要我们接管了 DNS（NameServer/Search 任一项），就开启禁用跨接口查询。
+    // 只要我们接管了 DNS（NameServer/Search 任一项），就启用禁用跨接口查询。
     let touched_disable_unconstrained_queries = touched_nameserver || touched_search;
 
     if !touched_nameserver && !touched_search && !touched_disable_unconstrained_queries {
@@ -269,7 +270,7 @@ fn apply_dns_with_guid(
         });
     }
 
-    // 安全护栏：如果要求禁用跨接口查询，必须确认系统已实际生效。
+    // 安全护栏：要求禁用跨接口查询时，必须确认系统已实际生效。
     if touched_disable_unconstrained_queries {
         let (_, _, effective_disable_unconstrained_queries) = read_interface_dns_settings(guid)?;
         if effective_disable_unconstrained_queries == 0 {
@@ -330,6 +331,7 @@ fn read_interface_dns_settings(
     Ok((nameserver, searchlist, disable_unconstrained_queries))
 }
 
+/// 把 Windows PWSTR 规范化为 `Option<String>`。
 fn normalize_pwstr(ptr: PWSTR) -> Option<String> {
     let value = pwstr_to_string(ptr);
     let trimmed = value.trim();
@@ -340,10 +342,12 @@ fn normalize_pwstr(ptr: PWSTR) -> Option<String> {
     }
 }
 
+/// UTF-16 零结尾编码（用于 Win32 API）。
 fn encode_utf16_z(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// 将可选 UTF-16 缓冲区转换为 PWSTR。
 fn pwstr_from_buf(buf: &Option<Vec<u16>>) -> PWSTR {
     match buf {
         Some(value) => PWSTR(value.as_ptr() as *mut u16),

@@ -1,5 +1,11 @@
-//! Windows 妤犵偛鍟胯ぐ瀵哥磾閹寸姷鎹曢梺鏉跨Ф閻ゅ棝宕楅妷銉ョ稉闁?//!
-//! 闁煎崬鐭侀惌妤呮晬?//! - TUN 闁规亽鍎辫ぐ娑㈠捶閺夋寧绲诲☉鎾虫唉閻箖鎮介柆宥呭赋缂傚喚鍣槐?//! - Endpoint 缂備焦娲濈换鍐崉椤栨粍鏆犻柨娑樼墦娴尖晠宕楀鍛伎闂傚憞鍥﹀闂傚啰绮弻鍥箵閳╁啫顤侀柨娑橆檧缁?//! - DNS 闂佹澘绉堕悿鍡樼▔鎼粹剝绀€婵犲﹥鐔槐娆撳箰婢跺澶嶉柛娆欑悼妤犲洨鎷嬮崜褏鏋傞柨娑橆槶閳?
+//! Windows 网络配置入口。
+//!
+//! 主要职责：
+//! - 配置 TUN 接口地址与 AllowedIPs 路由；
+//! - 在全隧道时生成并下发 Endpoint bypass route，避免握手被自身默认路由截断；
+//! - 应用 DNS、NRPT 与 DNS 防泄露规则；
+//! - 在失败或断开时按顺序回滚。
+
 mod adapter;
 mod addresses;
 mod dns;
@@ -29,26 +35,28 @@ use routes::{
     resolve_endpoint_ips, RouteEntry,
 };
 
-/// Tunnel interface metric; lower is preferred.
+/// 隧道接口 metric。值越小优先级越高。
 const TUNNEL_METRIC: u32 = 0;
 
+/// 一次网络配置应用后的状态，用于后续清理回滚。
 pub struct AppliedNetworkState {
-    /// 闁哄牜鍓氶鍏兼償閺冨倹鏆忛柣銊ュ鐢挳宕ｉ敐鍛€崇紒澶婂簻缁辨瑩鎮介妸銈囪壘闁哄啨鍎辩换鏃€绋夋惔銏㈩伕闁荤偛妫寸槐姘跺Υ?
+    /// 隧道接口名（用于日志和清理）。
     tun_name: String,
-    /// 闂侇偄鍊块崢銈夊闯閵娿倓绻嗛柟顓у灲缁辨獙fIndex/LUID/GUID闁挎稑顦埀?
+    /// 目标网卡关键信息。
     adapter: AdapterInfo,
-    /// 闁哄牜鍓氶濂稿礃濞嗗繐寮抽柣銊ュ濠€鎾锤閳ь剟宕氬Δ鍕┾偓鍐Υ?
+    /// 本次添加的接口地址。
     addresses: Vec<InterfaceAddress>,
-    /// 闁哄牜鍓氶濂稿礃濞嗗繐寮抽柣銊ュ閻箖鎮介崡鐐茬仚閻炴侗鐓夌槐姗漧lowedIPs闁挎稑顦埀?
+    /// 本次添加的普通路由（AllowedIPs + DNS host route）。
     routes: Vec<RouteEntry>,
-    /// Endpoint 缂備焦娲濈换鍐崉椤栨粍鏆犻柕?
+    /// 本次添加的 Endpoint bypass 路由。
     bypass_routes: Vec<RouteEntry>,
-    /// 闁规亽鍎辫ぐ?metric 闁汇劌瀚敮顐ｆ叏鐎ｎ剙笑闁诡兛绶ょ槐婵嬫偨閵娿倗鑹鹃柟顓滃灩椤︽煡濡?
+    /// metric 调整前快照（用于恢复）。
     iface_metrics: Vec<InterfaceMetricState>,
-    /// DNS 濞ｅ浂鍠楅弫濂告偐閼哥鍋撴笟濠勭闁活潿鍔嬬花顒勫炊閻愬娉婇柨娑橆槶閳?
+    /// DNS 变更状态（用于回滚）。
     dns: Option<DnsState>,
+    /// NRPT 变更状态（用于回滚）。
     nrpt: Option<NrptState>,
-    /// DNS 闂傚啫寮剁涵鐘绘閺屻儲些闁诲浚鍋勯。鍓ф喆閸曨偄鐏熼柣妯垮煐閳ь兛绶ょ槐娆撳礂閵娾晜鐦堥梺顒佹尰濡炲倿宕ラ婊勬殢闁挎稑顦埀?
+    /// DNS Guard 状态（用于回滚）。
     dns_guard: Option<DnsGuardState>,
 }
 
@@ -56,6 +64,7 @@ pub struct AppliedNetworkState {
 pub enum NetworkError {
     AdapterNotFound(String),
     EndpointResolve(String),
+    /// 用于 fail-closed：检测到潜在泄露风险时主动失败。
     UnsafeRouting(String),
     Io(std::io::Error),
     Win32 {
@@ -93,12 +102,15 @@ impl From<std::io::Error> for NetworkError {
     }
 }
 
+/// 应用 Windows 侧网络配置。
+///
+/// 注意：任何关键步骤失败都会触发回滚，避免留下“半配置”状态。
 pub async fn apply_network_config(
     tun_name: &str,
     interface: &InterfaceConfig,
     peers: &[PeerConfig],
 ) -> Result<AppliedNetworkState, NetworkError> {
-    // 1) 閻犱焦婢樼紞宥夊春閻戞ɑ鎷遍柛娆忓€归弳鐔兼晬鐏炶偐鈹掑ù婊冩唉閻︽牠寮婧惧亾?
+    // 1) 记录本次配置参数，便于问题排查。
     log_net::apply_windows(
         tun_name,
         interface.addresses.len(),
@@ -112,7 +124,8 @@ pub async fn apply_network_config(
     if interface.fwmark.is_some() {
         log_net::fwmark_ignored();
     }
-    // 2) 閻熸瑱绲鹃悗浠嬬嵁鐠鸿櫣鏆板ù锝呯Ф濞蹭即寮介崶顑藉亾閸岀偛甯抽柛锝冨妸閳?
+
+    // 2) 查找目标 TUN 适配器。
     let adapter = adapter::find_adapter_with_retry(tun_name).await?;
 
     let mut state = AppliedNetworkState {
@@ -127,10 +140,10 @@ pub async fn apply_network_config(
         dns_guard: None,
     };
 
-    // 3) 婵炴挸鎳愰幃濠囧储閸℃钑夋繛鍫濐儑閺嗏偓闁革附婢樺鍐晬瀹€鍕級闁稿繐绉存總鏍传瀹ュ牏鐔呴柣銏犲船閸犲懐绮甸弽銉㈠亾?
+    // 3) 先清理旧地址，避免历史残留影响路由决策。
     cleanup_stale_unicast_addresses(adapter, &interface.addresses)?;
 
-    // 4) 闁告劖鐟ラ崣鍡涘箳閵夈儱缍撻柛锔芥緲濞煎啴鏁嶉崷姹竩4/IPv6闁挎稑顦埀?
+    // 4) 配置接口地址。
     for address in &interface.addresses {
         log_net::address_add_windows(address.addr, address.cidr);
         if let Err(err) = add_unicast_address(adapter, address) {
@@ -140,11 +153,12 @@ pub async fn apply_network_config(
         state.addresses.push(address.clone());
     }
 
-    // 5) 婵懓娲﹂埀?AllowedIPs闁挎稑鑻懟鐔煎礆閵堝棙鐒介柡鍕靛灠閹焦绋夐崫鍕伎闂傚憞鍥﹀闁?
+    // 5) 汇总路由并判断是否为全隧道。
     let routes = collect_allowed_routes(peers);
     let (full_v4, full_v6) = detect_full_tunnel(&routes);
 
-    // 6) 闁稿繈鍔戝В鈧梺顒佹尰濡炲倿姊藉鍕У闁规亽鍎辫ぐ?metric闁挎稑濂旀禍鎺楀箮閵忕姴绐楀娑欘焾椤撹崵鎹勯婊勬殸濞村吋锚閸樻稓鐥閳?
+    // 6) 全隧道时下调接口 metric。
+    // 这里使用 fail-closed：设置失败则直接回滚并退出。
     if interface.table != Some(RouteTable::Off) {
         if full_v4 {
             match set_interface_metric(adapter, AF_INET, TUNNEL_METRIC) {
@@ -183,7 +197,8 @@ pub async fn apply_network_config(
     let mut endpoint_v6 = 0usize;
     let mut bypass_v4 = 0usize;
     let mut bypass_v6 = 0usize;
-    // 7) 闁稿繈鍔戝В鈧梺顒佹尭濠р偓闁哄拋鍨粭鍛存晬鐏炶壈绀?Endpoint 闁汇垻鍠愰崹姘辩磼閺囷紕绠栭悹渚灣閺侀亶濡?
+
+    // 7) 全隧道时，为 endpoint 下发 bypass route。
     if interface.table != Some(RouteTable::Off) && (full_v4 || full_v6) {
         let endpoint_ips = resolve_endpoint_ips(peers).await?;
         for ip in endpoint_ips {
@@ -213,6 +228,7 @@ pub async fn apply_network_config(
         }
     }
 
+    // 8) 安全护栏：如果 endpoint 存在但 bypass 为 0，则拒绝继续。
     let missing_v4_bypass = full_v4 && endpoint_v4 > 0 && bypass_v4 == 0;
     let missing_v6_bypass = full_v6 && endpoint_v6 > 0 && bypass_v6 == 0;
     if missing_v4_bypass {
@@ -234,7 +250,7 @@ pub async fn apply_network_config(
         )));
     }
 
-    // 8) 闁稿繐鐗嗛崯鎾诲礂?Endpoint bypass 閻犱警鍨抽弫閬嶆晬鐏炶棄鏅欓柛?AllowedIPs 閻犱警鍨抽弫閬嶆晬瀹€鍕級闁稿繐绉堕悡顓㈠汲閸屾稓銈﹂梺鎻掔箰婵參骞愭担绋跨厒闂傚憞鍥﹀闁?
+    // 9) 先下发 bypass route，再下发 AllowedIPs 路由。
     if interface.table != Some(RouteTable::Off) {
         for entry in bypass_routes {
             if let Err(err) = add_route(&entry) {
@@ -267,7 +283,7 @@ pub async fn apply_network_config(
         }
     }
 
-    // 8.5) 闁稿繈鍔戝В鈧梺顒佹尫缁楀懏绋夊ú顏勫赋缂?DNS 闁哄牆绉存慨鐔煎闯閵婏箑娼戦柛鏃傚С鐎靛矂寮垫ウ璺ㄧ唴闁汇垺鍞荤槐婵嬫焼閸喖甯抽悶姘煎亞闁绱掗悢鎯板幀闁哄洦娼欓崣鎸庢媴閹惧湱鐔呴柣銏ｉ哺婵娀宕￠悩顔瑰亾?
+    // 10) 为隧道 DNS 服务器添加 host route，避免被系统更具体路由抢占。
     if interface.table != Some(RouteTable::Off) && !interface.dns_servers.is_empty() {
         for dns_server in &interface.dns_servers {
             let applies = (dns_server.is_ipv4() && full_v4) || (dns_server.is_ipv6() && full_v6);
@@ -291,7 +307,7 @@ pub async fn apply_network_config(
         }
     }
 
-    // 9) 闁告劖鐟ラ崣?DNS 閻犱礁澧介悿鍡涙晬鐏炲浜奸悹鎰╁劥椤绋夋ウ鍨瘈闁告稐绮欓弫濠勬嫚椤栨俺瀚欓柛銉у仦缁挳濡?
+    // 11) 应用 DNS。
     if !interface.dns_servers.is_empty() || !interface.dns_search.is_empty() {
         log_dns::apply_summary(interface.dns_servers.len(), interface.dns_search.len());
         match apply_dns(adapter, &interface.dns_servers, &interface.dns_search) {
@@ -304,6 +320,7 @@ pub async fn apply_network_config(
         }
     }
 
+    // 12) 全隧道 + DNS 场景下，启用 NRPT 与 DNS Guard。
     if !interface.dns_servers.is_empty()
         && interface.table != Some(RouteTable::Off)
         && (full_v4 || full_v6)
@@ -328,8 +345,10 @@ pub async fn apply_network_config(
     Ok(state)
 }
 
+/// 回滚 Windows 网络配置。
+///
+/// 顺序：bypass route -> 普通 route -> 地址 -> metric -> DNS/NRPT/guard。
 pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), NetworkError> {
-    // 闁搞儳鍋炵划瀛樸亜閸濆嫮纰嶉柨娑欒壘閸樻稓鎹勯婊勬殸闁靛棔绀侀幃妤呭捶閺夋寧绲婚柕鍡曠閸熲偓 metric/DNS闁挎稑鐭傛导鈺呭礂瀹ュ棛鏆欓柣锝嗙懃婵傛牠宕鍥厙缂備胶鍠撶紞澶岀磼濠у簱鍋?
     log_net::cleanup_windows(
         &state.tun_name,
         state.addresses.len(),
@@ -337,35 +356,30 @@ pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), Ne
         state.bypass_routes.len(),
     );
 
-    // 闁稿繐鐗嗛崹?bypass routes闁挎稑鐭傛导鈺呭礂瀹ュ懏鍊电紓渚囧弮缁垳鎷嬮妶鍫㈢唴闁汇垼椴哥粩濠氭偠閸℃顨涢柛婵嗙Т閸ゎ參宕ｉ敐鍐ｅ亾?
     for entry in state.bypass_routes.iter().rev() {
         if let Err(err) = delete_route(entry) {
             log_net::bypass_route_del_failed(&err);
         }
     }
 
-    // 闁告劕绉撮崹褰掑疾椤曗偓閳ь剚淇洪惌楣冩偨娓氬簱鍋?
     for entry in state.routes.iter().rev() {
         if let Err(err) = delete_route(entry) {
             log_net::route_del_failed(&err);
         }
     }
 
-    // 闁告帞濞€濞呭酣骞掗妷銉ョ稉闁革附婢樺鍐Υ?
     for address in &state.addresses {
         if let Err(err) = delete_unicast_address(state.adapter, address) {
             log_net::address_del_failed(&err);
         }
     }
 
-    // 闁诡厹鍨归ˇ鏌ュ箳閵夈儱缍?metric闁?
     for iface in state.iface_metrics.iter().rev() {
         if let Err(err) = restore_interface_metric(state.adapter, *iface) {
             log_net::interface_metric_restore_failed(&err);
         }
     }
 
-    // 闁搞儳鍋炵划?DNS 閻犱礁澧介悿鍡涘Υ?
     if let Some(dns) = state.dns {
         log_dns::revert_start();
         if let Err(err) = cleanup_dns(dns) {
@@ -388,8 +402,8 @@ pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), Ne
     Ok(())
 }
 
+/// 将 Windows 宽字符串指针转换为 Rust String。
 fn pwstr_to_string(ptr: PWSTR) -> String {
-    // 閻?Windows 閻庣妫勯悺褏绮敂鑳洬闁圭娲幏鈩冩姜椤掍礁搴婂☉?Rust String闁?
     if ptr.0.is_null() {
         return String::new();
     }
@@ -405,7 +419,7 @@ fn pwstr_to_string(ptr: PWSTR) -> String {
     }
 }
 
+/// 判断 Win32 错误是否属于“已存在”。
 fn is_already_exists(code: WIN32_ERROR) -> bool {
-    // Windows 閻庨潧鍘滈埀顒佺矊閸戯紕鈧稒锚濠€顏堝灳濠靛鏅╅悹鍥跺灡濠€浣瑰緞濮橆偊鍤嬮弶鈺傛煥濞叉牠宕愮粭琛″亾?
     code == ERROR_OBJECT_ALREADY_EXISTS || code == ERROR_ALREADY_EXISTS
 }

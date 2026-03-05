@@ -1,3 +1,11 @@
+//! Windows DNS 防泄露防火墙规则。
+//!
+//! 设计思路：
+//! - 仅在全隧道场景启用；
+//! - 读取“非隧道网卡”的 DNS 服务器地址；
+//! - 下发两条出站阻断规则（UDP/TCP 53），仅阻断到这些非隧道 DNS 的请求；
+//! - 不阻断隧道 DNS 服务器，避免误伤正常解析。
+
 use std::collections::BTreeSet;
 use std::net::IpAddr;
 use std::process::Command;
@@ -14,11 +22,16 @@ use super::sockaddr::ip_from_socket_address;
 use super::NetworkError;
 use crate::log::events::net as log_net;
 
+/// DNS Guard 的可回滚状态。
 #[derive(Clone)]
 pub(super) struct DnsGuardState {
+    /// 创建过的规则名，断开隧道时按此删除。
     rule_names: Vec<String>,
 }
 
+/// 应用 DNS Guard。
+///
+/// 返回 `Ok(None)` 表示当前场景无需下发规则（例如非全隧道或没有可阻断目标）。
 pub(super) fn apply_dns_guard(
     adapter: AdapterInfo,
     full_v4: bool,
@@ -44,12 +57,14 @@ pub(super) fn apply_dns_guard(
     let rule_base = format!("r-wg-dns-guard-if{}", adapter.if_index);
     let rule_names = vec![format!("{rule_base}-udp"), format!("{rule_base}-tcp")];
 
+    // 先清旧规则，避免重连后同名冲突。
     for name in &rule_names {
         delete_rule(name)?;
     }
 
     add_dns_block_rule(&rule_names[0], "UDP", &remote_ip_arg)?;
     if let Err(err) = add_dns_block_rule(&rule_names[1], "TCP", &remote_ip_arg) {
+        // 第二条失败时，回滚第一条，避免半成功状态。
         let _ = delete_rule(&rule_names[0]);
         return Err(err);
     }
@@ -59,6 +74,7 @@ pub(super) fn apply_dns_guard(
     Ok(Some(DnsGuardState { rule_names }))
 }
 
+/// 清理 DNS Guard 规则。
 pub(super) fn cleanup_dns_guard(state: DnsGuardState) -> Result<(), NetworkError> {
     let mut first_error: Option<NetworkError> = None;
     for name in state.rule_names {
@@ -75,6 +91,7 @@ pub(super) fn cleanup_dns_guard(state: DnsGuardState) -> Result<(), NetworkError
     }
 }
 
+/// 收集“非隧道网卡上的 DNS 服务器”并过滤出需要阻断的地址。
 fn collect_non_tunnel_dns_servers(
     adapter: AdapterInfo,
     full_v4: bool,
@@ -132,6 +149,7 @@ fn collect_non_tunnel_dns_servers(
     Ok(blocked_dns.into_iter().collect())
 }
 
+/// 判断某个 DNS 服务器地址是否应加入阻断集合。
 fn should_block_dns_server(ip: IpAddr, full_v4: bool, full_v6: bool) -> bool {
     match ip {
         IpAddr::V4(addr) => {
@@ -147,6 +165,7 @@ fn should_block_dns_server(ip: IpAddr, full_v4: bool, full_v6: bool) -> bool {
     }
 }
 
+/// 通过 netsh 增加一条出站 DNS 阻断规则。
 fn add_dns_block_rule(name: &str, protocol: &str, remote_ips: &str) -> Result<(), NetworkError> {
     let args = vec![
         "advfirewall".to_string(),
@@ -177,6 +196,7 @@ fn add_dns_block_rule(name: &str, protocol: &str, remote_ips: &str) -> Result<()
     )))
 }
 
+/// 删除指定规则名（不存在也不报错）。
 fn delete_rule(name: &str) -> Result<(), NetworkError> {
     let args = [
         "advfirewall",
@@ -193,6 +213,7 @@ fn delete_rule(name: &str) -> Result<(), NetworkError> {
         .map_err(NetworkError::Io)
 }
 
+/// 从 netsh 输出中提取可读错误信息。
 fn netsh_detail(stdout: &[u8], stderr: &[u8]) -> String {
     let stderr_text = String::from_utf8_lossy(stderr).trim().to_string();
     if !stderr_text.is_empty() {

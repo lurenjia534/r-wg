@@ -1,9 +1,10 @@
-//! 路由收集、创建与删除。
+//! Windows 路由收集、解析与下发。
 //!
-//! 主要职责：
-//! - 从 peers 的 AllowedIPs 汇总路由；
-//! - 判断全隧道与默认路由；
-//! - 解析 Endpoint 以便生成绕过路由（bypass route）。
+//! 职责：
+//! - 汇总 Peer 的 AllowedIPs；
+//! - 判断是否为全隧道（0.0.0.0/0 或 ::/0）；
+//! - 解析 Endpoint 主机名并生成 bypass route；
+//! - 统一封装路由增删所需的 Win32 结构。
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -22,22 +23,23 @@ use crate::backend::wg::config::{AllowedIp, PeerConfig};
 use super::sockaddr::{ip_from_sockaddr_inet, sockaddr_inet_from_ip};
 use super::{is_already_exists, NetworkError, TUNNEL_METRIC};
 
+/// 单条路由定义（用于 add/delete）。
 #[derive(Clone)]
 pub(super) struct RouteEntry {
-    /// 目标地址。
+    /// 目标前缀地址。
     pub(super) dest: IpAddr,
     /// 前缀长度。
     pub(super) prefix: u8,
-    /// 下一跳（None 表示 on-link）。
+    /// 下一跳（`None` 表示 on-link）。
     pub(super) next_hop: Option<IpAddr>,
-    /// 绑定的接口索引。
+    /// 绑定接口索引。
     pub(super) if_index: u32,
-    /// 绑定的接口 LUID。
+    /// 绑定接口 LUID。
     pub(super) luid: NET_LUID_LH,
 }
 
+/// 添加路由；如果已存在，按成功处理。
 pub(super) fn add_route(entry: &RouteEntry) -> Result<(), NetworkError> {
-    // CreateIpForwardEntry2：添加路由，允许“已存在”作为成功。
     let row = build_route_row(entry);
     let result = unsafe { CreateIpForwardEntry2(&row) };
     if result == NO_ERROR || is_already_exists(result) {
@@ -50,8 +52,8 @@ pub(super) fn add_route(entry: &RouteEntry) -> Result<(), NetworkError> {
     }
 }
 
+/// 删除路由；如果不存在，按成功处理。
 pub(super) fn delete_route(entry: &RouteEntry) -> Result<(), NetworkError> {
-    // DeleteIpForwardEntry2：删除路由，不存在视为成功。
     let row = build_route_row(entry);
     let result = unsafe { DeleteIpForwardEntry2(&row) };
     if result == NO_ERROR || result == ERROR_NOT_FOUND {
@@ -64,8 +66,8 @@ pub(super) fn delete_route(entry: &RouteEntry) -> Result<(), NetworkError> {
     }
 }
 
+/// 汇总并去重所有 Peer 的 AllowedIPs。
 pub(super) fn collect_allowed_routes(peers: &[PeerConfig]) -> Vec<AllowedIp> {
-    // 去重合并所有 Peer 的 AllowedIPs。
     let mut seen = HashSet::new();
     let mut routes = Vec::new();
     for peer in peers {
@@ -81,8 +83,8 @@ pub(super) fn collect_allowed_routes(peers: &[PeerConfig]) -> Vec<AllowedIp> {
     routes
 }
 
+/// 判断是否包含 IPv4 / IPv6 全隧道路由。
 pub(super) fn detect_full_tunnel(routes: &[AllowedIp]) -> (bool, bool) {
-    // 判断是否包含 0.0.0.0/0 或 ::/0。
     let mut v4 = false;
     let mut v6 = false;
     for route in routes {
@@ -95,10 +97,10 @@ pub(super) fn detect_full_tunnel(routes: &[AllowedIp]) -> (bool, bool) {
     (v4, v6)
 }
 
+/// 解析所有 Endpoint 主机名，返回去重后的 IP 列表。
 pub(super) async fn resolve_endpoint_ips(
     peers: &[PeerConfig],
 ) -> Result<Vec<IpAddr>, NetworkError> {
-    // 解析 Endpoint 主机名为 IP，用于生成绕过路由。
     let mut seen = HashSet::new();
     for peer in peers {
         let Some(endpoint) = &peer.endpoint else {
@@ -118,8 +120,8 @@ pub(super) async fn resolve_endpoint_ips(
     Ok(seen.into_iter().collect())
 }
 
+/// 查询系统当前到指定 IP 的最佳路径（用于生成 bypass route）。
 pub(super) fn best_route_to(ip: IpAddr) -> Result<RouteEntry, NetworkError> {
-    // 通过 GetBestRoute2 获取系统最优路由，为 bypass route 提供下一跳。
     let dest = sockaddr_inet_from_ip(ip);
     let mut row: MIB_IPFORWARD_ROW2 = unsafe { std::mem::zeroed() };
     let mut best_source: SOCKADDR_INET = unsafe { std::mem::zeroed() };
@@ -141,8 +143,8 @@ pub(super) fn best_route_to(ip: IpAddr) -> Result<RouteEntry, NetworkError> {
     })
 }
 
+/// 构造 Win32 路由结构。
 fn build_route_row(entry: &RouteEntry) -> MIB_IPFORWARD_ROW2 {
-    // 构造路由结构体，包含目标前缀、下一跳与 metric。
     let mut row: MIB_IPFORWARD_ROW2 = unsafe { std::mem::zeroed() };
     unsafe {
         InitializeIpForwardEntry(&mut row);
