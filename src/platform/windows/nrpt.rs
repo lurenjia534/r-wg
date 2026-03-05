@@ -4,11 +4,16 @@
 //! 避免仅靠接口 DNS 设置时出现的跨接口回退与超时。
 
 use std::net::IpAddr;
+use std::os::windows::process::CommandExt;
 use std::process::Command;
 
 use super::adapter::AdapterInfo;
 use super::NetworkError;
 use crate::log::events::net as log_net;
+
+/// Windows CreateProcess 标志：让控制台子进程在后台运行而不弹出黑窗。
+/// 这里用于调用 `powershell` 管理 NRPT 规则，避免用户在开关隧道时看到闪烁窗口。
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// NRPT 规则回滚状态。
 #[derive(Clone)]
@@ -117,6 +122,8 @@ fn remove_rules_by_tag(tag: &str) -> Result<(), NetworkError> {
 /// 执行 PowerShell 命令并返回 stdout。
 fn run_powershell(script: &str) -> Result<String, NetworkError> {
     let output = Command::new("powershell")
+        // 避免每次执行 NRPT 命令都创建可见控制台窗口。
+        .creation_flags(CREATE_NO_WINDOW)
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .output()
         .map_err(NetworkError::Io)?;

@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 use std::net::IpAddr;
+use std::os::windows::process::CommandExt;
 use std::process::Command;
 
 use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, NO_ERROR, WIN32_ERROR};
@@ -21,6 +22,10 @@ use super::adapter::AdapterInfo;
 use super::sockaddr::ip_from_socket_address;
 use super::NetworkError;
 use crate::log::events::net as log_net;
+
+/// Windows CreateProcess 标志：让控制台子进程在后台运行而不弹出黑窗。
+/// DNS Guard 通过 `netsh` 下发规则时会频繁调用外部命令，这里隐藏窗口避免干扰 UI。
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// DNS Guard 的可回滚状态。
 #[derive(Clone)]
@@ -182,6 +187,8 @@ fn add_dns_block_rule(name: &str, protocol: &str, remote_ips: &str) -> Result<()
     ];
 
     let output = Command::new("netsh")
+        // 开关隧道时会触发规则增删；隐藏 netsh 黑窗可避免前台闪烁。
+        .creation_flags(CREATE_NO_WINDOW)
         .args(&args)
         .output()
         .map_err(NetworkError::Io)?;
@@ -207,6 +214,8 @@ fn delete_rule(name: &str) -> Result<(), NetworkError> {
     ];
 
     Command::new("netsh")
+        // 删除规则同样走 netsh，保持无窗口行为一致。
+        .creation_flags(CREATE_NO_WINDOW)
         .args(args)
         .output()
         .map(|_| ())
