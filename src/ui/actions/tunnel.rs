@@ -6,6 +6,7 @@ use r_wg::dns::DnsSelection;
 
 use super::super::permissions::start_permission_message;
 use super::super::state::{PendingStart, TunnelConfig, WgApp};
+use super::super::tray;
 
 const RESTART_COOLDOWN: Duration = Duration::from_millis(300);
 
@@ -57,6 +58,8 @@ impl WgApp {
                             this.running_id = None;
                             this.started_at = None;
                             this.set_status("Stopped");
+                            // 停止成功后发送系统通知，让最小化到托盘时也能感知状态变更。
+                            tray::notify_system("r-wg", "Tunnel disconnected", false);
                             this.clear_stats();
                             this.last_stop_at = Some(Instant::now());
 
@@ -76,7 +79,10 @@ impl WgApp {
                         Err(err) => {
                             // 停止失败则清空 pending，避免误触发自动启动。
                             this.pending_start = None;
-                            this.set_error(format!("Stop failed: {err}"));
+                            let message = format!("Stop failed: {err}");
+                            this.set_error(message.clone());
+                            // 停止失败属于用户需感知事件，使用错误通知提高可见性。
+                            tray::notify_system("r-wg", &message, true);
                         }
                     }
                     cx.notify();
@@ -249,13 +255,22 @@ impl WgApp {
                         this.iface_rx_rate_bps = 0.0;
                         this.iface_tx_rate_bps = 0.0;
                         this.set_status(format!("Running {}", selected.name));
+                        // 启动成功后通知当前已连接的隧道名称，便于多配置场景快速确认。
+                        tray::notify_system(
+                            "r-wg",
+                            &format!("Tunnel connected: {}", selected.name),
+                            false,
+                        );
                         this.stats_note = "Fetching peer stats...".into();
                         // 启动成功后开始轮询统计。
                         this.start_stats_polling(cx);
                     }
                     Err(err) => {
                         // 启动失败：保持停止态并提示错误。
-                        this.set_error(format!("Start failed: {err}"));
+                        let message = format!("Start failed: {err}");
+                        this.set_error(message.clone());
+                        // 启动失败直接推送错误原因，避免用户必须切回主窗口查看。
+                        tray::notify_system("r-wg", &message, true);
                     }
                 }
                 cx.notify();

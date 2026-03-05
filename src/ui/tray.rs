@@ -102,6 +102,25 @@ pub fn show_window(window: &mut Window) {
     }
 }
 
+/// 发送一条系统通知（隧道开/关成功与失败都会调用这个入口）。
+///
+/// 设计说明：
+/// - 对上层统一暴露一个跨平台函数，调用者不需要关心平台差异；
+/// - Windows 使用托盘图标通道发出系统通知；
+/// - 非 Windows 先保持 no-op，避免引入额外依赖和行为差异。
+pub fn notify_system(title: &str, message: &str, is_error: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        platform::show_notification(title, message, is_error);
+        return;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (title, message, is_error);
+    }
+}
+
 /// 托盘命令消费循环。
 ///
 /// 数据流：
@@ -238,7 +257,8 @@ mod platform {
         Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
         System::LibraryLoader::GetModuleHandleW,
         UI::Shell::{
-            Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+            Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_ERROR, NIIF_INFO,
+            NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
         },
         UI::WindowsAndMessaging::{
             AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
@@ -307,6 +327,33 @@ mod platform {
             unsafe {
                 let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
+        }
+    }
+
+    /// 通过托盘图标发送一条系统通知。
+    ///
+    /// 实现要点：
+    /// - 复用已注册的托盘图标（`TRAY_UID`），避免再创建新窗口或新进程；
+    /// - 使用 `NIM_MODIFY + NIF_INFO` 让系统展示气泡/通知中心消息；
+    /// - `is_error=true` 时使用错误图标，便于用户区分失败事件。
+    pub(super) fn show_notification(title: &str, message: &str, is_error: bool) {
+        let hwnd = TRAY_HWND.load(Ordering::Acquire);
+        if hwnd == 0 {
+            // 托盘尚未初始化（或已退出）时直接跳过，不影响主流程。
+            return;
+        }
+
+        unsafe {
+            let mut icon_data: NOTIFYICONDATAW = mem::zeroed();
+            icon_data.cbSize = mem::size_of::<NOTIFYICONDATAW>() as u32;
+            icon_data.hWnd = HWND(hwnd as *mut _);
+            icon_data.uID = TRAY_UID;
+            icon_data.uFlags = NIF_INFO;
+            icon_data.dwInfoFlags = if is_error { NIIF_ERROR } else { NIIF_INFO };
+            set_text_field(&mut icon_data.szInfoTitle, title);
+            set_text_field(&mut icon_data.szInfo, message);
+
+            let _ = Shell_NotifyIconW(NIM_MODIFY, &icon_data);
         }
     }
 
@@ -528,6 +575,17 @@ mod platform {
         let count = wide.len().saturating_sub(1).min(max);
         icon.szTip[..count].copy_from_slice(&wide[..count]);
         icon.szTip[count] = 0;
+    }
+
+    /// 写入定长 UTF-16 字段（自动 NUL 结尾并在超长时截断）。
+    ///
+    /// `NOTIFYICONDATAW` 的标题/正文是固定长度数组，必须手动处理截断和终止符。
+    fn set_text_field(field: &mut [u16], text: &str) {
+        let wide = to_wide(text);
+        let max = field.len().saturating_sub(1);
+        let count = wide.len().saturating_sub(1).min(max);
+        field[..count].copy_from_slice(&wide[..count]);
+        field[count] = 0;
     }
 
     /// UTF-8 字符串转 UTF-16（Win32 API 入参格式）。
