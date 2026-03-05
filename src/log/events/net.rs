@@ -1,4 +1,4 @@
-// 网络配置事件日志（scope = net）。
+// Network config event logs (scope = net).
 use std::fmt;
 use std::net::IpAddr;
 
@@ -82,6 +82,16 @@ pub fn route_add_windows(
     );
 }
 
+pub fn dns_route_add_windows(dest: IpAddr, prefix: u8, if_index: u32, metric: u32) {
+    log_info!(
+        "net",
+        "dns route add: {}/{} if_index={} metric={}",
+        dest,
+        prefix,
+        if_index,
+        metric
+    );
+}
 pub fn bypass_route_add(dest: IpAddr, next_hop: Option<IpAddr>, if_index: u32) {
     log_info!(
         "net",
@@ -99,17 +109,41 @@ pub fn bypass_route_failed(ip: IpAddr, err: &impl fmt::Display) {
 pub fn skip_default_route_v4() {
     log_info!(
         "net",
-        "skip IPv4 default route: no bypass route for endpoint"
+        "full-tunnel guard: missing IPv4 endpoint bypass route; aborting apply to avoid leak"
     );
 }
 
 pub fn skip_default_route_v6() {
     log_info!(
         "net",
-        "skip IPv6 default route: no bypass route for endpoint"
+        "full-tunnel guard: missing IPv6 endpoint bypass route; aborting apply to avoid leak"
     );
 }
 
+pub fn dns_guard_apply(blocked_server_count: usize) {
+    log_info!(
+        "net",
+        "dns guard applied: blocked non-tunnel dns servers={} for outbound dns (53)",
+        blocked_server_count
+    );
+}
+
+pub fn dns_guard_cleanup_failed(err: &impl fmt::Display) {
+    log_info!("net", "dns guard cleanup failed: {err}");
+}
+
+pub fn nrpt_apply(dns_server_count: usize, rule_count: usize) {
+    log_info!(
+        "net",
+        "nrpt applied: dns_servers={} rules={}",
+        dns_server_count,
+        rule_count
+    );
+}
+
+pub fn nrpt_cleanup_failed(err: &impl fmt::Display) {
+    log_info!("net", "nrpt cleanup failed: {err}");
+}
 pub fn bypass_route_add_failed(dest: IpAddr, err: &impl fmt::Display) {
     log_info!("net", "bypass route add failed for {}: {err}", dest);
 }

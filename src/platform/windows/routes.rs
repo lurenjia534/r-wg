@@ -95,11 +95,6 @@ pub(super) fn detect_full_tunnel(routes: &[AllowedIp]) -> (bool, bool) {
     (v4, v6)
 }
 
-pub(super) fn is_default_route(route: &AllowedIp) -> bool {
-    // 是否为默认路由（全 0 目标 + /0）。
-    route.addr.is_unspecified() && route.cidr == 0
-}
-
 pub(super) async fn resolve_endpoint_ips(
     peers: &[PeerConfig],
 ) -> Result<Vec<IpAddr>, NetworkError> {

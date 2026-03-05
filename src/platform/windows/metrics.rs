@@ -6,7 +6,7 @@ use windows::Win32::Foundation::NO_ERROR;
 use windows::Win32::NetworkManagement::IpHelper::{
     GetIpInterfaceEntry, InitializeIpInterfaceEntry, SetIpInterfaceEntry, MIB_IPINTERFACE_ROW,
 };
-use windows::Win32::Networking::WinSock::ADDRESS_FAMILY;
+use windows::Win32::Networking::WinSock::{ADDRESS_FAMILY, AF_INET, AF_INET6};
 
 use super::adapter::AdapterInfo;
 use super::NetworkError;
@@ -53,6 +53,8 @@ pub(super) fn set_interface_metric(
     row.UseAutomaticMetric = false;
     row.Metric = metric;
 
+    sanitize_site_prefix_length(family, &mut row);
+
     let result = unsafe { SetIpInterfaceEntry(&mut row) };
     if result != NO_ERROR {
         return Err(NetworkError::Win32 {
@@ -88,6 +90,8 @@ pub(super) fn restore_interface_metric(
     row.UseAutomaticMetric = state.use_auto;
     row.Metric = state.metric;
 
+    sanitize_site_prefix_length(state.family, &mut row);
+
     let result = unsafe { SetIpInterfaceEntry(&mut row) };
     if result != NO_ERROR {
         return Err(NetworkError::Win32 {
@@ -97,4 +101,13 @@ pub(super) fn restore_interface_metric(
     }
 
     Ok(())
+}
+
+fn sanitize_site_prefix_length(family: ADDRESS_FAMILY, row: &mut MIB_IPINTERFACE_ROW) {
+    // SetIpInterfaceEntry 在 IPv4 下要求 SitePrefixLength 为 0，否则可能返回 ERROR_INVALID_PARAMETER(87)。
+    if family == AF_INET {
+        row.SitePrefixLength = 0;
+    } else if family == AF_INET6 && row.SitePrefixLength > 128 {
+        row.SitePrefixLength = 128;
+    }
 }
