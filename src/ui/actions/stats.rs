@@ -71,7 +71,7 @@ impl WgApp {
                                 persist_due = this.apply_stats(stats);
                             }
                             Err(err) => {
-                                this.stats.stats_note = format!("Stats failed: {err}").into();
+                                this.stats.set_stats_error(format!("Stats failed: {err}"));
                             }
                         }
                         if persist_due {
@@ -146,7 +146,7 @@ impl WgApp {
 
         self.stats.peer_stats = stats.peers;
         if self.stats.peer_stats.is_empty() {
-            self.stats.stats_note = "No peers reported".into();
+            self.stats.set_stats_error("No peers reported");
         } else {
             if rx_delta + tx_delta < 1024 {
                 self.stats.stats_idle_samples = self.stats.stats_idle_samples.saturating_add(1);
@@ -154,9 +154,10 @@ impl WgApp {
                 self.stats.stats_idle_samples = 0;
             }
             if self.stats.stats_idle_samples >= 3 {
-                self.stats.stats_note = "No tunnel traffic detected".into();
+                self.stats.set_stats_error("No tunnel traffic detected");
             } else {
-                self.stats.stats_note = format!("Peers: {}", self.stats.peer_stats.len()).into();
+                self.stats
+                    .set_stats_error(format!("Peers: {}", self.stats.peer_stats.len()));
             }
         }
 
@@ -176,37 +177,6 @@ impl WgApp {
         );
 
         persist_due
-    }
-
-    /// 清空统计状态。
-    ///
-    /// 说明：停止隧道时调用，避免残留旧会话的数据与提示。
-    pub(crate) fn clear_stats(&mut self) {
-        self.stats.peer_stats.clear();
-        self.stats.stats_note = "Peer stats unavailable".into();
-        self.stats.last_stats_at = None;
-        self.stats.last_rx_bytes = 0;
-        self.stats.last_tx_bytes = 0;
-        self.stats.rx_rate_bps = 0.0;
-        self.stats.tx_rate_bps = 0.0;
-        self.reset_rate_history();
-        self.stats.stats_idle_samples = 0;
-        self.stats.last_iface_rx_bytes = 0;
-        self.stats.last_iface_tx_bytes = 0;
-        self.stats.iface_rx_rate_bps = 0.0;
-        self.stats.iface_tx_rate_bps = 0.0;
-    }
-
-    /// 重置速率历史采样。
-    ///
-    /// 说明：将历史清空并补齐固定长度，确保 sparkline 视觉稳定。
-    pub(crate) fn reset_rate_history(&mut self) {
-        self.stats.rx_rate_history.clear();
-        self.stats.tx_rate_history.clear();
-        for _ in 0..SPARKLINE_SAMPLES {
-            self.stats.rx_rate_history.push_back(0.0);
-            self.stats.tx_rate_history.push_back(0.0);
-        }
     }
 
     fn record_traffic(&mut self, rx_bytes: u64, tx_bytes: u64) -> bool {

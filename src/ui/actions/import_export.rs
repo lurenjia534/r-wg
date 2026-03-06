@@ -165,7 +165,7 @@ impl WgApp {
             return;
         }
 
-        let storage = match self.ensure_storage() {
+        let storage = match self.configs.ensure_storage() {
             Ok(storage) => storage,
             Err(err) => {
                 self.set_error(err);
@@ -176,7 +176,7 @@ impl WgApp {
 
         let mut jobs = Vec::with_capacity(paths.len());
         for path in paths {
-            let id = self.alloc_config_id();
+            let id = self.configs.alloc_config_id();
             let storage_path = persistence::config_path(&storage, id);
             jobs.push(ImportJob {
                 id,

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui::{Entity, SharedString};
 use gpui_component::theme::ThemeMode;
@@ -9,7 +9,7 @@ use gpui_component::{input::InputState, IconName};
 use r_wg::backend::wg::{config, Engine, PeerStats};
 use r_wg::dns::{DnsMode, DnsPreset};
 
-use super::persistence::StoragePaths;
+use super::persistence::{self, StoragePaths};
 
 /// 速度曲线采样点数量（固定窗口）。
 pub(crate) const SPARKLINE_SAMPLES: usize = 24;
@@ -21,6 +21,8 @@ pub(crate) const TRAFFIC_HISTORY_DAYS: usize = 30;
 pub(crate) const TRAFFIC_ROLLING_DAYS: usize = 60;
 /// Traffic Summary 的滚动小时数（过去 24 小时，预留 48 小时）。
 pub(crate) const TRAFFIC_HOURLY_HISTORY: usize = 48;
+/// stop -> start 的最短冷却时间。
+pub(crate) const RESTART_COOLDOWN: Duration = Duration::from_millis(300);
 
 /// 配置来源：文件或粘贴文本。
 #[derive(Clone)]
@@ -200,6 +202,25 @@ impl ConfigsState {
             next_config_id: 1,
         }
     }
+
+    pub(crate) fn ensure_storage(&mut self) -> Result<StoragePaths, String> {
+        if let Some(storage) = &self.storage {
+            return Ok(storage.clone());
+        }
+        let storage = persistence::ensure_storage_dirs()?;
+        self.storage = Some(storage.clone());
+        Ok(storage)
+    }
+
+    pub(crate) fn alloc_config_id(&mut self) -> u64 {
+        let id = self.next_config_id.max(1);
+        self.next_config_id = id.saturating_add(1);
+        id
+    }
+
+    pub(crate) fn find_by_id(&self, config_id: u64) -> Option<TunnelConfig> {
+        self.iter().find(|config| config.id == config_id).cloned()
+    }
 }
 
 impl Deref for ConfigsState {
@@ -286,6 +307,40 @@ impl SelectionState {
             proxy_selected_ids: HashSet::new(),
         }
     }
+
+    pub(crate) fn begin_persistence_load(&mut self) -> bool {
+        if self.persistence_loaded {
+            return false;
+        }
+        self.persistence_loaded = true;
+        true
+    }
+
+    pub(crate) fn build_pending_start(
+        &self,
+        configs: &ConfigsState,
+        runtime: &RuntimeState,
+    ) -> Option<PendingStart> {
+        if let Some(idx) = self.selected {
+            return configs.get(idx).map(|config| PendingStart {
+                config_id: config.id,
+            });
+        }
+        runtime.running_id.map(|id| PendingStart { config_id: id })
+    }
+
+    pub(crate) fn restore_after_persist(
+        &mut self,
+        selected_id: Option<u64>,
+        configs: &ConfigsState,
+    ) {
+        self.selected = selected_id.and_then(|id| configs.iter().position(|cfg| cfg.id == id));
+        self.proxy_filter_total = 0;
+        self.parse_cache = None;
+        self.loaded_config = None;
+        self.loading_config = None;
+        self.loading_config_path = None;
+    }
 }
 
 pub(crate) struct RuntimeState {
@@ -311,6 +366,55 @@ impl RuntimeState {
             running_name: None,
             running_id: None,
         }
+    }
+
+    pub(crate) fn restart_delay(&self) -> Option<Duration> {
+        let last_stop = self.last_stop_at?;
+        let elapsed = last_stop.elapsed();
+        if elapsed >= RESTART_COOLDOWN {
+            None
+        } else {
+            Some(RESTART_COOLDOWN - elapsed)
+        }
+    }
+
+    pub(crate) fn queue_pending_start(&mut self, pending: Option<PendingStart>) -> bool {
+        let Some(pending) = pending else {
+            return false;
+        };
+        self.pending_start = Some(pending);
+        true
+    }
+
+    pub(crate) fn begin_stop(&mut self) {
+        self.busy = true;
+    }
+
+    pub(crate) fn finish_stop_success(&mut self) {
+        self.busy = false;
+        self.running = false;
+        self.running_name = None;
+        self.running_id = None;
+        self.last_stop_at = Some(Instant::now());
+    }
+
+    pub(crate) fn finish_stop_failure(&mut self) {
+        self.busy = false;
+        self.pending_start = None;
+    }
+
+    pub(crate) fn begin_start(&mut self) {
+        self.busy = true;
+    }
+
+    pub(crate) fn finish_start_attempt(&mut self) {
+        self.busy = false;
+    }
+
+    pub(crate) fn mark_started(&mut self, selected: &TunnelConfig) {
+        self.running = true;
+        self.running_name = Some(selected.name.clone());
+        self.running_id = Some(selected.id);
     }
 }
 
@@ -372,6 +476,48 @@ impl StatsState {
             traffic_last_persist_at: None,
         }
     }
+
+    pub(crate) fn reset_rate_history(&mut self) {
+        self.rx_rate_history = init_rate_history();
+        self.tx_rate_history = init_rate_history();
+    }
+
+    pub(crate) fn clear_runtime_metrics(&mut self) {
+        self.peer_stats.clear();
+        self.stats_note = "Peer stats unavailable".into();
+        self.started_at = None;
+        self.last_stats_at = None;
+        self.last_rx_bytes = 0;
+        self.last_tx_bytes = 0;
+        self.rx_rate_bps = 0.0;
+        self.tx_rate_bps = 0.0;
+        self.reset_rate_history();
+        self.stats_idle_samples = 0;
+        self.last_iface_rx_bytes = 0;
+        self.last_iface_tx_bytes = 0;
+        self.iface_rx_rate_bps = 0.0;
+        self.iface_tx_rate_bps = 0.0;
+    }
+
+    pub(crate) fn reset_for_start(&mut self) {
+        self.started_at = Some(Instant::now());
+        self.last_stats_at = None;
+        self.last_rx_bytes = 0;
+        self.last_tx_bytes = 0;
+        self.rx_rate_bps = 0.0;
+        self.tx_rate_bps = 0.0;
+        self.reset_rate_history();
+        self.stats_idle_samples = 0;
+        self.last_iface_rx_bytes = 0;
+        self.last_iface_tx_bytes = 0;
+        self.iface_rx_rate_bps = 0.0;
+        self.iface_tx_rate_bps = 0.0;
+        self.stats_note = "Fetching peer stats...".into();
+    }
+
+    pub(crate) fn set_stats_error(&mut self, message: impl Into<SharedString>) {
+        self.stats_note = message.into();
+    }
 }
 
 pub(crate) struct UiPrefsState {
@@ -419,6 +565,16 @@ impl UiState {
             status: "Ready".into(),
             last_error: None,
         }
+    }
+
+    pub(crate) fn set_status(&mut self, message: impl Into<SharedString>) {
+        self.status = message.into();
+    }
+
+    pub(crate) fn set_error(&mut self, message: impl Into<SharedString>) {
+        let message = message.into();
+        self.status = message.clone();
+        self.last_error = Some(message);
     }
 }
 

@@ -348,7 +348,7 @@ impl WgApp {
             name.to_string()
         };
 
-        let storage = match self.ensure_storage() {
+        let storage = match self.configs.ensure_storage() {
             Ok(storage) => storage,
             Err(err) => {
                 self.set_error(err);
@@ -356,7 +356,7 @@ impl WgApp {
                 return;
             }
         };
-        let id = self.alloc_config_id();
+        let id = self.configs.alloc_config_id();
         let storage_path = persistence::config_path(&storage, id);
         let name_lower = name.to_lowercase();
         let text_for_write = text.to_string();
@@ -451,7 +451,7 @@ impl WgApp {
         }
 
         let name = name.to_string();
-        let storage = match self.ensure_storage() {
+        let storage = match self.configs.ensure_storage() {
             Ok(storage) => storage,
             Err(err) => {
                 self.set_error(err);
@@ -467,7 +467,7 @@ impl WgApp {
         let (id, storage_path, source) = match existing {
             Some(cfg) => (cfg.id, cfg.storage_path, cfg.source),
             None => {
-                let id = self.alloc_config_id();
+                let id = self.configs.alloc_config_id();
                 let storage_path = persistence::config_path(&storage, id);
                 (id, storage_path, ConfigSource::Paste)
             }

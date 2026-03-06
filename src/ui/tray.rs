@@ -209,12 +209,8 @@ async fn request_quit(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut gp
     let _ = view.update(cx, |this, cx| {
         if should_quit {
             if was_running {
-                this.runtime.busy = false;
-                this.runtime.running = false;
-                this.runtime.running_name = None;
-                this.runtime.running_id = None;
-                this.stats.started_at = None;
-                this.clear_stats();
+                this.runtime.finish_stop_success();
+                this.stats.clear_runtime_metrics();
                 this.set_status("Stopped");
             }
         } else if let Err(err) = result {

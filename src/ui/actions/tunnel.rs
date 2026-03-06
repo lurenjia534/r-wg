@@ -1,14 +1,12 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::{AppContext, Context, SharedString, Window};
 use r_wg::backend::wg::StartRequest;
 use r_wg::dns::DnsSelection;
 
 use super::super::permissions::start_permission_message;
-use super::super::state::{PendingStart, TunnelConfig, WgApp};
+use super::super::state::{TunnelConfig, WgApp};
 use super::super::tray;
-
-const RESTART_COOLDOWN: Duration = Duration::from_millis(300);
 
 impl WgApp {
     /// 启动或停止隧道。
@@ -27,8 +25,10 @@ impl WgApp {
             if self.runtime.running {
                 // stop 过程中再次点击 start：记录“待启动请求”，
                 // 等 stop 完成后自动执行，避免用户需要再次点击。
-                if let Some(pending) = self.build_pending_start() {
-                    self.runtime.pending_start = Some(pending);
+                if self.runtime.queue_pending_start(
+                    self.selection
+                        .build_pending_start(&self.configs, &self.runtime),
+                ) {
                     self.set_status("Stopping... (queued start)");
                     cx.notify();
                 }
@@ -39,7 +39,7 @@ impl WgApp {
         // 根据运行状态决定 start/stop。
         if self.runtime.running {
             // 已运行：进入停止流程，并标记 busy，避免重复触发。
-            self.runtime.busy = true;
+            self.runtime.begin_stop();
             self.set_status("Stopping...");
             cx.notify();
 
@@ -49,26 +49,21 @@ impl WgApp {
                 let stop_task = cx.background_spawn(async move { engine.stop() });
                 let result = stop_task.await;
                 view.update(cx, |this, cx| {
-                    this.runtime.busy = false;
                     match result {
                         Ok(()) => {
-                            this.runtime.running = false;
-                            this.runtime.running_name = None;
-                            this.runtime.running_id = None;
-                            this.stats.started_at = None;
+                            this.runtime.finish_stop_success();
                             this.set_status("Stopped");
                             // 停止成功后发送系统通知，让最小化到托盘时也能感知状态变更。
                             tray::notify_system("r-wg", "Tunnel disconnected", false);
-                            this.clear_stats();
-                            this.runtime.last_stop_at = Some(Instant::now());
+                            this.stats.clear_runtime_metrics();
 
                             // 如果 stop 期间有人点击 start，则现在补发启动。
                             if let Some(pending) = this.runtime.pending_start.take() {
-                                if let Some(selected) = this.find_config_by_id(pending.config_id) {
+                                if let Some(selected) = this.configs.find_by_id(pending.config_id) {
                                     let cached_text =
                                         this.cached_config_text(&selected.storage_path);
                                     let initial_text = selected.text.clone().or(cached_text);
-                                    let delay = this.restart_delay();
+                                    let delay = this.runtime.restart_delay();
                                     this.start_with_config(selected, initial_text, delay, cx);
                                 } else {
                                     this.set_error("Pending start config not found".to_string());
@@ -77,7 +72,7 @@ impl WgApp {
                         }
                         Err(err) => {
                             // 停止失败则清空 pending，避免误触发自动启动。
-                            this.runtime.pending_start = None;
+                            this.runtime.finish_stop_failure();
                             let message = format!("Stop failed: {err}");
                             this.set_error(message.clone());
                             // 停止失败属于用户需感知事件，使用错误通知提高可见性。
@@ -105,7 +100,7 @@ impl WgApp {
         let initial_text = selected.text.clone().or(cached_text);
 
         // stop 后的冷却时间：避免“刚停就起”的抖动。
-        let delay = self.restart_delay();
+        let delay = self.runtime.restart_delay();
         self.start_with_config(selected, initial_text, delay, cx);
     }
 
@@ -123,43 +118,6 @@ impl WgApp {
             return;
         }
         self.handle_start_stop_core(cx);
-    }
-
-    /// 计算重启冷却时间。
-    ///
-    /// - 最近刚 stop：返回剩余等待时长；
-    /// - 否则返回 None（立即启动）。
-    fn restart_delay(&self) -> Option<Duration> {
-        let last_stop = self.runtime.last_stop_at?;
-        let elapsed = last_stop.elapsed();
-        if elapsed >= RESTART_COOLDOWN {
-            None
-        } else {
-            Some(RESTART_COOLDOWN - elapsed)
-        }
-    }
-
-    /// 构造待启动请求。
-    ///
-    /// - 优先当前选中的配置；
-    /// - 没有选中时回退到当前运行的配置。
-    fn build_pending_start(&self) -> Option<PendingStart> {
-        if let Some(idx) = self.selection.selected {
-            return Some(PendingStart {
-                config_id: self.configs[idx].id,
-            });
-        }
-        self.runtime
-            .running_id
-            .map(|id| PendingStart { config_id: id })
-    }
-
-    /// 根据配置 ID 查找配置（用于 stop 完成后的自动启动）。
-    fn find_config_by_id(&self, config_id: u64) -> Option<TunnelConfig> {
-        self.configs
-            .iter()
-            .find(|config| config.id == config_id)
-            .cloned()
     }
 
     /// 执行启动流程（可选冷却延迟）。
@@ -181,7 +139,7 @@ impl WgApp {
         }
 
         // 标记 busy，避免重复点击；并更新状态提示。
-        self.runtime.busy = true;
+        self.runtime.begin_start();
         self.set_status(format!("Starting {}...", selected.name));
         cx.notify();
 
@@ -213,7 +171,7 @@ impl WgApp {
                 Ok(text) => text,
                 Err(message) => {
                     view.update(cx, |this, cx| {
-                        this.runtime.busy = false;
+                        this.runtime.finish_start_attempt();
                         this.set_error(message);
                         cx.notify();
                     })
@@ -235,25 +193,12 @@ impl WgApp {
             let start_task = cx.background_spawn(async move { engine.start(request) });
             let result = start_task.await;
             view.update(cx, |this, cx| {
-                this.runtime.busy = false;
+                this.runtime.finish_start_attempt();
                 match result {
                     Ok(()) => {
                         // 启动成功：刷新运行态与统计。
-                        this.runtime.running = true;
-                        this.runtime.running_name = Some(selected.name.clone());
-                        this.runtime.running_id = Some(selected.id);
-                        this.stats.started_at = Some(Instant::now());
-                        this.stats.last_stats_at = None;
-                        this.stats.last_rx_bytes = 0;
-                        this.stats.last_tx_bytes = 0;
-                        this.stats.rx_rate_bps = 0.0;
-                        this.stats.tx_rate_bps = 0.0;
-                        this.reset_rate_history();
-                        this.stats.stats_idle_samples = 0;
-                        this.stats.last_iface_rx_bytes = 0;
-                        this.stats.last_iface_tx_bytes = 0;
-                        this.stats.iface_rx_rate_bps = 0.0;
-                        this.stats.iface_tx_rate_bps = 0.0;
+                        this.runtime.mark_started(&selected);
+                        this.stats.reset_for_start();
                         this.set_status(format!("Running {}", selected.name));
                         // 启动成功后通知当前已连接的隧道名称，便于多配置场景快速确认。
                         tray::notify_system(
@@ -261,7 +206,6 @@ impl WgApp {
                             &format!("Tunnel connected: {}", selected.name),
                             false,
                         );
-                        this.stats.stats_note = "Fetching peer stats...".into();
                         // 启动成功后开始轮询统计。
                         this.start_stats_polling(cx);
                     }
@@ -284,11 +228,12 @@ impl WgApp {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::Instant;
 
     use gpui_component::theme::ThemeMode;
 
     use super::*;
-    use crate::ui::state::{ConfigSource, TunnelConfig};
+    use crate::ui::state::{ConfigSource, TunnelConfig, RESTART_COOLDOWN};
 
     fn make_app() -> WgApp {
         WgApp::new(r_wg::backend::wg::Engine::new(), ThemeMode::Dark)
@@ -308,7 +253,7 @@ mod tests {
     #[test]
     fn restart_delay_is_none_without_last_stop() {
         let app = make_app();
-        assert_eq!(app.restart_delay(), None);
+        assert_eq!(app.runtime.restart_delay(), None);
     }
 
     #[test]
@@ -317,6 +262,7 @@ mod tests {
         app.runtime.last_stop_at = Instant::now().checked_sub(Duration::from_millis(100));
 
         let delay = app
+            .runtime
             .restart_delay()
             .expect("cooldown should still be active");
         assert!(delay > Duration::from_millis(150));
@@ -329,7 +275,7 @@ mod tests {
         app.runtime.last_stop_at =
             Instant::now().checked_sub(RESTART_COOLDOWN + Duration::from_millis(10));
 
-        assert_eq!(app.restart_delay(), None);
+        assert_eq!(app.runtime.restart_delay(), None);
     }
 
     #[test]
@@ -340,7 +286,8 @@ mod tests {
         app.runtime.running_id = Some(11);
 
         let pending = app
-            .build_pending_start()
+            .selection
+            .build_pending_start(&app.configs, &app.runtime)
             .expect("selected config should win");
         assert_eq!(pending.config_id, 22);
     }
@@ -351,7 +298,8 @@ mod tests {
         app.runtime.running_id = Some(77);
 
         let pending = app
-            .build_pending_start()
+            .selection
+            .build_pending_start(&app.configs, &app.runtime)
             .expect("running config should be used when nothing is selected");
         assert_eq!(pending.config_id, 77);
     }

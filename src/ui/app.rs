@@ -87,12 +87,8 @@ pub fn run() {
                                 if was_running {
                                     if let Some(view) = view_handle.upgrade() {
                                         let _ = view.update(cx, |this, cx| {
-                                            this.runtime.busy = false;
-                                            this.runtime.running = false;
-                                            this.runtime.running_name = None;
-                                            this.runtime.running_id = None;
-                                            this.stats.started_at = None;
-                                            this.clear_stats();
+                                            this.runtime.finish_stop_success();
+                                            this.stats.clear_runtime_metrics();
                                             this.set_status("Stopped");
                                             cx.notify();
                                         });
