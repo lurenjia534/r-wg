@@ -280,3 +280,74 @@ impl WgApp {
         .detach();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use gpui_component::theme::ThemeMode;
+
+    use super::*;
+    use crate::ui::state::{ConfigSource, TunnelConfig};
+
+    fn make_app() -> WgApp {
+        WgApp::new(r_wg::backend::wg::Engine::new(), ThemeMode::Dark)
+    }
+
+    fn make_config(id: u64, name: &str) -> TunnelConfig {
+        TunnelConfig {
+            id,
+            name: name.to_string(),
+            name_lower: name.to_ascii_lowercase(),
+            text: None,
+            source: ConfigSource::Paste,
+            storage_path: PathBuf::from(format!("/tmp/{id}.conf")),
+        }
+    }
+
+    #[test]
+    fn restart_delay_is_none_without_last_stop() {
+        let app = make_app();
+        assert_eq!(app.restart_delay(), None);
+    }
+
+    #[test]
+    fn restart_delay_returns_remaining_cooldown() {
+        let mut app = make_app();
+        app.last_stop_at = Instant::now().checked_sub(Duration::from_millis(100));
+
+        let delay = app.restart_delay().expect("cooldown should still be active");
+        assert!(delay > Duration::from_millis(150));
+        assert!(delay <= Duration::from_millis(250));
+    }
+
+    #[test]
+    fn restart_delay_is_none_after_cooldown_elapsed() {
+        let mut app = make_app();
+        app.last_stop_at = Instant::now().checked_sub(RESTART_COOLDOWN + Duration::from_millis(10));
+
+        assert_eq!(app.restart_delay(), None);
+    }
+
+    #[test]
+    fn build_pending_start_prefers_selected_config() {
+        let mut app = make_app();
+        app.configs = vec![make_config(11, "alpha"), make_config(22, "beta")];
+        app.selected = Some(1);
+        app.running_id = Some(11);
+
+        let pending = app.build_pending_start().expect("selected config should win");
+        assert_eq!(pending.config_id, 22);
+    }
+
+    #[test]
+    fn build_pending_start_falls_back_to_running_config() {
+        let mut app = make_app();
+        app.running_id = Some(77);
+
+        let pending = app
+            .build_pending_start()
+            .expect("running config should be used when nothing is selected");
+        assert_eq!(pending.config_id, 77);
+    }
+}

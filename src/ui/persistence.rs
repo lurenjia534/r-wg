@@ -184,3 +184,128 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn temp_storage_paths(test_name: &str) -> StoragePaths {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("r-wg-{test_name}-{unique}"));
+        let configs_dir = root.join(CONFIGS_DIR_NAME);
+        let state_path = root.join(STATE_FILE_NAME);
+        fs::create_dir_all(&configs_dir).expect("temp configs dir should be created");
+        StoragePaths {
+            root,
+            configs_dir,
+            state_path,
+        }
+    }
+
+    fn sample_state() -> PersistedState {
+        PersistedState {
+            version: STATE_VERSION,
+            next_id: 42,
+            selected_id: Some(7),
+            theme_mode: Some(ThemeMode::Dark),
+            traffic_days: vec![PersistedTrafficDay {
+                date: "2026-03-01".to_string(),
+                bytes: 1024,
+            }],
+            traffic_days_v2: vec![PersistedTrafficDayStats {
+                date: "2026-03-01".to_string(),
+                rx_bytes: 400,
+                tx_bytes: 624,
+            }],
+            traffic_hours: vec![PersistedTrafficHour {
+                hour: 123,
+                rx_bytes: 10,
+                tx_bytes: 20,
+            }],
+            config_traffic_days: vec![PersistedConfigTrafficDay {
+                config_id: 7,
+                date: "2026-03-01".to_string(),
+                rx_bytes: 200,
+                tx_bytes: 300,
+            }],
+            config_traffic_hours: vec![PersistedConfigTrafficHour {
+                config_id: 7,
+                hour: 123,
+                rx_bytes: 4,
+                tx_bytes: 5,
+            }],
+            configs: vec![
+                PersistedConfig {
+                    id: 7,
+                    name: "alpha".to_string(),
+                    source: PersistedSource::Paste,
+                },
+                PersistedConfig {
+                    id: 8,
+                    name: "beta".to_string(),
+                    source: PersistedSource::File {
+                        origin_path: Some(PathBuf::from("/tmp/beta.conf")),
+                    },
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn save_and_load_state_round_trip() {
+        let paths = temp_storage_paths("state-round-trip");
+        let state = sample_state();
+
+        save_state(&paths, &state).expect("state should save");
+        let loaded = load_state(&paths)
+            .expect("state should load")
+            .expect("saved state should exist");
+
+        assert_eq!(loaded.version, state.version);
+        assert_eq!(loaded.next_id, state.next_id);
+        assert_eq!(loaded.selected_id, state.selected_id);
+        assert_eq!(loaded.theme_mode, state.theme_mode);
+        assert_eq!(loaded.traffic_days.len(), 1);
+        assert_eq!(loaded.traffic_days[0].date, "2026-03-01");
+        assert_eq!(loaded.traffic_days[0].bytes, 1024);
+        assert_eq!(loaded.traffic_days_v2.len(), 1);
+        assert_eq!(loaded.traffic_days_v2[0].rx_bytes, 400);
+        assert_eq!(loaded.traffic_days_v2[0].tx_bytes, 624);
+        assert_eq!(loaded.traffic_hours.len(), 1);
+        assert_eq!(loaded.traffic_hours[0].hour, 123);
+        assert_eq!(loaded.config_traffic_days.len(), 1);
+        assert_eq!(loaded.config_traffic_days[0].config_id, 7);
+        assert_eq!(loaded.config_traffic_hours.len(), 1);
+        assert_eq!(loaded.config_traffic_hours[0].hour, 123);
+        assert_eq!(loaded.configs.len(), 2);
+        assert_eq!(loaded.configs[0].name, "alpha");
+        match &loaded.configs[1].source {
+            PersistedSource::File { origin_path } => {
+                assert_eq!(origin_path.as_deref(), Some(Path::new("/tmp/beta.conf")));
+            }
+            PersistedSource::Paste => panic!("expected file source"),
+        }
+
+        fs::remove_dir_all(&paths.root).expect("temp storage should be cleaned up");
+    }
+
+    #[test]
+    fn write_config_text_replaces_existing_contents() {
+        let paths = temp_storage_paths("write-config");
+        let path = config_path(&paths, 9);
+
+        write_config_text(&path, "first").expect("initial write should succeed");
+        write_config_text(&path, "second").expect("rewrite should succeed");
+
+        let text = fs::read_to_string(&path).expect("config file should be readable");
+        assert_eq!(text, "second");
+
+        fs::remove_dir_all(&paths.root).expect("temp storage should be cleaned up");
+    }
+}

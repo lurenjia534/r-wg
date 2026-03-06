@@ -724,9 +724,15 @@ fn percent(value: u64, total: u64) -> f32 {
 fn build_traffic_summary(app: &WgApp) -> TrafficSummaryData {
     const MAX_RANK_ITEMS: usize = 7;
     let now = Local::now();
-    let today = now.date_naive();
-    let current_hour = now.timestamp() / 3600;
+    build_traffic_summary_at(app, now.date_naive(), now.timestamp() / 3600, MAX_RANK_ITEMS)
+}
 
+fn build_traffic_summary_at(
+    app: &WgApp,
+    today: NaiveDate,
+    current_hour: i64,
+    max_rank_items: usize,
+) -> TrafficSummaryData {
     let (total_rx, total_tx, ranked) = match app.traffic_period {
         TrafficPeriod::Today => {
             let min_hour = current_hour.saturating_sub(23);
@@ -801,7 +807,7 @@ fn build_traffic_summary(app: &WgApp) -> TrafficSummaryData {
 
     let mut ranked = ranked;
     ranked.sort_by(|a, b| b.total_bytes().cmp(&a.total_bytes()));
-    ranked.truncate(MAX_RANK_ITEMS);
+    ranked.truncate(max_rank_items);
 
     TrafficSummaryData {
         total_rx,
@@ -844,6 +850,10 @@ fn sum_hours(hours: &[TrafficHour], min_hour: i64, max_hour: i64) -> (u64, u64) 
 }
 
 fn build_traffic_trend(app: &WgApp) -> TrafficTrendData {
+    build_traffic_trend_at(app, Local::now().date_naive())
+}
+
+fn build_traffic_trend_at(app: &WgApp, today: NaiveDate) -> TrafficTrendData {
     let mut by_date: HashMap<NaiveDate, u64> = HashMap::new();
     for day in &app.traffic_days {
         if let Ok(date) = NaiveDate::parse_from_str(&day.date, "%Y-%m-%d") {
@@ -852,7 +862,6 @@ fn build_traffic_trend(app: &WgApp) -> TrafficTrendData {
         }
     }
 
-    let today = Local::now().date_naive();
     let mut points = Vec::with_capacity(TRAFFIC_TREND_DAYS);
     for offset in (0..TRAFFIC_TREND_DAYS).rev() {
         let date = today - ChronoDuration::days(offset as i64);
@@ -1337,5 +1346,191 @@ fn format_memory(bytes: u64) -> String {
         format!("{:.0} KB", value / KB)
     } else {
         format!("{bytes} B")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use gpui_component::theme::ThemeMode;
+
+    use super::{build_traffic_summary_at, build_traffic_trend_at};
+    use crate::ui::state::{
+        ConfigSource, TrafficDay, TrafficDayStats, TrafficHour, TrafficPeriod, TunnelConfig,
+        WgApp, TRAFFIC_TREND_DAYS,
+    };
+    use chrono::NaiveDate;
+
+    fn make_app() -> WgApp {
+        WgApp::new(r_wg::backend::wg::Engine::new(), ThemeMode::Dark)
+    }
+
+    fn make_config(id: u64, name: &str) -> TunnelConfig {
+        TunnelConfig {
+            id,
+            name: name.to_string(),
+            name_lower: name.to_ascii_lowercase(),
+            text: None,
+            source: ConfigSource::Paste,
+            storage_path: PathBuf::from(format!("/tmp/{id}.conf")),
+        }
+    }
+
+    #[test]
+    fn traffic_summary_today_uses_last_24_hours_and_sorts_rankings() {
+        let mut app = make_app();
+        let current_hour = 1_000;
+        app.traffic_period = TrafficPeriod::Today;
+        app.configs = vec![make_config(1, "alpha"), make_config(2, "beta")];
+        app.traffic_hours = vec![
+            TrafficHour {
+                hour: current_hour,
+                rx_bytes: 50,
+                tx_bytes: 5,
+            },
+            TrafficHour {
+                hour: current_hour - 23,
+                rx_bytes: 10,
+                tx_bytes: 1,
+            },
+            TrafficHour {
+                hour: current_hour - 24,
+                rx_bytes: 999,
+                tx_bytes: 999,
+            },
+        ];
+        app.config_traffic_hours.insert(
+            1,
+            vec![
+                TrafficHour {
+                    hour: current_hour,
+                    rx_bytes: 20,
+                    tx_bytes: 10,
+                },
+                TrafficHour {
+                    hour: current_hour - 24,
+                    rx_bytes: 500,
+                    tx_bytes: 500,
+                },
+            ],
+        );
+        app.config_traffic_hours.insert(
+            2,
+            vec![TrafficHour {
+                hour: current_hour - 1,
+                rx_bytes: 40,
+                tx_bytes: 20,
+            }],
+        );
+
+        let summary = build_traffic_summary_at(
+            &app,
+            NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date"),
+            current_hour,
+            7,
+        );
+
+        assert_eq!(summary.total_rx, 60);
+        assert_eq!(summary.total_tx, 6);
+        assert_eq!(summary.ranked.len(), 2);
+        assert_eq!(summary.ranked[0].name, "beta");
+        assert_eq!(summary.ranked[0].total_bytes(), 60);
+        assert_eq!(summary.ranked[1].name, "alpha");
+        assert_eq!(summary.ranked[1].total_bytes(), 30);
+    }
+
+    #[test]
+    fn traffic_summary_month_windows_split_current_and_previous_periods() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date");
+        let mut app = make_app();
+        app.configs = vec![make_config(7, "alpha")];
+        app.traffic_days_v2 = vec![
+            TrafficDayStats {
+                date: "2026-03-06".to_string(),
+                rx_bytes: 10,
+                tx_bytes: 20,
+            },
+            TrafficDayStats {
+                date: "2026-02-10".to_string(),
+                rx_bytes: 30,
+                tx_bytes: 40,
+            },
+            TrafficDayStats {
+                date: "2026-01-20".to_string(),
+                rx_bytes: 500,
+                tx_bytes: 600,
+            },
+        ];
+        app.config_traffic_days.insert(
+            7,
+            vec![
+                TrafficDayStats {
+                    date: "2026-03-06".to_string(),
+                    rx_bytes: 10,
+                    tx_bytes: 20,
+                },
+                TrafficDayStats {
+                    date: "2026-02-10".to_string(),
+                    rx_bytes: 30,
+                    tx_bytes: 40,
+                },
+                TrafficDayStats {
+                    date: "2026-01-20".to_string(),
+                    rx_bytes: 500,
+                    tx_bytes: 600,
+                },
+            ],
+        );
+
+        app.traffic_period = TrafficPeriod::ThisMonth;
+        let this_month = build_traffic_summary_at(&app, today, 0, 7);
+        assert_eq!(this_month.total_rx, 40);
+        assert_eq!(this_month.total_tx, 60);
+        assert_eq!(this_month.ranked[0].total_bytes(), 100);
+
+        app.traffic_period = TrafficPeriod::LastMonth;
+        let last_month = build_traffic_summary_at(&app, today, 0, 7);
+        assert_eq!(last_month.total_rx, 500);
+        assert_eq!(last_month.total_tx, 600);
+        assert_eq!(last_month.ranked[0].total_bytes(), 1100);
+    }
+
+    #[test]
+    fn traffic_trend_aggregates_same_day_entries_and_marks_today() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date");
+        let mut app = make_app();
+        app.traffic_days = vec![
+            TrafficDay {
+                date: "2026-03-06".to_string(),
+                bytes: 100,
+            },
+            TrafficDay {
+                date: "2026-03-06".to_string(),
+                bytes: 50,
+            },
+            TrafficDay {
+                date: "2026-03-04".to_string(),
+                bytes: 30,
+            },
+            TrafficDay {
+                date: "2026-02-20".to_string(),
+                bytes: 999,
+            },
+        ];
+
+        let trend = build_traffic_trend_at(&app, today);
+
+        assert_eq!(trend.points.len(), TRAFFIC_TREND_DAYS);
+        let today_point = trend.points.last().expect("today should be present");
+        assert!(today_point.is_today);
+        assert_eq!(today_point.bytes, 150);
+        let mid_point = trend
+            .points
+            .iter()
+            .find(|point| point.label == "Wed")
+            .expect("Wednesday point should exist");
+        assert_eq!(mid_point.bytes, 30);
+        assert_eq!(trend.average_bytes, 180.0 / TRAFFIC_TREND_DAYS as f64);
     }
 }
