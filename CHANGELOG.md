@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 - Version bump for release.
 
+## 0.2.3 - 2026-03-06
+
+- Added cross-platform tray controls, with Windows tray notifications for tunnel lifecycle changes.
+- Improved proxy management with endpoint family tags and multi-select deletion confirmation.
+- Hardened Windows full-tunnel DNS handling and updated Win32 integration for `windows 0.62.2`.
+- Upgraded `gotatun` to `0.4.0` and documented the local `ashpd` patch workflow.
+- Trim allocator state after tunnel stop on Linux to reduce lingering memory usage.
+
 ## 0.2.1 - 2026-01-25
 
 - Added rolling traffic summary tracking (24h/30d) with per-config aggregates.
