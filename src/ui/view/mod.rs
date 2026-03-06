@@ -55,7 +55,8 @@ impl Render for WgApp {
                 .child({
                     let main_body = match self.ui_prefs.sidebar_active {
                         SidebarItem::Overview => {
-                            overview::render_overview(self, &data, cx).into_any_element()
+                            let overview_data = data::OverviewData::new(self, &data);
+                            overview::render_overview(&overview_data, cx).into_any_element()
                         }
                         SidebarItem::Configs => div()
                             .flex()
