@@ -14,17 +14,17 @@ use super::super::state::{
 
 impl WgApp {
     pub(crate) fn ensure_storage(&mut self) -> Result<StoragePaths, String> {
-        if let Some(storage) = &self.storage {
+        if let Some(storage) = &self.configs.storage {
             return Ok(storage.clone());
         }
         let storage = persistence::ensure_storage_dirs()?;
-        self.storage = Some(storage.clone());
+        self.configs.storage = Some(storage.clone());
         Ok(storage)
     }
 
     pub(crate) fn alloc_config_id(&mut self) -> u64 {
-        let id = self.next_config_id.max(1);
-        self.next_config_id = id.saturating_add(1);
+        let id = self.configs.next_config_id.max(1);
+        self.configs.next_config_id = id.saturating_add(1);
         id
     }
 
@@ -33,10 +33,10 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.persistence_loaded {
+        if self.selection.persistence_loaded {
             return;
         }
-        self.persistence_loaded = true;
+        self.selection.persistence_loaded = true;
 
         let storage = match self.ensure_storage() {
             Ok(storage) => storage,
@@ -116,7 +116,7 @@ impl WgApp {
 
         // 尽早应用主题，避免启动时闪烁。
         if let Some(theme_mode) = state.theme_mode {
-            self.theme_mode = theme_mode;
+            self.ui_prefs.theme_mode = theme_mode;
             Theme::change(theme_mode, Some(window), cx);
         }
 
@@ -152,38 +152,39 @@ impl WgApp {
             });
         }
 
-        self.configs = configs;
+        self.configs.configs = configs;
         // 合并同一天的流量记录，并按日期排序，避免重复日期导致统计偏差。
         let mut traffic_days = BTreeMap::<String, u64>::new();
         for day in state.traffic_days {
             let entry = traffic_days.entry(day.date).or_insert(0);
             *entry = entry.saturating_add(day.bytes);
         }
-        self.traffic_days = traffic_days
+        self.stats.traffic_days = traffic_days
             .into_iter()
             .map(|(date, bytes)| TrafficDay { date, bytes })
             .collect();
         // 新版（按天/按小时）流量统计。
-        self.traffic_days_v2 = merge_day_stats(state.traffic_days_v2);
-        self.traffic_hours = merge_hour_stats(state.traffic_hours);
+        self.stats.traffic_days_v2 = merge_day_stats(state.traffic_days_v2);
+        self.stats.traffic_hours = merge_hour_stats(state.traffic_hours);
         let config_ids: HashSet<u64> = self.configs.iter().map(|cfg| cfg.id).collect();
-        self.config_traffic_days = merge_config_day_stats(state.config_traffic_days, &config_ids);
-        self.config_traffic_hours =
+        self.stats.config_traffic_days =
+            merge_config_day_stats(state.config_traffic_days, &config_ids);
+        self.stats.config_traffic_hours =
             merge_config_hour_stats(state.config_traffic_hours, &config_ids);
         // 刚加载的数据视为“干净”，只有新流量产生时才标记 dirty。
-        self.traffic_dirty = false;
-        self.traffic_last_persist_at = None;
-        self.selected = state
+        self.stats.traffic_dirty = false;
+        self.stats.traffic_last_persist_at = None;
+        self.selection.selected = state
             .selected_id
             .and_then(|id| self.configs.iter().position(|cfg| cfg.id == id));
-        self.next_config_id = state.next_id.max(max_id.saturating_add(1));
-        self.proxy_filter_total = 0;
-        self.parse_cache = None;
-        self.loaded_config = None;
-        self.loading_config = None;
-        self.loading_config_path = None;
+        self.configs.next_config_id = state.next_id.max(max_id.saturating_add(1));
+        self.selection.proxy_filter_total = 0;
+        self.selection.parse_cache = None;
+        self.selection.loaded_config = None;
+        self.selection.loading_config = None;
+        self.selection.loading_config_path = None;
 
-        if let Some(idx) = self.selected {
+        if let Some(idx) = self.selection.selected {
             self.load_config_into_inputs(idx, window, cx);
         }
         if missing_files > 0 {
@@ -206,23 +207,26 @@ impl WgApp {
 
     fn build_persisted_state(&self) -> PersistedState {
         let selected_id = self
+            .selection
             .selected
             .and_then(|idx| self.configs.get(idx))
             .map(|cfg| cfg.id);
         PersistedState {
             version: STATE_VERSION,
-            next_id: self.next_config_id,
+            next_id: self.configs.next_config_id,
             selected_id,
             // 保存当前主题，便于下次启动恢复。
-            theme_mode: Some(self.theme_mode),
+            theme_mode: Some(self.ui_prefs.theme_mode),
             // 按天流量持久化，便于下次启动继续累计与绘制趋势。
             traffic_days: self
+                .stats
                 .traffic_days
                 .clone()
                 .into_iter()
                 .map(Into::into)
                 .collect(),
             traffic_days_v2: self
+                .stats
                 .traffic_days_v2
                 .iter()
                 .map(|day| PersistedTrafficDayStats {
@@ -232,6 +236,7 @@ impl WgApp {
                 })
                 .collect(),
             traffic_hours: self
+                .stats
                 .traffic_hours
                 .iter()
                 .map(|hour| PersistedTrafficHour {
@@ -241,6 +246,7 @@ impl WgApp {
                 })
                 .collect(),
             config_traffic_days: self
+                .stats
                 .config_traffic_days
                 .iter()
                 .flat_map(|(config_id, days)| {
@@ -253,6 +259,7 @@ impl WgApp {
                 })
                 .collect(),
             config_traffic_hours: self
+                .stats
                 .config_traffic_hours
                 .iter()
                 .flat_map(|(config_id, hours)| {

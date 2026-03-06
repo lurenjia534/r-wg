@@ -21,40 +21,40 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         .child(
             Button::new("dns-mode-follow")
                 .label(DnsMode::FollowConfig.label())
-                .selected(app.dns_mode == DnsMode::FollowConfig)
+                .selected(app.ui_prefs.dns_mode == DnsMode::FollowConfig)
                 .tooltip("Use DNS only from the config file")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.dns_mode = DnsMode::FollowConfig;
+                    this.ui_prefs.dns_mode = DnsMode::FollowConfig;
                     cx.notify();
                 })),
         )
         .child(
             Button::new("dns-mode-system")
                 .label(DnsMode::UseSystemDns.label())
-                .selected(app.dns_mode == DnsMode::UseSystemDns)
+                .selected(app.ui_prefs.dns_mode == DnsMode::UseSystemDns)
                 .tooltip("Use DNS from the system resolver")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.dns_mode = DnsMode::UseSystemDns;
+                    this.ui_prefs.dns_mode = DnsMode::UseSystemDns;
                     cx.notify();
                 })),
         )
         .child(
             Button::new("dns-mode-auto")
                 .label(DnsMode::AutoFillMissingFamilies.label())
-                .selected(app.dns_mode == DnsMode::AutoFillMissingFamilies)
+                .selected(app.ui_prefs.dns_mode == DnsMode::AutoFillMissingFamilies)
                 .tooltip("Only fill missing IPv4/IPv6 DNS families")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.dns_mode = DnsMode::AutoFillMissingFamilies;
+                    this.ui_prefs.dns_mode = DnsMode::AutoFillMissingFamilies;
                     cx.notify();
                 })),
         )
         .child(
             Button::new("dns-mode-override")
                 .label(DnsMode::OverrideAll.label())
-                .selected(app.dns_mode == DnsMode::OverrideAll)
+                .selected(app.ui_prefs.dns_mode == DnsMode::OverrideAll)
                 .tooltip("Ignore config DNS and force selected provider")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.dns_mode = DnsMode::OverrideAll;
+                    this.ui_prefs.dns_mode = DnsMode::OverrideAll;
                     cx.notify();
                 })),
         );
@@ -70,14 +70,14 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         )
         .child(h_flex().items_center().child(mode_group));
 
-    let mode_hint = match app.dns_mode {
+    let mode_hint = match app.ui_prefs.dns_mode {
         DnsMode::FollowConfig => Some("Use DNS settings from the config file."),
         DnsMode::UseSystemDns => Some("Use system default DNS."),
         _ => None,
     };
 
     let show_cards = matches!(
-        app.dns_mode,
+        app.ui_prefs.dns_mode,
         DnsMode::AutoFillMissingFamilies | DnsMode::OverrideAll
     );
 
@@ -167,7 +167,7 @@ fn dns_section_title(title: &'static str, subtitle: &'static str) -> Div {
 
 fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stateful<Div> {
     let info = preset.info();
-    let selected = app.dns_preset == preset;
+    let selected = app.ui_prefs.dns_preset == preset;
     let border_color = if selected {
         cx.theme().accent
     } else {
@@ -243,7 +243,7 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stat
     }
 
     card.on_click(cx.listener(move |this, _, _, cx| {
-        this.dns_preset = preset;
+        this.ui_prefs.dns_preset = preset;
         cx.notify();
     }))
 }

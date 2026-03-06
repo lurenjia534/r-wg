@@ -32,14 +32,16 @@ impl ViewData {
         // 优先从解析缓存取结果：
         // - 缓存只针对当前选中配置；
         // - 避免在每次渲染时重复 parse_config。
-        let (parsed_config, parse_error) = match (selected_config, app.parse_cache.as_ref()) {
-            (Some(config), Some(cache)) if cache.name == config.name => {
-                (cache.parsed.clone(), cache.error.clone())
-            }
-            _ => (None, None),
-        };
+        let (parsed_config, parse_error) =
+            match (selected_config, app.selection.parse_cache.as_ref()) {
+                (Some(config), Some(cache)) if cache.name == config.name => {
+                    (cache.parsed.clone(), cache.error.clone())
+                }
+                _ => (None, None),
+            };
         // 选中项处于“异步加载中”时显示 Loading 状态。
-        let is_loading = app.selected.is_some() && app.loading_config == app.selected;
+        let is_loading = app.selection.selected.is_some()
+            && app.selection.loading_config == app.selection.selected;
 
         // 解析状态的展示逻辑：
         // - Loading：文本尚未读完；
@@ -70,13 +72,13 @@ impl ViewData {
             None
         };
 
-        let peer_summary = summarize_peers(&app.peer_stats);
+        let peer_summary = summarize_peers(&app.stats.peer_stats);
         let last_handshake = peer_summary
             .last_handshake
             .map(format_duration)
             .unwrap_or_else(|| "never".to_string());
 
-        let running_label = match &app.running_name {
+        let running_label = match &app.runtime.running_name {
             Some(name) => format!("Running: {name}"),
             None => "Idle".to_string(),
         };

@@ -47,6 +47,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
     // 初始化搜索输入框并读取当前查询，用于过滤节点列表。
     app.ensure_proxy_search_input(window, cx);
     let search_input = app
+        .ui
         .proxy_search_input
         .clone()
         .expect("proxy search input should be initialized");
@@ -58,17 +59,19 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
     // - 查询为空时不构建索引，直接按原列表渲染，减少无意义的遍历；
     // - 查询不为空时，缓存过滤结果，只有“查询串变化或总数变化”才重新计算。
     let filtered_nodes = if use_filter {
-        if app.proxy_filter_query != query || app.proxy_filter_total != total_nodes {
-            app.proxy_filter_query = query.clone();
-            app.proxy_filter_total = total_nodes;
-            app.proxy_filtered_indices = app
+        if app.selection.proxy_filter_query != query
+            || app.selection.proxy_filter_total != total_nodes
+        {
+            app.selection.proxy_filter_query = query.clone();
+            app.selection.proxy_filter_total = total_nodes;
+            app.selection.proxy_filtered_indices = app
                 .configs
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, config)| config.name_lower.contains(&query).then_some(idx))
                 .collect();
         }
-        app.proxy_filtered_indices.len()
+        app.selection.proxy_filtered_indices.len()
     } else {
         total_nodes
     };
@@ -79,7 +82,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
         format!("{filtered_nodes}/{total_nodes} nodes")
     };
     let nodes_tag = Tag::secondary().small().child(nodes_text);
-    let selected_count = app.proxy_selected_ids.len();
+    let selected_count = app.selection.proxy_selected_ids.len();
     let selected_tag = Tag::info()
         .small()
         .child(format!("{selected_count} selected"));
@@ -131,7 +134,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
             move |this, visible_range, _window, cx| {
                 // 仅渲染当前可见行，显著减少 DOM/布局/绘制成本。
                 let total = if use_filter {
-                    this.proxy_filtered_indices.len()
+                    this.selection.proxy_filtered_indices.len()
                 } else {
                     this.configs.len()
                 };
@@ -143,7 +146,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                         // 从索引映射到真实配置，保证过滤后仍可正确选择。
                         for idx in start..end {
                             let config_idx = if use_filter {
-                                this.proxy_filtered_indices[idx]
+                                this.selection.proxy_filtered_indices[idx]
                             } else {
                                 idx
                             };
@@ -225,22 +228,23 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                                 ),
                         )
                         .child(nodes_tag)
-                        .when(app.proxy_select_mode, |this| this.child(selected_tag))
+                        .when(app.selection.proxy_select_mode, |this| this.child(selected_tag))
                         .child(
                             Button::new("proxy-select")
-                                .label(if app.proxy_select_mode {
+                                .label(if app.selection.proxy_select_mode {
                                     "Done"
                                 } else {
                                     "Select"
                                 })
                                 .outline()
                                 .xsmall()
-                                .selected(app.proxy_select_mode)
-                                .disabled(app.busy)
+                                .selected(app.selection.proxy_select_mode)
+                                .disabled(app.runtime.busy)
                                 .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.proxy_select_mode = !this.proxy_select_mode;
-                                    if !this.proxy_select_mode {
-                                        this.proxy_selected_ids.clear();
+                                    this.selection.proxy_select_mode =
+                                        !this.selection.proxy_select_mode;
+                                    if !this.selection.proxy_select_mode {
+                                        this.selection.proxy_selected_ids.clear();
                                     }
                                     cx.notify();
                                 })),
@@ -251,18 +255,18 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                                 .danger()
                                 .xsmall()
                                 .disabled(
-                                    app.busy
-                                        || !app.proxy_select_mode
-                                        || app.proxy_selected_ids.is_empty(),
+                                    app.runtime.busy
+                                        || !app.selection.proxy_select_mode
+                                        || app.selection.proxy_selected_ids.is_empty(),
                                 )
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    if this.proxy_selected_ids.is_empty() {
+                                    if this.selection.proxy_selected_ids.is_empty() {
                                         this.set_error("Select configs first");
                                         cx.notify();
                                         return;
                                     }
                                     let ids: Vec<u64> =
-                                        this.proxy_selected_ids.iter().copied().collect();
+                                        this.selection.proxy_selected_ids.iter().copied().collect();
                                     let count = ids.len();
                                     let body = if count == 1 {
                                         "Delete 1 selected config? This cannot be undone."
@@ -289,16 +293,20 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                                 .label("Delete")
                                 .danger()
                                 .xsmall()
-                                .disabled(app.busy || app.proxy_select_mode || app.selected.is_none())
+                                .disabled(
+                                    app.runtime.busy
+                                        || app.selection.proxy_select_mode
+                                        || app.selection.selected.is_none(),
+                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    let Some(idx) = this.selected else {
+                                    let Some(idx) = this.selection.selected else {
                                         this.set_error("Select a tunnel first");
                                         cx.notify();
                                         return;
                                     };
                                     let config = &this.configs[idx];
-                                    let is_running = this.running_id == Some(config.id)
-                                        || this.running_name.as_deref()
+                                    let is_running = this.runtime.running_id == Some(config.id)
+                                        || this.runtime.running_name.as_deref()
                                             == Some(config.name.as_str());
                                     if is_running {
                                         this.set_error("Stop the tunnel before deleting");
@@ -328,7 +336,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                                 .label("Import")
                                 .outline()
                                 .xsmall()
-                                .disabled(app.busy)
+                                .disabled(app.runtime.busy)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.handle_import_click(window, cx);
                                 })),
@@ -345,9 +353,10 @@ fn config_list_item(
     endpoint_tag: Option<Tag>,
     cx: &mut Context<WgApp>,
 ) -> Stateful<Div> {
-    let is_selected = app.selected == Some(idx);
-    let is_multi_selected = app.proxy_select_mode && app.proxy_selected_ids.contains(&config.id);
-    let is_running = app.running_name.as_deref() == Some(config.name.as_str());
+    let is_selected = app.selection.selected == Some(idx);
+    let is_multi_selected =
+        app.selection.proxy_select_mode && app.selection.proxy_selected_ids.contains(&config.id);
+    let is_running = app.runtime.running_name.as_deref() == Some(config.name.as_str());
     let name_color = cx.theme().foreground;
     let bg = if is_selected {
         cx.theme().accent.alpha(0.16)
@@ -402,21 +411,21 @@ fn config_list_item(
 
     item = item.child(badges);
 
-    if !app.busy {
+    if !app.runtime.busy {
         item = item.cursor_pointer();
     }
 
     let config_id = config.id;
     let item = item.id(("config-item", idx));
     item.on_click(cx.listener(move |this, _event, window, cx| {
-        if this.busy {
+        if this.runtime.busy {
             return;
         }
-        if this.proxy_select_mode {
-            if this.proxy_selected_ids.contains(&config_id) {
-                this.proxy_selected_ids.remove(&config_id);
+        if this.selection.proxy_select_mode {
+            if this.selection.proxy_selected_ids.contains(&config_id) {
+                this.selection.proxy_selected_ids.remove(&config_id);
             } else {
-                this.proxy_selected_ids.insert(config_id);
+                this.selection.proxy_selected_ids.insert(config_id);
             }
             cx.notify();
             return;
@@ -449,10 +458,10 @@ fn endpoint_family_for_config(
     storage_path: PathBuf,
     cx: &mut Context<WgApp>,
 ) -> Option<EndpointFamily> {
-    if let Some(family) = app.proxy_endpoint_family.get(&config_id) {
+    if let Some(family) = app.selection.proxy_endpoint_family.get(&config_id) {
         return Some(*family);
     }
-    if app.proxy_endpoint_loading.contains(&config_id) {
+    if app.selection.proxy_endpoint_loading.contains(&config_id) {
         return None;
     }
 
@@ -460,12 +469,13 @@ fn endpoint_family_for_config(
     if let Some(text) = text {
         let hint = endpoint_family_hint_from_text(text.as_ref());
         if hint.pending_hosts.is_empty() {
-            app.proxy_endpoint_family
+            app.selection
+                .proxy_endpoint_family
                 .insert(config_id, hint.base_family);
             return Some(hint.base_family);
         }
 
-        app.proxy_endpoint_loading.insert(config_id);
+        app.selection.proxy_endpoint_loading.insert(config_id);
         let id = config_id;
         let pending_hosts = hint.pending_hosts;
         let base_family = hint.base_family;
@@ -475,8 +485,8 @@ fn endpoint_family_for_config(
             });
             let family = resolve_task.await;
             view.update(cx, |this, cx| {
-                this.proxy_endpoint_loading.remove(&id);
-                this.proxy_endpoint_family.insert(id, family);
+                this.selection.proxy_endpoint_loading.remove(&id);
+                this.selection.proxy_endpoint_family.insert(id, family);
                 cx.notify();
             })
             .ok();
@@ -486,7 +496,7 @@ fn endpoint_family_for_config(
         return None;
     }
 
-    app.proxy_endpoint_loading.insert(config_id);
+    app.selection.proxy_endpoint_loading.insert(config_id);
     let id = config_id;
     let path = storage_path;
     cx.spawn(async move |view, cx| {
@@ -497,9 +507,9 @@ fn endpoint_family_for_config(
         });
         let result = resolve_task.await;
         view.update(cx, |this, cx| {
-            this.proxy_endpoint_loading.remove(&id);
+            this.selection.proxy_endpoint_loading.remove(&id);
             if let Some(family) = result {
-                this.proxy_endpoint_family.insert(id, family);
+                this.selection.proxy_endpoint_family.insert(id, family);
                 cx.notify();
             }
         })
@@ -710,8 +720,8 @@ fn perform_delete(
                 this.delete_configs_blocking_running(&ids, window, cx);
             }
             if clear_selection {
-                this.proxy_select_mode = false;
-                this.proxy_selected_ids.clear();
+                this.selection.proxy_select_mode = false;
+                this.selection.proxy_selected_ids.clear();
             }
         });
     });

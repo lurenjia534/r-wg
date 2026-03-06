@@ -30,12 +30,12 @@ impl WgApp {
     /// 说明：InputState 需要 Window 上下文才能初始化，因此这里采用懒创建，
     /// 避免在 WgApp::new 阶段就触发窗口依赖。
     pub(crate) fn ensure_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.name_input.is_none() {
+        if self.ui.name_input.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Tunnel name"));
-            self.name_input = Some(input);
+            self.ui.name_input = Some(input);
         }
 
-        if self.config_input.is_none() {
+        if self.ui.config_input.is_none() {
             let placeholder = "[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = ...\nAllowedIPs = 0.0.0.0/0\nEndpoint = example.com:51820";
             let input = cx.new(|cx| {
                 InputState::new(window, cx)
@@ -43,7 +43,7 @@ impl WgApp {
                     .rows(16)
                     .placeholder(placeholder)
             });
-            self.config_input = Some(input);
+            self.ui.config_input = Some(input);
         }
     }
 
@@ -54,9 +54,9 @@ impl WgApp {
     ) {
         // Proxies 页搜索框输入状态：用于在大列表中快速过滤。
         // 这里同样采用懒创建，避免在应用启动时就绑定窗口上下文。
-        if self.proxy_search_input.is_none() {
+        if self.ui.proxy_search_input.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search nodes"));
-            self.proxy_search_input = Some(input);
+            self.ui.proxy_search_input = Some(input);
         }
     }
 
@@ -66,21 +66,27 @@ impl WgApp {
     /// - 只缓存最近使用的配置文本，避免导入上千条时占用过多内存；
     /// - 同一路径重复写入会刷新位置，保证“最近用过”的优先保留。
     pub(crate) fn cache_config_text(&mut self, path: PathBuf, text: SharedString) {
-        self.config_text_cache.insert(path.clone(), text);
-        self.config_text_cache_order.retain(|entry| entry != &path);
-        self.config_text_cache_order.push_back(path);
-        while self.config_text_cache_order.len() > CONFIG_TEXT_CACHE_LIMIT {
-            if let Some(evicted) = self.config_text_cache_order.pop_front() {
-                self.config_text_cache.remove(&evicted);
+        self.selection.config_text_cache.insert(path.clone(), text);
+        self.selection
+            .config_text_cache_order
+            .retain(|entry| entry != &path);
+        self.selection.config_text_cache_order.push_back(path);
+        while self.selection.config_text_cache_order.len() > CONFIG_TEXT_CACHE_LIMIT {
+            if let Some(evicted) = self.selection.config_text_cache_order.pop_front() {
+                self.selection.config_text_cache.remove(&evicted);
             }
         }
     }
 
     pub(crate) fn cached_config_text(&mut self, path: &Path) -> Option<SharedString> {
-        let text = self.config_text_cache.get(path).cloned();
+        let text = self.selection.config_text_cache.get(path).cloned();
         if text.is_some() {
-            self.config_text_cache_order.retain(|entry| entry != path);
-            self.config_text_cache_order.push_back(path.to_path_buf());
+            self.selection
+                .config_text_cache_order
+                .retain(|entry| entry != path);
+            self.selection
+                .config_text_cache_order
+                .push_back(path.to_path_buf());
         }
         text
     }
@@ -92,7 +98,7 @@ impl WgApp {
     /// - 如果文本哈希没变，直接复用缓存；
     /// - 解析发生在 UI 线程上，但仅在文本变更时触发。
     fn update_parse_cache(&mut self, name: &str, text: &str, text_hash: u64) -> u64 {
-        if let Some(cache) = &self.parse_cache {
+        if let Some(cache) = &self.selection.parse_cache {
             if cache.name == name && cache.text_hash == text_hash {
                 return text_hash;
             }
@@ -100,7 +106,7 @@ impl WgApp {
 
         match config::parse_config(text) {
             Ok(parsed) => {
-                self.parse_cache = Some(ParseCache {
+                self.selection.parse_cache = Some(ParseCache {
                     name: name.to_string(),
                     text_hash,
                     parsed: Some(parsed),
@@ -108,7 +114,7 @@ impl WgApp {
                 });
             }
             Err(err) => {
-                self.parse_cache = Some(ParseCache {
+                self.selection.parse_cache = Some(ParseCache {
                     name: name.to_string(),
                     text_hash,
                     parsed: None,
@@ -120,7 +126,7 @@ impl WgApp {
     }
 
     fn update_parse_cache_name(&mut self, old_name: &str, new_name: &str) {
-        if let Some(cache) = &mut self.parse_cache {
+        if let Some(cache) = &mut self.selection.parse_cache {
             if cache.name == old_name {
                 cache.name = new_name.to_string();
             }
@@ -153,11 +159,11 @@ impl WgApp {
         };
 
         if let Some(cfg) = self.configs.get(idx) {
-            self.proxy_endpoint_family.remove(&cfg.id);
-            self.proxy_endpoint_loading.remove(&cfg.id);
+            self.selection.proxy_endpoint_family.remove(&cfg.id);
+            self.selection.proxy_endpoint_loading.remove(&cfg.id);
         }
 
-        self.selected = Some(idx);
+        self.selection.selected = Some(idx);
         self.load_config_into_inputs(idx, window, cx);
     }
 
@@ -173,10 +179,10 @@ impl WgApp {
         // 将模型数据灌入输入控件。
         self.ensure_inputs(window, cx);
 
-        let Some(name_input) = self.name_input.clone() else {
+        let Some(name_input) = self.ui.name_input.clone() else {
             return;
         };
-        let Some(config_input) = self.config_input.clone() else {
+        let Some(config_input) = self.ui.config_input.clone() else {
             return;
         };
 
@@ -186,7 +192,7 @@ impl WgApp {
         // 优先走内存：如果 text 已经存在，直接写入输入框。
         if let Some(text) = config.text.clone() {
             let text_hash = text_hash(text.as_ref());
-            if let Some(loaded) = &self.loaded_config {
+            if let Some(loaded) = &self.selection.loaded_config {
                 if loaded.name == name && loaded.text_hash == text_hash {
                     return;
                 }
@@ -198,10 +204,10 @@ impl WgApp {
             config_input.update(cx, |input, cx| {
                 input.set_value(text.clone(), window, cx);
             });
-            self.loading_config = None;
-            self.loading_config_path = None;
+            self.selection.loading_config = None;
+            self.selection.loading_config_path = None;
             self.update_parse_cache(&name, text.as_ref(), text_hash);
-            self.loaded_config = Some(LoadedConfigState { name, text_hash });
+            self.selection.loaded_config = Some(LoadedConfigState { name, text_hash });
             return;
         }
 
@@ -209,7 +215,7 @@ impl WgApp {
         let path = config.storage_path.clone();
         if let Some(text) = self.cached_config_text(&path) {
             let text_hash = text_hash(text.as_ref());
-            if let Some(loaded) = &self.loaded_config {
+            if let Some(loaded) = &self.selection.loaded_config {
                 if loaded.name == name && loaded.text_hash == text_hash {
                     return;
                 }
@@ -221,18 +227,18 @@ impl WgApp {
             config_input.update(cx, |input, cx| {
                 input.set_value(text.clone(), window, cx);
             });
-            self.loading_config = None;
-            self.loading_config_path = None;
+            self.selection.loading_config = None;
+            self.selection.loading_config_path = None;
             self.update_parse_cache(&name, text.as_ref(), text_hash);
-            self.loaded_config = Some(LoadedConfigState { name, text_hash });
+            self.selection.loaded_config = Some(LoadedConfigState { name, text_hash });
             return;
         }
 
         // 最后才走磁盘 IO：异步读取文件。
         // 注意：这里会把 loading_config_path 记录下来，避免索引复用导致错写。
-        self.loading_config = Some(idx);
-        self.loading_config_path = Some(path.clone());
-        self.loaded_config = None;
+        self.selection.loading_config = Some(idx);
+        self.selection.loading_config_path = Some(path.clone());
+        self.selection.loaded_config = None;
         name_input.update(cx, |input, cx| {
             input.set_value(name.clone(), window, cx);
         });
@@ -253,34 +259,35 @@ impl WgApp {
                 let result = read_task.await;
                 view.update_in(cx, |this, window, cx| {
                     // 关键校验：只允许“当前选中 + 路径一致 + 仍是同一加载任务”时写回。
-                    if this.selected != Some(idx) {
+                    if this.selection.selected != Some(idx) {
                         return;
                     }
                     let Some(config) = this.configs.get(idx) else {
                         return;
                     };
                     let current_path = &config.storage_path;
-                    let loading_path = this.loading_config_path.as_ref();
+                    let loading_path = this.selection.loading_config_path.as_ref();
                     if current_path != &path_for_match
-                        || this.loading_config != Some(idx)
+                        || this.selection.loading_config != Some(idx)
                         || loading_path != Some(&path_for_match)
                     {
                         return;
                     }
-                    this.loading_config = None;
-                    this.loading_config_path = None;
+                    this.selection.loading_config = None;
+                    this.selection.loading_config_path = None;
                     match result {
                         Ok(text) => {
                             let text: SharedString = text.into();
                             this.cache_config_text(path_for_cache, text.clone());
-                            if let Some(config_input) = this.config_input.as_ref() {
+                            if let Some(config_input) = this.ui.config_input.as_ref() {
                                 config_input.update(cx, |input, cx| {
                                     input.set_value(text.clone(), window, cx);
                                 });
                             }
                             let text_hash = text_hash(text.as_ref());
                             this.update_parse_cache(&name, text.as_ref(), text_hash);
-                            this.loaded_config = Some(LoadedConfigState { name, text_hash });
+                            this.selection.loaded_config =
+                                Some(LoadedConfigState { name, text_hash });
                             this.set_status("Loaded config");
                         }
                         Err(err) => {
@@ -303,7 +310,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selected = Some(idx);
+        self.selection.selected = Some(idx);
         self.load_config_into_inputs(idx, window, cx);
         self.persist_state_async(cx);
         self.set_status("Loaded tunnel");
@@ -329,6 +336,7 @@ impl WgApp {
         let text: SharedString = text.into();
 
         let name = self
+            .ui
             .name_input
             .as_ref()
             .map(|input| input.read(cx).value().to_string())
@@ -354,7 +362,7 @@ impl WgApp {
         let text_for_write = text.to_string();
         let text_for_state = text.clone();
 
-        self.busy = true;
+        self.runtime.busy = true;
         self.set_status("Saving config...");
         cx.notify();
 
@@ -367,7 +375,7 @@ impl WgApp {
                 });
                 let result = write_task.await;
                 view.update_in(cx, |this, window, cx| {
-                    this.busy = false;
+                    this.runtime.busy = false;
                     match result {
                         Ok(()) => {
                             this.upsert_config(
@@ -402,12 +410,12 @@ impl WgApp {
     pub(crate) fn handle_save_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // 读取输入框并写回配置列表。
         self.ensure_inputs(window, cx);
-        let Some(name_input) = self.name_input.as_ref() else {
+        let Some(name_input) = self.ui.name_input.as_ref() else {
             self.set_error("Name input not ready");
             cx.notify();
             return;
         };
-        let Some(config_input) = self.config_input.as_ref() else {
+        let Some(config_input) = self.ui.config_input.as_ref() else {
             self.set_error("Config input not ready");
             cx.notify();
             return;
@@ -469,7 +477,7 @@ impl WgApp {
         let text_for_write = text.to_string();
         let text_for_state = text.clone();
 
-        self.busy = true;
+        self.runtime.busy = true;
         self.set_status("Saving config...");
         cx.notify();
 
@@ -482,7 +490,7 @@ impl WgApp {
                 });
                 let result = write_task.await;
                 view.update_in(cx, |this, window, cx| {
-                    this.busy = false;
+                    this.runtime.busy = false;
                     match result {
                         Ok(()) => {
                             this.upsert_config(
@@ -517,7 +525,7 @@ impl WgApp {
     pub(crate) fn handle_rename_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // 仅更新名称，不修改配置文本。
         self.ensure_inputs(window, cx);
-        let Some(name_input) = self.name_input.as_ref() else {
+        let Some(name_input) = self.ui.name_input.as_ref() else {
             self.set_error("Name input not ready");
             cx.notify();
             return;
@@ -530,7 +538,7 @@ impl WgApp {
             return;
         }
 
-        let Some(idx) = self.selected else {
+        let Some(idx) = self.selection.selected else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
@@ -549,15 +557,15 @@ impl WgApp {
 
         self.configs[idx].name = new_name.to_string();
         self.configs[idx].name_lower = new_name.to_lowercase();
-        self.proxy_filter_total = 0;
+        self.selection.proxy_filter_total = 0;
         self.update_parse_cache_name(&old_name, new_name);
-        if let Some(loaded) = &mut self.loaded_config {
+        if let Some(loaded) = &mut self.selection.loaded_config {
             if loaded.name == old_name {
                 loaded.name = new_name.to_string();
             }
         }
-        if self.running_name.as_deref() == Some(old_name.as_str()) {
-            self.running_name = Some(new_name.to_string());
+        if self.runtime.running_name.as_deref() == Some(old_name.as_str()) {
+            self.runtime.running_name = Some(new_name.to_string());
         }
         self.set_status(format!("Renamed to {new_name}"));
         self.load_config_into_inputs(idx, window, cx);
@@ -569,7 +577,7 @@ impl WgApp {
     ///
     /// 说明：运行中的配置禁止删除，避免状态错乱和用户误操作。
     pub(crate) fn handle_delete_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(idx) = self.selected else {
+        let Some(idx) = self.selection.selected else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
@@ -622,8 +630,8 @@ impl WgApp {
         }
 
         let ids: HashSet<u64> = ids.iter().copied().collect();
-        let running_id = self.running_id;
-        let running_name = self.running_name.clone();
+        let running_id = self.runtime.running_id;
+        let running_name = self.runtime.running_name.clone();
 
         let mut to_delete_ids = HashSet::new();
         let mut deleted_names = Vec::new();
@@ -666,50 +674,55 @@ impl WgApp {
         }
 
         let prev_selected_id = self.selected_config().map(|cfg| cfg.id);
-        let prev_selected_idx = self.selected;
+        let prev_selected_idx = self.selection.selected;
 
         for id in &to_delete_ids {
-            self.config_traffic_days.remove(id);
-            self.config_traffic_hours.remove(id);
+            self.stats.config_traffic_days.remove(id);
+            self.stats.config_traffic_hours.remove(id);
         }
 
         self.configs.retain(|cfg| !to_delete_ids.contains(&cfg.id));
 
         let deleted_paths_set: HashSet<PathBuf> = deleted_paths.iter().cloned().collect();
-        self.config_text_cache
+        self.selection
+            .config_text_cache
             .retain(|path, _| !deleted_paths_set.contains(path));
-        self.config_text_cache_order
+        self.selection
+            .config_text_cache_order
             .retain(|path| !deleted_paths_set.contains(path));
-        self.proxy_selected_ids
+        self.selection
+            .proxy_selected_ids
             .retain(|id| !to_delete_ids.contains(id));
-        self.proxy_endpoint_family
+        self.selection
+            .proxy_endpoint_family
             .retain(|id, _| !to_delete_ids.contains(id));
-        self.proxy_endpoint_loading
+        self.selection
+            .proxy_endpoint_loading
             .retain(|id| !to_delete_ids.contains(id));
-        self.proxy_filter_total = 0;
-        self.proxy_filtered_indices.clear();
-        self.loading_config = None;
-        self.loading_config_path = None;
+        self.selection.proxy_filter_total = 0;
+        self.selection.proxy_filtered_indices.clear();
+        self.selection.loading_config = None;
+        self.selection.loading_config_path = None;
 
         if self.configs.is_empty() {
-            self.selected = None;
+            self.selection.selected = None;
             self.clear_inputs(window, cx);
         } else if let Some(prev_id) = prev_selected_id {
             if let Some(idx) = self.configs.iter().position(|cfg| cfg.id == prev_id) {
-                self.selected = Some(idx);
+                self.selection.selected = Some(idx);
                 if prev_selected_idx != Some(idx) {
                     self.load_config_into_inputs(idx, window, cx);
                 }
             } else if let Some(prev_idx) = prev_selected_idx {
                 let idx = prev_idx.min(self.configs.len() - 1);
-                self.selected = Some(idx);
+                self.selection.selected = Some(idx);
                 self.load_config_into_inputs(idx, window, cx);
             } else {
-                self.selected = None;
+                self.selection.selected = None;
                 self.clear_inputs(window, cx);
             }
         } else {
-            self.selected = None;
+            self.selection.selected = None;
             self.clear_inputs(window, cx);
         }
 
@@ -750,7 +763,7 @@ impl WgApp {
     /// 说明：该操作不会改变模型，仅提供快速复制能力。
     pub(crate) fn handle_copy_click(&mut self, cx: &mut Context<Self>) {
         // 直接复制配置文本到剪贴板。
-        let Some(idx) = self.selected else {
+        let Some(idx) = self.selection.selected else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
@@ -776,7 +789,7 @@ impl WgApp {
             let result = read_task.await;
             view.update(cx, |this, cx| {
                 // 注意：复制场景不改变选中项，因此只需检查是否仍选中同一索引。
-                if this.selected != Some(idx) {
+                if this.selection.selected != Some(idx) {
                     return;
                 }
                 match result {
@@ -801,21 +814,23 @@ impl WgApp {
     ///
     /// 说明：统一入口避免到处直接访问 self.configs。
     pub(crate) fn selected_config(&self) -> Option<&TunnelConfig> {
-        self.selected.and_then(|idx| self.configs.get(idx))
+        self.selection
+            .selected
+            .and_then(|idx| self.configs.get(idx))
     }
 
     /// 清空输入框内容。
     ///
     /// 说明：用于删除最后一个配置等场景，防止残留旧值。
     pub(crate) fn clear_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.loaded_config = None;
-        self.loading_config = None;
-        self.loading_config_path = None;
-        self.parse_cache = None;
-        if let Some(name_input) = self.name_input.as_ref() {
+        self.selection.loaded_config = None;
+        self.selection.loading_config = None;
+        self.selection.loading_config_path = None;
+        self.selection.parse_cache = None;
+        if let Some(name_input) = self.ui.name_input.as_ref() {
             name_input.update(cx, |input, cx| input.set_value("", window, cx));
         }
-        if let Some(config_input) = self.config_input.as_ref() {
+        if let Some(config_input) = self.ui.config_input.as_ref() {
             config_input.update(cx, |input, cx| input.set_value("", window, cx));
         }
     }

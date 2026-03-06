@@ -19,6 +19,7 @@ pub(crate) fn render_logs(
 ) -> impl IntoElement {
     app.ensure_log_input(window, cx);
     let log_input = app
+        .ui
         .log_input
         .clone()
         .expect("log input should be initialized");
@@ -36,7 +37,7 @@ pub(crate) fn render_logs(
         (current_text, cursor_at_end)
     };
 
-    if app.log_auto_follow && cursor_at_end && current_text != latest_text {
+    if app.ui_prefs.log_auto_follow && cursor_at_end && current_text != latest_text {
         let latest_text = latest_text.clone();
         log_input.update(cx, |input, cx| {
             input.set_value(latest_text.clone(), window, cx);
@@ -64,6 +65,7 @@ pub(crate) fn render_logs(
                 .compact()
                 .on_click(cx.listener(|this, _, _, cx| {
                     let text = this
+                        .ui
                         .log_input
                         .as_ref()
                         .map(|input| input.read(cx).value().to_string())
@@ -81,7 +83,7 @@ pub(crate) fn render_logs(
                 .compact()
                 .on_click(cx.listener(|this, _, window, cx| {
                     log::clear();
-                    if let Some(log_input) = this.log_input.clone() {
+                    if let Some(log_input) = this.ui.log_input.clone() {
                         log_input.update(cx, |input, cx| {
                             input.set_value("", window, cx);
                         });
@@ -93,14 +95,14 @@ pub(crate) fn render_logs(
 
     let auto_follow = Switch::new("logs-auto-follow")
         .label("Auto Follow (Lock Selection)")
-        .checked(app.log_auto_follow)
+        .checked(app.ui_prefs.log_auto_follow)
         .with_size(Size::Small)
         .on_click({
             let app_handle = cx.entity();
             let log_input = log_input.clone();
             move |checked: &bool, window, cx| {
                 let _ = app_handle.update(cx, |app, cx| {
-                    app.log_auto_follow = *checked;
+                    app.ui_prefs.log_auto_follow = *checked;
                     if *checked {
                         let latest_lines = log::snapshot();
                         let latest_text = if latest_lines.is_empty() {

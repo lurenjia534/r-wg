@@ -2,9 +2,7 @@ use gpui::*;
 use gpui_component::theme::{Theme, ThemeMode};
 use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariants},
-    h_flex,
-    tag::Tag,
-    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt,
+    h_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _,
 };
 
 use super::super::state::{SidebarItem, WgApp};
@@ -12,21 +10,15 @@ use super::data::ViewData;
 
 /// 顶部工具栏骨架：标题、配置切换、模式按钮、状态图标。
 pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
-    let display_font = "Space Grotesk";
     let ui_font = "Plus Jakarta Sans";
 
     let title = div();
 
     let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
-    let can_start = config_valid && !app.running && !app.busy;
-    let can_stop = app.running && !app.busy;
+    let can_start = config_valid && !app.runtime.running && !app.runtime.busy;
+    let can_stop = app.runtime.running && !app.runtime.busy;
 
     let is_dark = cx.theme().is_dark();
-    let bar_bg = linear_gradient(
-        120.0,
-        linear_color_stop(cx.theme().title_bar, 0.0),
-        linear_color_stop(cx.theme().secondary, 1.0),
-    );
     let chip_bg = if is_dark {
         cx.theme().background.alpha(0.45)
     } else {
@@ -48,9 +40,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .selected(!is_dark)
                 .tooltip("Switch to light mode")
                 .on_click(cx.listener(|this, _, window, cx| {
-                    if this.theme_mode != ThemeMode::Light {
+                    if this.ui_prefs.theme_mode != ThemeMode::Light {
                         // 持久化主题选择，便于下次启动恢复。
-                        this.theme_mode = ThemeMode::Light;
+                        this.ui_prefs.theme_mode = ThemeMode::Light;
                         Theme::change(ThemeMode::Light, Some(window), cx);
                         this.persist_state_async(cx);
                     }
@@ -62,9 +54,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .selected(is_dark)
                 .tooltip("Switch to dark mode")
                 .on_click(cx.listener(|this, _, window, cx| {
-                    if this.theme_mode != ThemeMode::Dark {
+                    if this.ui_prefs.theme_mode != ThemeMode::Dark {
                         // 持久化主题选择，便于下次启动恢复。
-                        this.theme_mode = ThemeMode::Dark;
+                        this.ui_prefs.theme_mode = ThemeMode::Dark;
                         Theme::change(ThemeMode::Dark, Some(window), cx);
                         this.persist_state_async(cx);
                     }
@@ -76,7 +68,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
     } else {
         "Select a valid config first"
     };
-    let off_tooltip = if app.running {
+    let off_tooltip = if app.runtime.running {
         "Stop tunnel"
     } else {
         "Tunnel is not running"
@@ -89,7 +81,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .child(
             Button::new("mode-on")
                 .label("On")
-                .selected(app.running)
+                .selected(app.runtime.running)
                 .disabled(!can_start)
                 .tooltip(on_tooltip)
                 .on_click(cx.listener(|this, _, window, cx| {
@@ -99,7 +91,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .child(
             Button::new("mode-off")
                 .label("Off")
-                .selected(!app.running)
+                .selected(!app.runtime.running)
                 .disabled(!can_stop)
                 .tooltip(off_tooltip)
                 .on_click(cx.listener(|this, _, window, cx| {
@@ -108,7 +100,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         );
 
     let status_chip = {
-        let (label, dot_color, text_color, bg, border) = if app.running {
+        let (label, dot_color, text_color, bg, border) = if app.runtime.running {
             (
                 "Connected",
                 cx.theme().accent,
@@ -150,7 +142,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .icon(Icon::new(IconName::Settings).size_5())
         .tooltip("Open settings")
         .on_click(cx.listener(|this, _, _, cx| {
-            this.sidebar_active = SidebarItem::Advanced;
+            this.ui_prefs.sidebar_active = SidebarItem::Advanced;
             cx.notify();
         }));
 

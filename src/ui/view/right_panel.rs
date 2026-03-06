@@ -22,15 +22,15 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
         .gap_2()
         .child(tab_button(
             "Status",
-            app.right_tab == RightTab::Status,
+            app.ui_prefs.right_tab == RightTab::Status,
             cx,
-            |this| this.right_tab = RightTab::Status,
+            |this| this.ui_prefs.right_tab = RightTab::Status,
         ))
         .child(tab_button(
             "Logs",
-            app.right_tab == RightTab::Logs,
+            app.ui_prefs.right_tab == RightTab::Logs,
             cx,
-            |this| this.right_tab = RightTab::Logs,
+            |this| this.ui_prefs.right_tab = RightTab::Logs,
         ));
 
     // Network 卡片：展示本机地址/DNS/路由表/Allowed IPs。
@@ -68,8 +68,16 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
 
     // Connection 卡片：展示连接状态与流量统计。
     let status_card = {
-        let connection_state = if app.running { "Connected" } else { "Idle" };
-        let active_tunnel = app.running_name.clone().unwrap_or_else(|| "-".to_string());
+        let connection_state = if app.runtime.running {
+            "Connected"
+        } else {
+            "Idle"
+        };
+        let active_tunnel = app
+            .runtime
+            .running_name
+            .clone()
+            .unwrap_or_else(|| "-".to_string());
         let rx = format_bytes(data.peer_summary.rx_bytes);
         let tx = format_bytes(data.peer_summary.tx_bytes);
         let peers = if data.peer_summary.peer_count == 0 {
@@ -96,10 +104,10 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
             div()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child(app.stats_note.clone())
+                .child(app.stats.stats_note.clone())
                 .into_any_element(),
         );
-        if app.peer_stats.is_empty() {
+        if app.stats.peer_stats.is_empty() {
             stats_items.push(
                 div()
                     .text_sm()
@@ -108,7 +116,7 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
                     .into_any_element(),
             );
         } else {
-            stats_items.extend(app.peer_stats.iter().map(|peer| {
+            stats_items.extend(app.stats.peer_stats.iter().map(|peer| {
                 div()
                     .text_sm()
                     .child(format_peer_line(peer))
@@ -123,7 +131,7 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
 
     // Logs 卡片：集中显示最近状态与错误信息。
     let logs_card = {
-        let last_error = app.last_error.clone().unwrap_or_else(|| "None".into());
+        let last_error = app.ui.last_error.clone().unwrap_or_else(|| "None".into());
         let parse_state = data
             .parse_error
             .clone()
@@ -131,14 +139,14 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
         GroupBox::new().fill().title("Logs").child(
             DescriptionList::new()
                 .columns(1)
-                .item("Latest Status", app.status.to_string(), 1)
+                .item("Latest Status", app.ui.status.to_string(), 1)
                 .item("Last Error", last_error.to_string(), 1)
                 .item("Parse Error", parse_state, 1),
         )
     };
 
     // 根据标签切换右侧内容。
-    let right_body = match app.right_tab {
+    let right_body = match app.ui_prefs.right_tab {
         RightTab::Status => div()
             .flex()
             .flex_col()

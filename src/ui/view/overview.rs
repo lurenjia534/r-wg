@@ -15,7 +15,6 @@ use gpui_component::{
         shape::Line,
         StrokeStyle, AXIS_GAP,
     },
-    progress::Progress,
     tag::Tag,
     v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, PixelsExt, Selectable as _,
     Sizable as _, StyledExt as _,
@@ -35,8 +34,8 @@ pub(crate) fn render_overview(app: &mut WgApp, data: &ViewData, cx: &mut Context
     let (upload_speed, download_speed) = format_speeds(app, data);
     let upload_total = super::super::format::format_bytes(data.peer_summary.tx_bytes);
     let download_total = super::super::format::format_bytes(data.peer_summary.rx_bytes);
-    let upload_series: Vec<f32> = app.tx_rate_history.iter().copied().collect();
-    let download_series: Vec<f32> = app.rx_rate_history.iter().copied().collect();
+    let upload_series: Vec<f32> = app.stats.tx_rate_history.iter().copied().collect();
+    let download_series: Vec<f32> = app.stats.rx_rate_history.iter().copied().collect();
     let upload_sparkline = sparkline_chart(build_sparkline_points(&upload_series), rgb(0x6366f1));
     let download_sparkline =
         sparkline_chart(build_sparkline_points(&download_series), rgb(0x22d3ee));
@@ -45,7 +44,11 @@ pub(crate) fn render_overview(app: &mut WgApp, data: &ViewData, cx: &mut Context
     let dns = format_dns(data);
     let endpoint = format_endpoint(data);
     let allowed = format_allowed_summary(data);
-    let network_name = app.running_name.clone().unwrap_or_else(|| "-".to_string());
+    let network_name = app
+        .runtime
+        .running_name
+        .clone()
+        .unwrap_or_else(|| "-".to_string());
     let route_table = data
         .parsed_config
         .as_ref()
@@ -71,7 +74,7 @@ pub(crate) fn render_overview(app: &mut WgApp, data: &ViewData, cx: &mut Context
                         &memory,
                         &rx,
                         &tx,
-                        app.running,
+                        app.runtime.running,
                         &peers,
                         &handshake,
                     )
@@ -378,30 +381,30 @@ fn traffic_summary_card(
         .child(
             Button::new("traffic-period-today")
                 .label("Today")
-                .selected(app.traffic_period == TrafficPeriod::Today)
+                .selected(app.ui_prefs.traffic_period == TrafficPeriod::Today)
                 .tooltip("Last 24 hours")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.traffic_period = TrafficPeriod::Today;
+                    this.ui_prefs.traffic_period = TrafficPeriod::Today;
                     cx.notify();
                 })),
         )
         .child(
             Button::new("traffic-period-month")
                 .label("This Month")
-                .selected(app.traffic_period == TrafficPeriod::ThisMonth)
+                .selected(app.ui_prefs.traffic_period == TrafficPeriod::ThisMonth)
                 .tooltip("Last 30 days")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.traffic_period = TrafficPeriod::ThisMonth;
+                    this.ui_prefs.traffic_period = TrafficPeriod::ThisMonth;
                     cx.notify();
                 })),
         )
         .child(
             Button::new("traffic-period-last")
                 .label("Last Month")
-                .selected(app.traffic_period == TrafficPeriod::LastMonth)
+                .selected(app.ui_prefs.traffic_period == TrafficPeriod::LastMonth)
                 .tooltip("Previous 30 days")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.traffic_period = TrafficPeriod::LastMonth;
+                    this.ui_prefs.traffic_period = TrafficPeriod::LastMonth;
                     cx.notify();
                 })),
         );
@@ -724,7 +727,12 @@ fn percent(value: u64, total: u64) -> f32 {
 fn build_traffic_summary(app: &WgApp) -> TrafficSummaryData {
     const MAX_RANK_ITEMS: usize = 7;
     let now = Local::now();
-    build_traffic_summary_at(app, now.date_naive(), now.timestamp() / 3600, MAX_RANK_ITEMS)
+    build_traffic_summary_at(
+        app,
+        now.date_naive(),
+        now.timestamp() / 3600,
+        MAX_RANK_ITEMS,
+    )
 }
 
 fn build_traffic_summary_at(
@@ -733,15 +741,15 @@ fn build_traffic_summary_at(
     current_hour: i64,
     max_rank_items: usize,
 ) -> TrafficSummaryData {
-    let (total_rx, total_tx, ranked) = match app.traffic_period {
+    let (total_rx, total_tx, ranked) = match app.ui_prefs.traffic_period {
         TrafficPeriod::Today => {
             let min_hour = current_hour.saturating_sub(23);
-            let (total_rx, total_tx) = sum_hours(&app.traffic_hours, min_hour, current_hour);
+            let (total_rx, total_tx) = sum_hours(&app.stats.traffic_hours, min_hour, current_hour);
             let ranked = app
                 .configs
                 .iter()
                 .filter_map(|cfg| {
-                    let hours = app.config_traffic_hours.get(&cfg.id)?;
+                    let hours = app.stats.config_traffic_hours.get(&cfg.id)?;
                     let (rx, tx) = sum_hours(hours, min_hour, current_hour);
                     let total = rx.saturating_add(tx);
                     if total == 0 {
@@ -759,12 +767,12 @@ fn build_traffic_summary_at(
         }
         TrafficPeriod::ThisMonth => {
             let dates = build_date_set(today, 0, 30);
-            let (total_rx, total_tx) = sum_days(&app.traffic_days_v2, &dates);
+            let (total_rx, total_tx) = sum_days(&app.stats.traffic_days_v2, &dates);
             let ranked = app
                 .configs
                 .iter()
                 .filter_map(|cfg| {
-                    let days = app.config_traffic_days.get(&cfg.id)?;
+                    let days = app.stats.config_traffic_days.get(&cfg.id)?;
                     let (rx, tx) = sum_days(days, &dates);
                     let total = rx.saturating_add(tx);
                     if total == 0 {
@@ -782,12 +790,12 @@ fn build_traffic_summary_at(
         }
         TrafficPeriod::LastMonth => {
             let dates = build_date_set(today, 30, 30);
-            let (total_rx, total_tx) = sum_days(&app.traffic_days_v2, &dates);
+            let (total_rx, total_tx) = sum_days(&app.stats.traffic_days_v2, &dates);
             let ranked = app
                 .configs
                 .iter()
                 .filter_map(|cfg| {
-                    let days = app.config_traffic_days.get(&cfg.id)?;
+                    let days = app.stats.config_traffic_days.get(&cfg.id)?;
                     let (rx, tx) = sum_days(days, &dates);
                     let total = rx.saturating_add(tx);
                     if total == 0 {
@@ -855,7 +863,7 @@ fn build_traffic_trend(app: &WgApp) -> TrafficTrendData {
 
 fn build_traffic_trend_at(app: &WgApp, today: NaiveDate) -> TrafficTrendData {
     let mut by_date: HashMap<NaiveDate, u64> = HashMap::new();
-    for day in &app.traffic_days {
+    for day in &app.stats.traffic_days {
         if let Ok(date) = NaiveDate::parse_from_str(&day.date, "%Y-%m-%d") {
             let entry = by_date.entry(date).or_insert(0);
             *entry = entry.saturating_add(day.bytes);
@@ -1070,11 +1078,11 @@ fn vertical_rule(cx: &mut Context<WgApp>) -> Div {
 }
 
 fn format_speeds(app: &WgApp, _data: &ViewData) -> (String, String) {
-    if !app.running {
+    if !app.runtime.running {
         return ("0.0 KB/s".to_string(), "0.0 KB/s".to_string());
     }
-    let upload = app.tx_rate_bps;
-    let download = app.rx_rate_bps;
+    let upload = app.stats.tx_rate_bps;
+    let download = app.stats.rx_rate_bps;
     (format_speed(upload), format_speed(download))
 }
 
@@ -1229,7 +1237,7 @@ impl Element for TrafficAvgLine {
 }
 
 fn format_uptime(app: &WgApp) -> String {
-    let Some(start) = app.started_at else {
+    let Some(start) = app.stats.started_at else {
         return "0:00".to_string();
     };
     let elapsed = start.elapsed();
@@ -1357,8 +1365,8 @@ mod tests {
 
     use super::{build_traffic_summary_at, build_traffic_trend_at};
     use crate::ui::state::{
-        ConfigSource, TrafficDay, TrafficDayStats, TrafficHour, TrafficPeriod, TunnelConfig,
-        WgApp, TRAFFIC_TREND_DAYS,
+        ConfigSource, TrafficDay, TrafficDayStats, TrafficHour, TrafficPeriod, TunnelConfig, WgApp,
+        TRAFFIC_TREND_DAYS,
     };
     use chrono::NaiveDate;
 
@@ -1381,9 +1389,9 @@ mod tests {
     fn traffic_summary_today_uses_last_24_hours_and_sorts_rankings() {
         let mut app = make_app();
         let current_hour = 1_000;
-        app.traffic_period = TrafficPeriod::Today;
-        app.configs = vec![make_config(1, "alpha"), make_config(2, "beta")];
-        app.traffic_hours = vec![
+        app.ui_prefs.traffic_period = TrafficPeriod::Today;
+        app.configs.configs = vec![make_config(1, "alpha"), make_config(2, "beta")];
+        app.stats.traffic_hours = vec![
             TrafficHour {
                 hour: current_hour,
                 rx_bytes: 50,
@@ -1400,7 +1408,7 @@ mod tests {
                 tx_bytes: 999,
             },
         ];
-        app.config_traffic_hours.insert(
+        app.stats.config_traffic_hours.insert(
             1,
             vec![
                 TrafficHour {
@@ -1415,7 +1423,7 @@ mod tests {
                 },
             ],
         );
-        app.config_traffic_hours.insert(
+        app.stats.config_traffic_hours.insert(
             2,
             vec![TrafficHour {
                 hour: current_hour - 1,
@@ -1444,8 +1452,8 @@ mod tests {
     fn traffic_summary_month_windows_split_current_and_previous_periods() {
         let today = NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date");
         let mut app = make_app();
-        app.configs = vec![make_config(7, "alpha")];
-        app.traffic_days_v2 = vec![
+        app.configs.configs = vec![make_config(7, "alpha")];
+        app.stats.traffic_days_v2 = vec![
             TrafficDayStats {
                 date: "2026-03-06".to_string(),
                 rx_bytes: 10,
@@ -1462,7 +1470,7 @@ mod tests {
                 tx_bytes: 600,
             },
         ];
-        app.config_traffic_days.insert(
+        app.stats.config_traffic_days.insert(
             7,
             vec![
                 TrafficDayStats {
@@ -1483,13 +1491,13 @@ mod tests {
             ],
         );
 
-        app.traffic_period = TrafficPeriod::ThisMonth;
+        app.ui_prefs.traffic_period = TrafficPeriod::ThisMonth;
         let this_month = build_traffic_summary_at(&app, today, 0, 7);
         assert_eq!(this_month.total_rx, 40);
         assert_eq!(this_month.total_tx, 60);
         assert_eq!(this_month.ranked[0].total_bytes(), 100);
 
-        app.traffic_period = TrafficPeriod::LastMonth;
+        app.ui_prefs.traffic_period = TrafficPeriod::LastMonth;
         let last_month = build_traffic_summary_at(&app, today, 0, 7);
         assert_eq!(last_month.total_rx, 500);
         assert_eq!(last_month.total_tx, 600);
@@ -1500,7 +1508,7 @@ mod tests {
     fn traffic_trend_aggregates_same_day_entries_and_marks_today() {
         let today = NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date");
         let mut app = make_app();
-        app.traffic_days = vec![
+        app.stats.traffic_days = vec![
             TrafficDay {
                 date: "2026-03-06".to_string(),
                 bytes: 100,

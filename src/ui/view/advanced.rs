@@ -1,4 +1,3 @@
-use gpui::prelude::FluentBuilder;
 use gpui::{div, px, Context, Div, Entity, ParentElement, SharedString, Styled};
 use gpui_component::setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings};
 use gpui_component::theme::{Theme, ThemeMode};
@@ -71,12 +70,12 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
         "Theme Mode",
         SettingField::dropdown(
             options,
-            move |cx| theme_mode_value(get_handle.read(cx).theme_mode),
+            move |cx| theme_mode_value(get_handle.read(cx).ui_prefs.theme_mode),
             move |value, cx| {
                 let next = theme_mode_from_value(&value);
                 let _ = set_handle.update(cx, |app, cx| {
-                    if app.theme_mode != next {
-                        app.theme_mode = next;
+                    if app.ui_prefs.theme_mode != next {
+                        app.ui_prefs.theme_mode = next;
                         Theme::change(next, None, cx);
                         cx.refresh_windows();
                         app.persist_state_async(cx);
@@ -96,10 +95,10 @@ fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Auto Follow Logs",
         SettingField::switch(
-            move |cx| get_handle.read(cx).log_auto_follow,
+            move |cx| get_handle.read(cx).ui_prefs.log_auto_follow,
             move |value, cx| {
                 let _ = set_handle.update(cx, |app, cx| {
-                    app.log_auto_follow = value;
+                    app.ui_prefs.log_auto_follow = value;
                     cx.notify();
                 });
             },
@@ -117,11 +116,11 @@ fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
         "DNS Mode",
         SettingField::dropdown(
             options,
-            move |cx| dns_mode_value(get_handle.read(cx).dns_mode),
+            move |cx| dns_mode_value(get_handle.read(cx).ui_prefs.dns_mode),
             move |value, cx| {
                 let next = dns_mode_from_value(&value);
                 let _ = set_handle.update(cx, |app, cx| {
-                    app.dns_mode = next;
+                    app.ui_prefs.dns_mode = next;
                     cx.notify();
                 });
             },
@@ -139,11 +138,11 @@ fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {
         "DNS Preset",
         SettingField::dropdown(
             options,
-            move |cx| dns_preset_value(get_handle.read(cx).dns_preset),
+            move |cx| dns_preset_value(get_handle.read(cx).ui_prefs.dns_preset),
             move |value, cx| {
                 let next = dns_preset_from_value(&value);
                 let _ = set_handle.update(cx, |app, cx| {
-                    app.dns_preset = next;
+                    app.ui_prefs.dns_preset = next;
                     cx.notify();
                 });
             },
@@ -161,11 +160,11 @@ fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
         "Default Traffic Period",
         SettingField::dropdown(
             options,
-            move |cx| traffic_period_value(get_handle.read(cx).traffic_period),
+            move |cx| traffic_period_value(get_handle.read(cx).ui_prefs.traffic_period),
             move |value, cx| {
                 let next = traffic_period_from_value(&value);
                 let _ = set_handle.update(cx, |app, cx| {
-                    app.traffic_period = next;
+                    app.ui_prefs.traffic_period = next;
                     cx.notify();
                 });
             },
@@ -183,11 +182,11 @@ fn right_tab_item(app: Entity<WgApp>) -> SettingItem {
         "Right Panel Default",
         SettingField::dropdown(
             options,
-            move |cx| right_tab_value(get_handle.read(cx).right_tab),
+            move |cx| right_tab_value(get_handle.read(cx).ui_prefs.right_tab),
             move |value, cx| {
                 let next = right_tab_from_value(&value);
                 let _ = set_handle.update(cx, |app, cx| {
-                    app.right_tab = next;
+                    app.ui_prefs.right_tab = next;
                     cx.notify();
                 });
             },

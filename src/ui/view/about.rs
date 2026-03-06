@@ -26,7 +26,7 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
     };
     let platform_text = format!("{OS} / {ARCH}");
 
-    let runtime_tag = if app.running {
+    let runtime_tag = if app.runtime.running {
         Tag::success().small().rounded_full().child("Running")
     } else {
         Tag::secondary().small().rounded_full().child("Idle")

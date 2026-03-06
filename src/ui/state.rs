@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -182,14 +183,58 @@ impl SidebarItem {
     }
 }
 
-pub(crate) struct WgApp {
-    // 后端与配置列表。
-    pub(crate) engine: Engine,
+pub(crate) struct ConfigsState {
+    /// 全部隧道配置。
     pub(crate) configs: Vec<TunnelConfig>,
     /// 配置持久化目录与 state.json 路径。
     pub(crate) storage: Option<StoragePaths>,
     /// 下一个配置 ID（用于内部文件名）。
     pub(crate) next_config_id: u64,
+}
+
+impl ConfigsState {
+    fn new() -> Self {
+        Self {
+            configs: Vec::new(),
+            storage: None,
+            next_config_id: 1,
+        }
+    }
+}
+
+impl Deref for ConfigsState {
+    type Target = Vec<TunnelConfig>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.configs
+    }
+}
+
+impl DerefMut for ConfigsState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.configs
+    }
+}
+
+impl<'a> IntoIterator for &'a ConfigsState {
+    type Item = &'a TunnelConfig;
+    type IntoIter = std::slice::Iter<'a, TunnelConfig>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.configs.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut ConfigsState {
+    type Item = &'a mut TunnelConfig;
+    type IntoIter = std::slice::IterMut<'a, TunnelConfig>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.configs.iter_mut()
+    }
+}
+
+pub(crate) struct SelectionState {
     /// 是否已触发持久化加载，避免重复启动加载任务。
     pub(crate) persistence_loaded: bool,
     pub(crate) selected: Option<usize>,
@@ -219,17 +264,34 @@ pub(crate) struct WgApp {
     pub(crate) proxy_select_mode: bool,
     /// 代理/节点多选：选中的配置 ID 列表。
     pub(crate) proxy_selected_ids: HashSet<u64>,
-    // 输入控件句柄（懒创建，避免提前绑定窗口上下文）。
-    pub(crate) name_input: Option<Entity<InputState>>,
-    pub(crate) config_input: Option<Entity<InputState>>,
-    pub(crate) log_input: Option<Entity<InputState>>,
-    pub(crate) proxy_search_input: Option<Entity<InputState>>,
-    // 日志状态与提示。
-    pub(crate) log_auto_follow: bool,
-    pub(crate) status: SharedString,
-    pub(crate) last_error: Option<SharedString>,
-    // 运行与连接状态。
+}
+
+impl SelectionState {
+    fn new() -> Self {
+        Self {
+            persistence_loaded: false,
+            selected: None,
+            loading_config: None,
+            loading_config_path: None,
+            parse_cache: None,
+            loaded_config: None,
+            config_text_cache: HashMap::new(),
+            config_text_cache_order: VecDeque::new(),
+            proxy_filter_query: String::new(),
+            proxy_filter_total: 0,
+            proxy_filtered_indices: Vec::new(),
+            proxy_endpoint_family: HashMap::new(),
+            proxy_endpoint_loading: HashSet::new(),
+            proxy_select_mode: false,
+            proxy_selected_ids: HashSet::new(),
+        }
+    }
+}
+
+pub(crate) struct RuntimeState {
+    /// 是否处于运行中。
     pub(crate) running: bool,
+    /// 是否有异步流程正在执行。
     pub(crate) busy: bool,
     /// 停止过程中记录的“待启动”请求。
     pub(crate) pending_start: Option<PendingStart>,
@@ -237,18 +299,27 @@ pub(crate) struct WgApp {
     pub(crate) last_stop_at: Option<Instant>,
     pub(crate) running_name: Option<String>,
     pub(crate) running_id: Option<u64>,
+}
+
+impl RuntimeState {
+    fn new() -> Self {
+        Self {
+            running: false,
+            busy: false,
+            pending_start: None,
+            last_stop_at: None,
+            running_name: None,
+            running_id: None,
+        }
+    }
+}
+
+pub(crate) struct StatsState {
+    /// 最近一次拉取到的 Peer 统计。
     pub(crate) peer_stats: Vec<PeerStats>,
     // 统计展示（用于右侧面板与图表）。
     pub(crate) stats_note: SharedString,
     pub(crate) stats_generation: u64,
-    // 页面选择与模式开关。
-    pub(crate) right_tab: RightTab,
-    pub(crate) traffic_period: TrafficPeriod,
-    // 持久化的主题选择（浅色/深色）。
-    pub(crate) theme_mode: ThemeMode,
-    pub(crate) dns_mode: DnsMode,
-    pub(crate) dns_preset: DnsPreset,
-    pub(crate) sidebar_active: SidebarItem,
     // 速率/流量采样窗口。
     pub(crate) started_at: Option<Instant>,
     pub(crate) last_stats_at: Option<Instant>,
@@ -273,50 +344,12 @@ pub(crate) struct WgApp {
     pub(crate) traffic_last_persist_at: Option<Instant>,
 }
 
-impl WgApp {
-    pub(crate) fn new(engine: Engine, theme_mode: ThemeMode) -> Self {
+impl StatsState {
+    fn new() -> Self {
         Self {
-            engine,
-            configs: Vec::new(),
-            storage: None,
-            next_config_id: 1,
-            persistence_loaded: false,
-            selected: None,
-            loading_config: None,
-            loading_config_path: None,
-            parse_cache: None,
-            loaded_config: None,
-            config_text_cache: HashMap::new(),
-            config_text_cache_order: VecDeque::new(),
-            proxy_filter_query: String::new(),
-            proxy_filter_total: 0,
-            proxy_filtered_indices: Vec::new(),
-            proxy_endpoint_family: HashMap::new(),
-            proxy_endpoint_loading: HashSet::new(),
-            proxy_select_mode: false,
-            proxy_selected_ids: HashSet::new(),
-            name_input: None,
-            config_input: None,
-            log_input: None,
-            proxy_search_input: None,
-            log_auto_follow: true,
-            status: "Ready".into(),
-            last_error: None,
-            running: false,
-            busy: false,
-            pending_start: None,
-            last_stop_at: None,
-            running_name: None,
-            running_id: None,
             peer_stats: Vec::new(),
             stats_note: "Peer stats unavailable".into(),
             stats_generation: 0,
-            right_tab: RightTab::Status,
-            traffic_period: TrafficPeriod::Today,
-            theme_mode,
-            dns_mode: DnsMode::FollowConfig,
-            dns_preset: DnsPreset::CloudflareStandard,
-            sidebar_active: SidebarItem::Overview,
             started_at: None,
             last_stats_at: None,
             last_rx_bytes: 0,
@@ -337,6 +370,78 @@ impl WgApp {
             config_traffic_hours: HashMap::new(),
             traffic_dirty: false,
             traffic_last_persist_at: None,
+        }
+    }
+}
+
+pub(crate) struct UiPrefsState {
+    pub(crate) log_auto_follow: bool,
+    pub(crate) right_tab: RightTab,
+    pub(crate) traffic_period: TrafficPeriod,
+    pub(crate) theme_mode: ThemeMode,
+    pub(crate) dns_mode: DnsMode,
+    pub(crate) dns_preset: DnsPreset,
+    pub(crate) sidebar_active: SidebarItem,
+}
+
+impl UiPrefsState {
+    fn new(theme_mode: ThemeMode) -> Self {
+        Self {
+            log_auto_follow: true,
+            right_tab: RightTab::Status,
+            traffic_period: TrafficPeriod::Today,
+            theme_mode,
+            dns_mode: DnsMode::FollowConfig,
+            dns_preset: DnsPreset::CloudflareStandard,
+            sidebar_active: SidebarItem::Overview,
+        }
+    }
+}
+
+pub(crate) struct UiState {
+    // 输入控件句柄（懒创建，避免提前绑定窗口上下文）。
+    pub(crate) name_input: Option<Entity<InputState>>,
+    pub(crate) config_input: Option<Entity<InputState>>,
+    pub(crate) log_input: Option<Entity<InputState>>,
+    pub(crate) proxy_search_input: Option<Entity<InputState>>,
+    // 日志状态与提示。
+    pub(crate) status: SharedString,
+    pub(crate) last_error: Option<SharedString>,
+}
+
+impl UiState {
+    fn new() -> Self {
+        Self {
+            name_input: None,
+            config_input: None,
+            log_input: None,
+            proxy_search_input: None,
+            status: "Ready".into(),
+            last_error: None,
+        }
+    }
+}
+
+pub(crate) struct WgApp {
+    pub(crate) engine: Engine,
+    pub(crate) configs: ConfigsState,
+    pub(crate) selection: SelectionState,
+    pub(crate) runtime: RuntimeState,
+    pub(crate) stats: StatsState,
+    pub(crate) ui_prefs: UiPrefsState,
+    pub(crate) ui: UiState,
+}
+
+impl WgApp {
+    pub(crate) fn new(engine: Engine, theme_mode: ThemeMode) -> Self {
+        Self {
+            engine,
+            configs: ConfigsState::new(),
+            selection: SelectionState::new(),
+            runtime: RuntimeState::new(),
+            stats: StatsState::new(),
+            ui_prefs: UiPrefsState::new(theme_mode),
+            ui: UiState::new(),
         }
     }
 }

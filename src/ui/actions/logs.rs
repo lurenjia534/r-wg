@@ -6,7 +6,7 @@ use super::super::state::WgApp;
 impl WgApp {
     /// 确保日志输入框已创建，避免在没有窗口时初始化。
     pub(crate) fn ensure_log_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.log_input.is_some() {
+        if self.ui.log_input.is_some() {
             return;
         }
 
@@ -18,6 +18,6 @@ impl WgApp {
                 .searchable(false)
                 .placeholder("No logs captured")
         });
-        self.log_input = Some(input);
+        self.ui.log_input = Some(input);
     }
 }

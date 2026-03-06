@@ -26,10 +26,12 @@ impl Render for WgApp {
 
         // 复制 Entity 句柄，避免后续借用冲突。
         let name_input = self
+            .ui
             .name_input
             .clone()
             .expect("name input should be initialized");
         let config_input = self
+            .ui
             .config_input
             .clone()
             .expect("config input should be initialized");
@@ -51,7 +53,7 @@ impl Render for WgApp {
                 // 左侧：隧道列表 + 操作按钮
                 .child(left_panel::render_left_panel(self, &data, cx))
                 .child({
-                    let main_body = match self.sidebar_active {
+                    let main_body = match self.ui_prefs.sidebar_active {
                         SidebarItem::Overview => {
                             overview::render_overview(self, &data, cx).into_any_element()
                         }
@@ -98,7 +100,7 @@ impl Render for WgApp {
                                 .flex_1()
                                 .min_h(px(0.0))
                                 .child(main_body);
-                            let body = if self.sidebar_active == SidebarItem::Overview {
+                            let body = if self.ui_prefs.sidebar_active == SidebarItem::Overview {
                                 body.overflow_y_scrollbar().into_any_element()
                             } else {
                                 body.into_any_element()

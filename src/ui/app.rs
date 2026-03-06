@@ -61,9 +61,9 @@ pub fn run() {
                     let mut was_running = false;
                     if let Some(view) = view_handle.upgrade() {
                         view.update(cx, |this, cx| {
-                            was_running = this.running;
-                            if this.running {
-                                this.busy = true;
+                            was_running = this.runtime.running;
+                            if this.runtime.running {
+                                this.runtime.busy = true;
                                 this.set_status("Stopping...");
                                 cx.notify();
                             }
@@ -87,11 +87,11 @@ pub fn run() {
                                 if was_running {
                                     if let Some(view) = view_handle.upgrade() {
                                         let _ = view.update(cx, |this, cx| {
-                                            this.busy = false;
-                                            this.running = false;
-                                            this.running_name = None;
-                                            this.running_id = None;
-                                            this.started_at = None;
+                                            this.runtime.busy = false;
+                                            this.runtime.running = false;
+                                            this.runtime.running_name = None;
+                                            this.runtime.running_id = None;
+                                            this.stats.started_at = None;
                                             this.clear_stats();
                                             this.set_status("Stopped");
                                             cx.notify();
@@ -106,7 +106,7 @@ pub fn run() {
                                 if let Some(view) = view_handle.upgrade() {
                                     let _ = view.update(cx, |this, cx| {
                                         if was_running {
-                                            this.busy = false;
+                                            this.runtime.busy = false;
                                         }
                                         this.set_error(format!("Stop failed: {err}"));
                                         cx.notify();

@@ -50,11 +50,11 @@ pub(crate) fn render_left_panel(
                 .child(div().text_sm().child("About")),
         )
         .child(Icon::new(IconName::Settings).size_4())
-        .selected(app.sidebar_active == SidebarItem::About)
+        .selected(app.ui_prefs.sidebar_active == SidebarItem::About)
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, _event, _window, cx| {
-                this.sidebar_active = SidebarItem::About;
+                this.ui_prefs.sidebar_active = SidebarItem::About;
                 cx.notify();
             }),
         );
@@ -110,9 +110,9 @@ fn sidebar_group(
         let item = *item;
         SidebarMenuItem::new(item.label())
             .icon(Icon::new(item.icon()).size_4())
-            .active(app.sidebar_active == item)
+            .active(app.ui_prefs.sidebar_active == item)
             .on_click(cx.listener(move |this, _event, _window, cx| {
-                this.sidebar_active = item;
+                this.ui_prefs.sidebar_active = item;
                 cx.notify();
             }))
     })))

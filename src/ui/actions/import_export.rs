@@ -56,7 +56,7 @@ impl WgApp {
                     Ok(Ok(Some(paths))) => paths,
                     Ok(Ok(None)) => {
                         view.update(cx, |this, cx| {
-                            this.busy = false;
+                            this.runtime.busy = false;
                             this.set_status("Import canceled");
                             cx.notify();
                         })
@@ -187,7 +187,7 @@ impl WgApp {
 
         // 记录总数，用于状态提示与批量导入节奏控制。
         let total = jobs.len();
-        self.busy = true;
+        self.runtime.busy = true;
         self.set_status(format!("Loading {total} files..."));
         cx.notify();
 
@@ -286,10 +286,10 @@ impl WgApp {
                 }
 
                 view.update_in(cx, |this, window, cx| {
-                    this.busy = false;
+                    this.runtime.busy = false;
                     if imported > 0 {
                         let idx = this.configs.len().saturating_sub(1);
-                        this.selected = Some(idx);
+                        this.selection.selected = Some(idx);
                         this.load_config_into_inputs(idx, window, cx);
                     }
                     // 导入结束后给出总结提示（成功/失败数）。

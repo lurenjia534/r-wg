@@ -23,12 +23,12 @@ impl WgApp {
     fn handle_start_stop_core(&mut self, cx: &mut Context<Self>) {
         // 统一入口：所有 Start/Stop 点击都会走这里。
         // busy=true 表示已有异步流程在执行，避免并发触发导致状态错乱。
-        if self.busy {
-            if self.running {
+        if self.runtime.busy {
+            if self.runtime.running {
                 // stop 过程中再次点击 start：记录“待启动请求”，
                 // 等 stop 完成后自动执行，避免用户需要再次点击。
                 if let Some(pending) = self.build_pending_start() {
-                    self.pending_start = Some(pending);
+                    self.runtime.pending_start = Some(pending);
                     self.set_status("Stopping... (queued start)");
                     cx.notify();
                 }
@@ -37,34 +37,33 @@ impl WgApp {
         }
 
         // 根据运行状态决定 start/stop。
-        if self.running {
+        if self.runtime.running {
             // 已运行：进入停止流程，并标记 busy，避免重复触发。
-            self.busy = true;
+            self.runtime.busy = true;
             self.set_status("Stopping...");
             cx.notify();
 
             let engine = self.engine.clone();
-            let view = cx.weak_entity();
             // 停止操作放后台执行，完成后回到 UI 线程更新状态。
             cx.spawn(async move |view, cx| {
                 let stop_task = cx.background_spawn(async move { engine.stop() });
                 let result = stop_task.await;
                 view.update(cx, |this, cx| {
-                    this.busy = false;
+                    this.runtime.busy = false;
                     match result {
                         Ok(()) => {
-                            this.running = false;
-                            this.running_name = None;
-                            this.running_id = None;
-                            this.started_at = None;
+                            this.runtime.running = false;
+                            this.runtime.running_name = None;
+                            this.runtime.running_id = None;
+                            this.stats.started_at = None;
                             this.set_status("Stopped");
                             // 停止成功后发送系统通知，让最小化到托盘时也能感知状态变更。
                             tray::notify_system("r-wg", "Tunnel disconnected", false);
                             this.clear_stats();
-                            this.last_stop_at = Some(Instant::now());
+                            this.runtime.last_stop_at = Some(Instant::now());
 
                             // 如果 stop 期间有人点击 start，则现在补发启动。
-                            if let Some(pending) = this.pending_start.take() {
+                            if let Some(pending) = this.runtime.pending_start.take() {
                                 if let Some(selected) = this.find_config_by_id(pending.config_id) {
                                     let cached_text =
                                         this.cached_config_text(&selected.storage_path);
@@ -78,7 +77,7 @@ impl WgApp {
                         }
                         Err(err) => {
                             // 停止失败则清空 pending，避免误触发自动启动。
-                            this.pending_start = None;
+                            this.runtime.pending_start = None;
                             let message = format!("Stop failed: {err}");
                             this.set_error(message.clone());
                             // 停止失败属于用户需感知事件，使用错误通知提高可见性。
@@ -93,7 +92,7 @@ impl WgApp {
             return;
         }
 
-        let Some(selected_idx) = self.selected else {
+        let Some(selected_idx) = self.selection.selected else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
@@ -112,7 +111,7 @@ impl WgApp {
 
     /// 托盘菜单：仅在未运行时启动。
     pub(crate) fn handle_start_from_tray(&mut self, cx: &mut Context<Self>) {
-        if self.running || self.busy {
+        if self.runtime.running || self.runtime.busy {
             return;
         }
         self.handle_start_stop_core(cx);
@@ -120,7 +119,7 @@ impl WgApp {
 
     /// 托盘菜单：仅在运行中停止。
     pub(crate) fn handle_stop_from_tray(&mut self, cx: &mut Context<Self>) {
-        if !self.running || self.busy {
+        if !self.runtime.running || self.runtime.busy {
             return;
         }
         self.handle_start_stop_core(cx);
@@ -131,7 +130,7 @@ impl WgApp {
     /// - 最近刚 stop：返回剩余等待时长；
     /// - 否则返回 None（立即启动）。
     fn restart_delay(&self) -> Option<Duration> {
-        let last_stop = self.last_stop_at?;
+        let last_stop = self.runtime.last_stop_at?;
         let elapsed = last_stop.elapsed();
         if elapsed >= RESTART_COOLDOWN {
             None
@@ -145,12 +144,14 @@ impl WgApp {
     /// - 优先当前选中的配置；
     /// - 没有选中时回退到当前运行的配置。
     fn build_pending_start(&self) -> Option<PendingStart> {
-        if let Some(idx) = self.selected {
+        if let Some(idx) = self.selection.selected {
             return Some(PendingStart {
                 config_id: self.configs[idx].id,
             });
         }
-        self.running_id.map(|id| PendingStart { config_id: id })
+        self.runtime
+            .running_id
+            .map(|id| PendingStart { config_id: id })
     }
 
     /// 根据配置 ID 查找配置（用于 stop 完成后的自动启动）。
@@ -180,13 +181,12 @@ impl WgApp {
         }
 
         // 标记 busy，避免重复点击；并更新状态提示。
-        self.busy = true;
+        self.runtime.busy = true;
         self.set_status(format!("Starting {}...", selected.name));
         cx.notify();
 
         let engine = self.engine.clone();
-        let view = cx.weak_entity();
-        let dns_selection = DnsSelection::new(self.dns_mode, self.dns_preset);
+        let dns_selection = DnsSelection::new(self.ui_prefs.dns_mode, self.ui_prefs.dns_preset);
         cx.spawn(async move |view, cx| {
             // 冷却等待：在后台 sleep，不阻塞 UI。
             if let Some(delay) = delay {
@@ -213,7 +213,7 @@ impl WgApp {
                 Ok(text) => text,
                 Err(message) => {
                     view.update(cx, |this, cx| {
-                        this.busy = false;
+                        this.runtime.busy = false;
                         this.set_error(message);
                         cx.notify();
                     })
@@ -235,25 +235,25 @@ impl WgApp {
             let start_task = cx.background_spawn(async move { engine.start(request) });
             let result = start_task.await;
             view.update(cx, |this, cx| {
-                this.busy = false;
+                this.runtime.busy = false;
                 match result {
                     Ok(()) => {
                         // 启动成功：刷新运行态与统计。
-                        this.running = true;
-                        this.running_name = Some(selected.name.clone());
-                        this.running_id = Some(selected.id);
-                        this.started_at = Some(Instant::now());
-                        this.last_stats_at = None;
-                        this.last_rx_bytes = 0;
-                        this.last_tx_bytes = 0;
-                        this.rx_rate_bps = 0.0;
-                        this.tx_rate_bps = 0.0;
+                        this.runtime.running = true;
+                        this.runtime.running_name = Some(selected.name.clone());
+                        this.runtime.running_id = Some(selected.id);
+                        this.stats.started_at = Some(Instant::now());
+                        this.stats.last_stats_at = None;
+                        this.stats.last_rx_bytes = 0;
+                        this.stats.last_tx_bytes = 0;
+                        this.stats.rx_rate_bps = 0.0;
+                        this.stats.tx_rate_bps = 0.0;
                         this.reset_rate_history();
-                        this.stats_idle_samples = 0;
-                        this.last_iface_rx_bytes = 0;
-                        this.last_iface_tx_bytes = 0;
-                        this.iface_rx_rate_bps = 0.0;
-                        this.iface_tx_rate_bps = 0.0;
+                        this.stats.stats_idle_samples = 0;
+                        this.stats.last_iface_rx_bytes = 0;
+                        this.stats.last_iface_tx_bytes = 0;
+                        this.stats.iface_rx_rate_bps = 0.0;
+                        this.stats.iface_tx_rate_bps = 0.0;
                         this.set_status(format!("Running {}", selected.name));
                         // 启动成功后通知当前已连接的隧道名称，便于多配置场景快速确认。
                         tray::notify_system(
@@ -261,7 +261,7 @@ impl WgApp {
                             &format!("Tunnel connected: {}", selected.name),
                             false,
                         );
-                        this.stats_note = "Fetching peer stats...".into();
+                        this.stats.stats_note = "Fetching peer stats...".into();
                         // 启动成功后开始轮询统计。
                         this.start_stats_polling(cx);
                     }
@@ -314,9 +314,11 @@ mod tests {
     #[test]
     fn restart_delay_returns_remaining_cooldown() {
         let mut app = make_app();
-        app.last_stop_at = Instant::now().checked_sub(Duration::from_millis(100));
+        app.runtime.last_stop_at = Instant::now().checked_sub(Duration::from_millis(100));
 
-        let delay = app.restart_delay().expect("cooldown should still be active");
+        let delay = app
+            .restart_delay()
+            .expect("cooldown should still be active");
         assert!(delay > Duration::from_millis(150));
         assert!(delay <= Duration::from_millis(250));
     }
@@ -324,7 +326,8 @@ mod tests {
     #[test]
     fn restart_delay_is_none_after_cooldown_elapsed() {
         let mut app = make_app();
-        app.last_stop_at = Instant::now().checked_sub(RESTART_COOLDOWN + Duration::from_millis(10));
+        app.runtime.last_stop_at =
+            Instant::now().checked_sub(RESTART_COOLDOWN + Duration::from_millis(10));
 
         assert_eq!(app.restart_delay(), None);
     }
@@ -332,18 +335,20 @@ mod tests {
     #[test]
     fn build_pending_start_prefers_selected_config() {
         let mut app = make_app();
-        app.configs = vec![make_config(11, "alpha"), make_config(22, "beta")];
-        app.selected = Some(1);
-        app.running_id = Some(11);
+        app.configs.configs = vec![make_config(11, "alpha"), make_config(22, "beta")];
+        app.selection.selected = Some(1);
+        app.runtime.running_id = Some(11);
 
-        let pending = app.build_pending_start().expect("selected config should win");
+        let pending = app
+            .build_pending_start()
+            .expect("selected config should win");
         assert_eq!(pending.config_id, 22);
     }
 
     #[test]
     fn build_pending_start_falls_back_to_running_config() {
         let mut app = make_app();
-        app.running_id = Some(77);
+        app.runtime.running_id = Some(77);
 
         let pending = app
             .build_pending_start()

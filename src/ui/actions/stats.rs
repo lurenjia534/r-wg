@@ -19,8 +19,8 @@ impl WgApp {
     /// - stats 获取在后台线程执行，UI 线程只接收结果并更新状态。
     pub(crate) fn start_stats_polling(&mut self, cx: &mut Context<Self>) {
         // 每次启动使用新的 generation，停止后自动中断旧轮询。
-        self.stats_generation = self.stats_generation.wrapping_add(1);
-        let generation = self.stats_generation;
+        self.stats.stats_generation = self.stats.stats_generation.wrapping_add(1);
+        let generation = self.stats.stats_generation;
         let engine = self.engine.clone();
         let poll_interval = Duration::from_secs(2);
         // Proxies 列表在滚动时非常敏感，降低轮询频率并跳过统计刷新，
@@ -33,10 +33,10 @@ impl WgApp {
                 // 先在 UI 线程读取状态，避免在后台线程里直接访问视图数据。
                 let (should_continue, in_proxies) = view
                     .update(cx, |this, _| {
-                        if !this.running || this.stats_generation != generation {
+                        if !this.runtime.running || this.stats.stats_generation != generation {
                             return (false, false);
                         }
-                        (true, this.sidebar_active == SidebarItem::Proxies)
+                        (true, this.ui_prefs.sidebar_active == SidebarItem::Proxies)
                     })
                     .unwrap_or((false, false));
                 if !should_continue {
@@ -61,7 +61,7 @@ impl WgApp {
                 // 将统计结果回写 UI 状态并 notify，触发依赖 stats 的视图刷新。
                 let continue_polling = view
                     .update(cx, |this, cx| {
-                        if !this.running || this.stats_generation != generation {
+                        if !this.runtime.running || this.stats.stats_generation != generation {
                             return false;
                         }
 
@@ -71,14 +71,14 @@ impl WgApp {
                                 persist_due = this.apply_stats(stats);
                             }
                             Err(err) => {
-                                this.stats_note = format!("Stats failed: {err}").into();
+                                this.stats.stats_note = format!("Stats failed: {err}").into();
                             }
                         }
                         if persist_due {
                             // 仅在必要时落盘，避免每次轮询都写 state.json。
                             this.persist_state_async(cx);
-                            this.traffic_last_persist_at = Some(Instant::now());
-                            this.traffic_dirty = false;
+                            this.stats.traffic_last_persist_at = Some(Instant::now());
+                            this.stats.traffic_dirty = false;
                         }
                         cx.notify();
                         true
@@ -107,72 +107,72 @@ impl WgApp {
         let mut rx_delta = 0u64;
         let mut tx_delta = 0u64;
         let mut elapsed_secs = None;
-        if let Some(last_at) = self.last_stats_at {
+        if let Some(last_at) = self.stats.last_stats_at {
             let elapsed = last_at.elapsed().as_secs_f64();
             if elapsed > 0.1 {
-                rx_delta = total_rx.saturating_sub(self.last_rx_bytes);
-                tx_delta = total_tx.saturating_sub(self.last_tx_bytes);
-                self.rx_rate_bps = rx_delta as f64 / elapsed;
-                self.tx_rate_bps = tx_delta as f64 / elapsed;
+                rx_delta = total_rx.saturating_sub(self.stats.last_rx_bytes);
+                tx_delta = total_tx.saturating_sub(self.stats.last_tx_bytes);
+                self.stats.rx_rate_bps = rx_delta as f64 / elapsed;
+                self.stats.tx_rate_bps = tx_delta as f64 / elapsed;
                 elapsed_secs = Some(elapsed);
             }
         }
 
         let mut iface_rx = None;
         let mut iface_tx = None;
-        if let Some(name) = self.running_name.as_deref() {
+        if let Some(name) = self.runtime.running_name.as_deref() {
             if let Some((rx, tx)) = read_interface_stats(name) {
                 iface_rx = Some(rx);
                 iface_tx = Some(tx);
                 if let Some(elapsed) = elapsed_secs {
-                    let rx_delta = rx.saturating_sub(self.last_iface_rx_bytes);
-                    let tx_delta = tx.saturating_sub(self.last_iface_tx_bytes);
-                    self.iface_rx_rate_bps = rx_delta as f64 / elapsed;
-                    self.iface_tx_rate_bps = tx_delta as f64 / elapsed;
+                    let rx_delta = rx.saturating_sub(self.stats.last_iface_rx_bytes);
+                    let tx_delta = tx.saturating_sub(self.stats.last_iface_tx_bytes);
+                    self.stats.iface_rx_rate_bps = rx_delta as f64 / elapsed;
+                    self.stats.iface_tx_rate_bps = tx_delta as f64 / elapsed;
                 }
-                self.last_iface_rx_bytes = rx;
-                self.last_iface_tx_bytes = tx;
+                self.stats.last_iface_rx_bytes = rx;
+                self.stats.last_iface_tx_bytes = tx;
             }
         }
 
-        self.last_stats_at = Some(Instant::now());
-        self.last_rx_bytes = total_rx;
-        self.last_tx_bytes = total_tx;
-        push_rate_sample(&mut self.rx_rate_history, self.rx_rate_bps);
-        push_rate_sample(&mut self.tx_rate_history, self.tx_rate_bps);
+        self.stats.last_stats_at = Some(Instant::now());
+        self.stats.last_rx_bytes = total_rx;
+        self.stats.last_tx_bytes = total_tx;
+        push_rate_sample(&mut self.stats.rx_rate_history, self.stats.rx_rate_bps);
+        push_rate_sample(&mut self.stats.tx_rate_history, self.stats.tx_rate_bps);
 
         // 本轮统计窗口内的总流量（RX + TX），用于 7 日趋势。
         let persist_due = self.record_traffic(rx_delta, tx_delta);
 
-        self.peer_stats = stats.peers;
-        if self.peer_stats.is_empty() {
-            self.stats_note = "No peers reported".into();
+        self.stats.peer_stats = stats.peers;
+        if self.stats.peer_stats.is_empty() {
+            self.stats.stats_note = "No peers reported".into();
         } else {
             if rx_delta + tx_delta < 1024 {
-                self.stats_idle_samples = self.stats_idle_samples.saturating_add(1);
+                self.stats.stats_idle_samples = self.stats.stats_idle_samples.saturating_add(1);
             } else {
-                self.stats_idle_samples = 0;
+                self.stats.stats_idle_samples = 0;
             }
-            if self.stats_idle_samples >= 3 {
-                self.stats_note = "No tunnel traffic detected".into();
+            if self.stats.stats_idle_samples >= 3 {
+                self.stats.stats_note = "No tunnel traffic detected".into();
             } else {
-                self.stats_note = format!("Peers: {}", self.peer_stats.len()).into();
+                self.stats.stats_note = format!("Peers: {}", self.stats.peer_stats.len()).into();
             }
         }
 
         log_stats::snapshot(
-            self.running_name.as_deref(),
+            self.runtime.running_name.as_deref(),
             elapsed_secs,
             total_rx,
             total_tx,
             rx_delta,
             tx_delta,
-            self.rx_rate_bps,
-            self.tx_rate_bps,
+            self.stats.rx_rate_bps,
+            self.stats.tx_rate_bps,
             iface_rx,
             iface_tx,
-            self.iface_rx_rate_bps,
-            self.iface_tx_rate_bps,
+            self.stats.iface_rx_rate_bps,
+            self.stats.iface_tx_rate_bps,
         );
 
         persist_due
@@ -182,30 +182,30 @@ impl WgApp {
     ///
     /// 说明：停止隧道时调用，避免残留旧会话的数据与提示。
     pub(crate) fn clear_stats(&mut self) {
-        self.peer_stats.clear();
-        self.stats_note = "Peer stats unavailable".into();
-        self.last_stats_at = None;
-        self.last_rx_bytes = 0;
-        self.last_tx_bytes = 0;
-        self.rx_rate_bps = 0.0;
-        self.tx_rate_bps = 0.0;
+        self.stats.peer_stats.clear();
+        self.stats.stats_note = "Peer stats unavailable".into();
+        self.stats.last_stats_at = None;
+        self.stats.last_rx_bytes = 0;
+        self.stats.last_tx_bytes = 0;
+        self.stats.rx_rate_bps = 0.0;
+        self.stats.tx_rate_bps = 0.0;
         self.reset_rate_history();
-        self.stats_idle_samples = 0;
-        self.last_iface_rx_bytes = 0;
-        self.last_iface_tx_bytes = 0;
-        self.iface_rx_rate_bps = 0.0;
-        self.iface_tx_rate_bps = 0.0;
+        self.stats.stats_idle_samples = 0;
+        self.stats.last_iface_rx_bytes = 0;
+        self.stats.last_iface_tx_bytes = 0;
+        self.stats.iface_rx_rate_bps = 0.0;
+        self.stats.iface_tx_rate_bps = 0.0;
     }
 
     /// 重置速率历史采样。
     ///
     /// 说明：将历史清空并补齐固定长度，确保 sparkline 视觉稳定。
     pub(crate) fn reset_rate_history(&mut self) {
-        self.rx_rate_history.clear();
-        self.tx_rate_history.clear();
+        self.stats.rx_rate_history.clear();
+        self.stats.tx_rate_history.clear();
         for _ in 0..SPARKLINE_SAMPLES {
-            self.rx_rate_history.push_back(0.0);
-            self.tx_rate_history.push_back(0.0);
+            self.stats.rx_rate_history.push_back(0.0);
+            self.stats.tx_rate_history.push_back(0.0);
         }
     }
 
@@ -223,22 +223,23 @@ impl WgApp {
         let mut created = false;
 
         // 旧版总量统计（用于 7 日趋势）。
-        if update_traffic_day_total(&mut self.traffic_days, &today, total) {
+        if update_traffic_day_total(&mut self.stats.traffic_days, &today, total) {
             created = true;
         }
         self.prune_traffic_days();
 
         // 新版整体统计（按天 + 按小时）。
-        if update_traffic_day_stats(&mut self.traffic_days_v2, &today, rx_bytes, tx_bytes) {
+        if update_traffic_day_stats(&mut self.stats.traffic_days_v2, &today, rx_bytes, tx_bytes) {
             created = true;
         }
-        if update_traffic_hour_stats(&mut self.traffic_hours, hour, rx_bytes, tx_bytes) {
+        if update_traffic_hour_stats(&mut self.stats.traffic_hours, hour, rx_bytes, tx_bytes) {
             created = true;
         }
 
         // 按配置统计：仅在运行中时记录。
-        if let Some(config_id) = self.running_id {
+        if let Some(config_id) = self.runtime.running_id {
             let days = self
+                .stats
                 .config_traffic_days
                 .entry(config_id)
                 .or_insert_with(Vec::new);
@@ -246,6 +247,7 @@ impl WgApp {
                 created = true;
             }
             let hours = self
+                .stats
                 .config_traffic_hours
                 .entry(config_id)
                 .or_insert_with(Vec::new);
@@ -254,7 +256,7 @@ impl WgApp {
             }
         }
 
-        self.traffic_dirty = true;
+        self.stats.traffic_dirty = true;
 
         if created {
             // 新的一天/新的一小时首次写入，立即落盘，避免异常退出丢失起点。
@@ -262,7 +264,7 @@ impl WgApp {
         }
 
         // 同一天内按节流间隔落盘，平衡数据安全与磁盘写入频率。
-        match self.traffic_last_persist_at {
+        match self.stats.traffic_last_persist_at {
             Some(last) => last.elapsed() >= Duration::from_secs(60),
             None => true,
         }
@@ -270,10 +272,10 @@ impl WgApp {
 
     fn prune_traffic_days(&mut self) {
         // 保持按时间顺序排列，超出上限时丢弃最旧的记录。
-        self.traffic_days.sort_by(|a, b| a.date.cmp(&b.date));
-        if self.traffic_days.len() > TRAFFIC_HISTORY_DAYS {
-            let remove_count = self.traffic_days.len() - TRAFFIC_HISTORY_DAYS;
-            self.traffic_days.drain(0..remove_count);
+        self.stats.traffic_days.sort_by(|a, b| a.date.cmp(&b.date));
+        if self.stats.traffic_days.len() > TRAFFIC_HISTORY_DAYS {
+            let remove_count = self.stats.traffic_days.len() - TRAFFIC_HISTORY_DAYS;
+            self.stats.traffic_days.drain(0..remove_count);
         }
     }
 }

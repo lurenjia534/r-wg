@@ -189,9 +189,9 @@ fn focus_main_window(window_handle: AnyWindowHandle, cx: &mut gpui::AsyncApp) {
 async fn request_quit(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut gpui::AsyncApp) {
     let mut was_running = false;
     let _ = view.update(cx, |this, cx| {
-        was_running = this.running;
-        if this.running {
-            this.busy = true;
+        was_running = this.runtime.running;
+        if this.runtime.running {
+            this.runtime.busy = true;
             this.set_status("Stopping...");
             cx.notify();
         }
@@ -209,17 +209,17 @@ async fn request_quit(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut gp
     let _ = view.update(cx, |this, cx| {
         if should_quit {
             if was_running {
-                this.busy = false;
-                this.running = false;
-                this.running_name = None;
-                this.running_id = None;
-                this.started_at = None;
+                this.runtime.busy = false;
+                this.runtime.running = false;
+                this.runtime.running_name = None;
+                this.runtime.running_id = None;
+                this.stats.started_at = None;
                 this.clear_stats();
                 this.set_status("Stopped");
             }
         } else if let Err(err) = result {
             if was_running {
-                this.busy = false;
+                this.runtime.busy = false;
             }
             this.set_error(format!("Stop failed: {err}"));
         }
