@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.5 - 2026-03-07
+
+- Restored `gotatun` to `0.4.0` while pinning `zerocopy` and `zerocopy-derive` to `0.8.27`.
+- Worked around the Linux full-tunnel regression reproduced with `gotatun 0.4.0` when `zerocopy >= 0.8.33`.
+- Added troubleshooting notes and Linux diagnostic scripts for the `RX=0` / handshake-only tunnel failure mode.
+
 ## 0.2.4 - 2026-03-07
 
 - Downgraded `gotatun` to `0.3.1` to avoid the Linux tunnel regression observed with `0.4.0`.
