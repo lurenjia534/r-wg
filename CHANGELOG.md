@@ -2,9 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## 0.2.2 - 2026-02-02
+## 0.2.4 - 2026-03-07
 
-- Version bump for release.
+- Downgraded `gotatun` to `0.3.1` to avoid the Linux tunnel regression observed with `0.4.0`.
 
 ## 0.2.3 - 2026-03-06
 
@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file.
 - Hardened Windows full-tunnel DNS handling and updated Win32 integration for `windows 0.62.2`.
 - Upgraded `gotatun` to `0.4.0` and documented the local `ashpd` patch workflow.
 - Trim allocator state after tunnel stop on Linux to reduce lingering memory usage.
+
+## 0.2.2 - 2026-02-02
+
+- Version bump for release.
 
 ## 0.2.1 - 2026-01-25
 
