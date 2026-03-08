@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gotatun::device::{self, DefaultDeviceTransports, Device};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use super::config::{self, ConfigError};
@@ -33,7 +34,9 @@ fn trim_allocator() {
 ///
 /// 之所以传入完整配置文本，是为了让引擎在后台线程内完成解析与应用，
 /// 避免 UI 线程阻塞或出现跨线程的生命周期管理问题。
-#[derive(Debug, Clone)]
+/// 在 Windows 按需提权模式下，这个结构还会通过 IPC 从普通权限 UI 发送给管理员 helper，
+/// 因此字段语义需要稳定且可序列化。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartRequest {
     /// TUN 设备名称，例如 "wg0"。
     pub tun_name: String,
@@ -61,7 +64,8 @@ impl StartRequest {
 /// 引擎状态：是否处于“已启动并生效”状态。
 ///
 /// Running 代表网络配置已应用且设备可用；Stopped 则表示未启动或已停止（设备可能被缓存复用）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Windows helper 模式下，这个状态会回传给普通权限 UI，用来恢复开关状态与按钮文案。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EngineStatus {
     /// 未启动。
     Stopped,
@@ -70,13 +74,15 @@ pub enum EngineStatus {
 }
 
 /// gotatun 设备的运行时统计信息。
-#[derive(Debug, Clone)]
+/// 这些数据会在 Windows helper 模式下通过 IPC 返回给 UI，驱动统计面板刷新。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineStats {
     pub peers: Vec<PeerStats>,
 }
 
 /// 单个 Peer 的状态快照。
-#[derive(Debug, Clone)]
+/// 字段保持简单扁平，便于直接序列化后跨进程回传。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerStats {
     pub public_key: [u8; 32],
     pub endpoint: Option<SocketAddr>,
@@ -101,6 +107,8 @@ pub enum EngineError {
     Config(ConfigError),
     /// 系统网络配置错误（地址/路由/DNS 应用失败）。
     Network(platform::NetworkError),
+    /// Windows 提权 helper / IPC 层返回的文本错误。
+    Remote(String),
 }
 
 /// 将错误转换为可读文本，便于上层日志与提示。
@@ -113,6 +121,7 @@ impl fmt::Display for EngineError {
             EngineError::Device(err) => write!(f, "device error: {err}"),
             EngineError::Config(err) => write!(f, "config error: {err}"),
             EngineError::Network(err) => write!(f, "network error: {err}"),
+            EngineError::Remote(message) => write!(f, "{message}"),
         }
     }
 }

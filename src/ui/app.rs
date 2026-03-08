@@ -33,6 +33,8 @@ pub fn run() {
                 let view = cx.new(|_cx| WgApp::new(engine.clone(), theme_mode));
                 // 弱引用：窗口关闭后不会阻止资源释放。
                 let view_handle = view.downgrade();
+                // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。
+                sync_engine_status(view_handle.clone(), engine.clone(), cx);
                 // 初始化系统托盘并启动命令监听。
                 tray::init(
                     window.window_handle(),
@@ -124,6 +126,33 @@ pub fn run() {
         });
 }
 
+/// 启动窗口后同步一次后端状态。
+///
+/// 这里主要处理 Windows helper 已经在运行、但 UI 是后打开的情况。
+/// 此时我们只能确认“当前确实有隧道在跑”，未必能拿到精确配置项，
+/// 所以先恢复为通用运行态，再启动统计轮询。
+fn sync_engine_status(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let result = cx.background_spawn(async move { engine.status() }).await;
+        let _ = view.update(cx, |this, cx| {
+            if !matches!(result, Ok(r_wg::backend::wg::EngineStatus::Running)) {
+                return;
+            }
+            this.runtime.running = true;
+            this.runtime.busy = false;
+            // helper 恢复场景下不一定拿得到原始配置名，先放通用占位避免 UI 空白。
+            if this.runtime.running_name.is_none() {
+                this.runtime.running_name = Some("Tunnel".to_string());
+            }
+            // 这里只恢复运行态与统计轮询，不推断具体配置来源。
+            this.set_status("Tunnel running");
+            this.stats.reset_for_start();
+            this.start_stats_polling(cx);
+            cx.notify();
+        });
+    })
+    .detach();
+}
 fn load_persisted_theme_mode() -> ThemeMode {
     // 读取持久化主题；读取失败则回退深色模式。
     let storage = match persistence::ensure_storage_dirs() {

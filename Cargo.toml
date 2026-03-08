@@ -33,6 +33,8 @@ windows = { version = "0.62.2", features = [
     "Win32_NetworkManagement_Ndis",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
     "Win32_System_LibraryLoader",
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
@@ -49,3 +51,4 @@ zbus = "5.13.2"
 [patch.crates-io]
 # 临时补丁：ashpd 0.11.0 在 zvariant >= 5.9 的 dict key 约束下编译失败；上游修复后删除此 patch。
 ashpd = { path = "vendor/ashpd" }
+

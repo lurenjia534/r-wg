@@ -1,10 +1,13 @@
 use std::net::IpAddr;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
 /// DNS 模式（全局 UI 状态）。
 ///
 /// 这些模式只影响启动时“解析后的配置”如何处理 DNS，不会在运行中自动生效。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Windows helper 模式下，它也会随启动请求一起跨 IPC 发送到管理员 helper。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum DnsMode {
     /// 完全遵循配置文件中的 DNS。
     FollowConfig,
@@ -29,7 +32,8 @@ impl DnsMode {
 }
 
 /// DNS 预设提供商（UI/后端共用）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// 预设值会进入启动请求，确保 UI 与 helper 对同一套地址表达成一致。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum DnsPreset {
     CloudflareStandard,
     CloudflareMalware,
@@ -111,7 +115,8 @@ impl DnsPreset {
 }
 
 /// 启动时使用的 DNS 选择项（来自 UI 全局设置）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// 这是 UI 侧 DNS 配置传给后端的统一载体，也是 Windows helper IPC 的一部分。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DnsSelection {
     pub mode: DnsMode,
     pub preset: DnsPreset,
