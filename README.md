@@ -83,7 +83,6 @@ Endpoint = example.com:51820
 
 ## Dependency Note
 
-We currently patch `ashpd 0.11.0` locally because `zvariant >= 5.9` requires dict keys to implement
-`Basic`, which `ashpd 0.11.0` does not. The patch is applied through `[patch.crates-io]` in
-`Cargo.toml` and lives in `vendor/ashpd`. When upstream fixes the mismatch (for example via newer
-`gpui` or `ashpd`), remove `vendor/ashpd` and the patch block, then run `cargo update`.
+The temporary local `ashpd` patch is no longer needed. Upstream fixed the
+`zvariant >= 5.9` dict-key `Basic` constraint mismatch in `ashpd 0.11.1`, so
+this repository now uses the crates.io release directly.

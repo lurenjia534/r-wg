@@ -29,7 +29,6 @@
 1) `Cargo.toml` 增加本地 patch
 ```toml
 [patch.crates-io]
-ashpd = { path = "vendor/ashpd" }
 gotatun = { path = "vendor/gotatun" }
 ```
 
