@@ -1,9 +1,11 @@
-use gpui::*;
+﻿use gpui::*;
 use gpui_component::{
+    button::Button,
     description_list::DescriptionList,
     group_box::{GroupBox, GroupBoxVariants},
+    h_flex,
     scroll::ScrollableElement,
-    ActiveTheme as _,
+    ActiveTheme as _, Disableable as _, Sizable as _,
 };
 
 use super::super::format::{
@@ -14,9 +16,16 @@ use super::super::state::{RightTab, WgApp};
 use super::data::ViewData;
 use super::widgets::tab_button;
 
-/// 右侧面板：状态/日志切换与卡片内容展示。
+/// 渲染右侧状态面板。
+///
+/// 这个面板承担两类职责：
+/// 1. 展示当前连接、网络、对端和日志摘要；
+/// 2. 为最新状态和最后错误提供显式复制入口。
+///
+/// 第二点是这次修复的重要兜底：即使 Windows 系统通知本身不可直接复制，
+/// 用户仍然可以在应用内复制同一条状态或错误文本。
 pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
-    // 顶部标签切换（状态/日志）。
+    // 顶部页签切换：在“状态”和“日志”两个视图之间切换右侧面板内容。
     let right_tab_row = div()
         .flex()
         .gap_2()
@@ -33,7 +42,7 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
             |this| this.ui_prefs.right_tab = RightTab::Logs,
         ));
 
-    // Network 卡片：展示本机地址/DNS/路由表/Allowed IPs。
+    // 网络信息卡片：展示当前配置解析出的地址、DNS、路由表和 Allowed IPs。
     let network_card = {
         let addresses = data
             .parsed_config
@@ -66,7 +75,7 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
         )
     };
 
-    // Connection 卡片：展示连接状态与流量统计。
+    // 连接状态卡片：展示当前连接状态、激活中的隧道、最近握手和收发流量。
     let status_card = {
         let connection_state = if app.runtime.running {
             "Connected"
@@ -97,7 +106,8 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
         )
     };
 
-    // Peers 卡片：列出握手与流量详情。
+    // 对端状态卡片：列出对端统计摘要。
+    // 当还没有统计数据时，显示说明性占位文本，避免面板空白。
     let peers_card = {
         let mut stats_items = Vec::new();
         stats_items.push(
@@ -129,23 +139,81 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
             .child(div().flex().flex_col().gap_1().children(stats_items))
     };
 
-    // Logs 卡片：集中显示最近状态与错误信息。
+    // 日志摘要卡片：集中显示最近状态、最后错误和解析错误。
+    //
+    // 这里新增两个复制按钮：
+    // - Copy Status：复制最近状态文本
+    // - Copy Last Error：复制最后一条错误文本
+    //
+    // 这样即使系统通知已经消失，或者系统通知本身不可直接选中，
+    // 用户依然能从应用内复制同一条诊断信息。
     let logs_card = {
+        let latest_status = app.ui.status.to_string();
         let last_error = app.ui.last_error.clone().unwrap_or_else(|| "None".into());
+        let last_error_text = last_error.to_string();
         let parse_state = data
             .parse_error
             .clone()
             .unwrap_or_else(|| "None".to_string());
         GroupBox::new().fill().title("Logs").child(
-            DescriptionList::new()
-                .columns(1)
-                .item("Latest Status", app.ui.status.to_string(), 1)
-                .item("Last Error", last_error.to_string(), 1)
-                .item("Parse Error", parse_state, 1),
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            // 复制最近状态，用于快速分享当前运行阶段提示。
+                            Button::new("copy-latest-status")
+                                .label("Copy Status")
+                                .outline()
+                                .small()
+                                .compact()
+                                .on_click({
+                                    let latest_status = latest_status.clone();
+                                    cx.listener(move |this, _, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            latest_status.clone(),
+                                        ));
+                                        this.set_status("Status copied to clipboard");
+                                        cx.notify();
+                                    })
+                                }),
+                        )
+                        .child(
+                            // 复制最后错误。
+                            // 当没有错误时禁用按钮，避免把占位文本 `None` 误复制到剪贴板。
+                            Button::new("copy-last-error")
+                                .label("Copy Last Error")
+                                .outline()
+                                .small()
+                                .compact()
+                                .disabled(last_error_text == "None")
+                                .on_click({
+                                    let last_error_text = last_error_text.clone();
+                                    cx.listener(move |this, _, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            last_error_text.clone(),
+                                        ));
+                                        this.set_status("Last error copied to clipboard");
+                                        cx.notify();
+                                    })
+                                }),
+                        ),
+                )
+                .child(
+                    DescriptionList::new()
+                        .columns(1)
+                        .item("Latest Status", latest_status, 1)
+                        .item("Last Error", last_error_text, 1)
+                        .item("Parse Error", parse_state, 1),
+                ),
         )
     };
 
-    // 根据标签切换右侧内容。
+    // 根据当前页签切换右侧主体内容。
     let right_body = match app.ui_prefs.right_tab {
         RightTab::Status => div()
             .flex()
