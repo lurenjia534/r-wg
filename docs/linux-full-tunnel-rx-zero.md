@@ -25,12 +25,13 @@
 
 ## 最终 A/B 结果
 
-最终确定，这个问题在当前项目依赖图下与 `zerocopy` 版本强相关。
+最终确定，这个问题在当前项目依赖图下，表现为 `gotatun 0.4.0` 与较新的
+`zerocopy` 解析结果之间的组合回归，而不是单一组件独立失效。
 
 已验证组合：
 
 - `gotatun 0.2.0`：可用
-- `gotatun 0.3.1`：可用
+- `gotatun 0.3.1 + zerocopy 0.8.42`：可用
 - `gotatun 0.4.0 + zerocopy 0.8.27`：可用
 - `gotatun 0.4.0 + zerocopy 0.8.33`：不可用
 - `gotatun 0.4.0 + zerocopy 0.8.37`：不可用
@@ -40,23 +41,28 @@
 
 当前工作结论是：
 
-> `gotatun 0.4.0` 在本项目依赖图下，与 `zerocopy >= 0.8.33` 的组合会触发 Linux 全隧道数据面回归；将 `zerocopy` 固定到 `0.8.27` 可以恢复正常。
+> `gotatun 0.4.0` 在本项目依赖图下，与 `zerocopy >= 0.8.33` 的组合会触发 Linux 全隧道数据面回归；而 `gotatun 0.3.1` 在 `zerocopy 0.8.42` 下仍可正常工作。
 
-这说明问题边界更接近：
+因此，`2026-03-10` 发布的 `r-wg 0.2.6` 选择的稳定方案是：
 
-- `zerocopy 0.8.27 -> 0.8.33`
+- 回退 `gotatun` 到 `0.3.1`
+- 保持 `zerocopy 0.8.42`
+- 保持 `zerocopy-derive 0.8.42`
 
-而不是：
+问题边界更接近以下“组合变化”：
 
-- `gotatun 0.3.1 -> 0.4.0`
+- `gotatun 0.4.0 + zerocopy 0.8.27`
+- `gotatun 0.4.0 + zerocopy >= 0.8.33`
+
+而不是单独某一个组件升级就必然失效。
 
 ## 当前 workaround
 
 当前仓库采用的工作组合是：
 
-- `gotatun 0.4.0`
-- `zerocopy 0.8.27`
-- `zerocopy-derive 0.8.27`
+- `gotatun 0.3.1`
+- `zerocopy 0.8.42`
+- `zerocopy-derive 0.8.42`
 
 这里固定的是根项目 `Cargo.lock` 的解析结果，而不是修改 `gotatun` 上游仓库的 `Cargo.lock`。
 
@@ -73,6 +79,6 @@
 
 如果后续还要继续追根因，而不是只保留 workaround，优先级建议如下：
 
-1. 在 `zerocopy 0.8.28..0.8.32` 之间继续 bisect
+1. 在 `gotatun 0.4.0` 前提下，继续 bisect `zerocopy 0.8.28..0.8.32`
 2. 整理最小复现并提交给上游
-3. 在上游修复前，继续保持 `0.8.27` pin
+3. 在上游修复前，继续保持 `gotatun 0.3.1`

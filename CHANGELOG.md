@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.6 - 2026-03-10
+
+- Downgraded `gotatun` to `0.3.1` to keep Linux tunnels usable while the `0.4.0` full-tunnel regression remains unresolved.
+- Let `zerocopy` and `zerocopy-derive` resolve back to `0.8.42` with the `gotatun 0.3.1` downgrade.
+- Removed the temporary local `ashpd` patch and switched back to the upstream crates.io release.
+
 ## 0.2.5 - 2026-03-07
 
 - Restored `gotatun` to `0.4.0` while pinning `zerocopy` and `zerocopy-derive` to `0.8.27`.
