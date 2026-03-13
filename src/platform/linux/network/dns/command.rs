@@ -33,6 +33,87 @@ pub(super) fn resolve_command(program: &str) -> Option<PathBuf> {
     None
 }
 
+#[cfg(test)]
+mod tests {
+    use super::resolve_command;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct PathGuard {
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl PathGuard {
+        fn set(path: &str) -> Self {
+            let original = env::var_os("PATH");
+            // Tests share one process; save and restore PATH around each mutation.
+            unsafe {
+                env::set_var("PATH", path);
+            }
+            Self { original }
+        }
+    }
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.original.take() {
+                unsafe {
+                    env::set_var("PATH", value);
+                }
+            } else {
+                unsafe {
+                    env::remove_var("PATH");
+                }
+            }
+        }
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let pid = std::process::id();
+        let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = env::temp_dir().join(format!("r_wg_{prefix}_{pid}_{nanos}_{seq}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn resolve_command_does_not_use_path_entries() {
+        let temp_dir = unique_temp_dir("path_hijack");
+        let _guard = PathGuard::set(temp_dir.to_str().expect("utf8 temp path"));
+
+        let fake_name = "r_wg_fake_dns_command";
+        let fake_binary = temp_dir.join(fake_name);
+        fs::write(&fake_binary, "#!/bin/sh\necho hijack\n").expect("write fake binary");
+
+        assert!(resolve_command(fake_name).is_none());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn resolve_command_accepts_absolute_path() {
+        let temp_dir = unique_temp_dir("absolute");
+        let binary = temp_dir.join("tool");
+        fs::write(&binary, "placeholder").expect("write placeholder binary");
+
+        assert_eq!(
+            resolve_command(binary.to_str().expect("utf8 path")),
+            Some(binary.clone())
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+}
+
 /// 执行命令并检查返回码。
 ///
 /// 仅当命令返回非 0 时抛错并带上 stderr，便于定位系统调用失败原因。
