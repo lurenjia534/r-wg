@@ -6,26 +6,16 @@ use tokio::process::Command;
 use super::super::NetworkError;
 use crate::log::events::dns as log_dns;
 
-/// 解析命令路径，优先使用 PATH，其次尝试常见系统目录。
+/// 解析命令路径，仅允许系统可信目录中的二进制。
 ///
-/// 避免硬编码路径，同时确保在 PATH 缺失时仍可找到系统工具。
+/// 避免在提权场景下受 PATH 污染导致执行到攻击者伪造命令。
 pub(super) fn resolve_command(program: &str) -> Option<PathBuf> {
     if program.contains('/') {
         let path = PathBuf::from(program);
         return path.is_file().then_some(path);
     }
 
-    // PATH 中可执行优先，避免硬编码路径。
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            let candidate = dir.join(program);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    // 一些系统工具可能不在 PATH，补一层常见目录兜底。
+    // 仅在常见系统目录中查找，避免执行 PATH 注入的同名二进制。
     for dir in ["/usr/sbin", "/sbin", "/usr/bin", "/bin"] {
         let candidate = Path::new(dir).join(program);
         if candidate.is_file() {
@@ -34,6 +24,87 @@ pub(super) fn resolve_command(program: &str) -> Option<PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_command;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct PathGuard {
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl PathGuard {
+        fn set(path: &str) -> Self {
+            let original = env::var_os("PATH");
+            // 单测在同一进程内运行；这里串行保存并恢复 PATH。
+            unsafe {
+                env::set_var("PATH", path);
+            }
+            Self { original }
+        }
+    }
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.original.take() {
+                unsafe {
+                    env::set_var("PATH", value);
+                }
+            } else {
+                unsafe {
+                    env::remove_var("PATH");
+                }
+            }
+        }
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let pid = std::process::id();
+        let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = env::temp_dir().join(format!("r_wg_{prefix}_{pid}_{nanos}_{seq}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn resolve_command_does_not_use_path_entries() {
+        let temp_dir = unique_temp_dir("path_hijack");
+        let _guard = PathGuard::set(temp_dir.to_str().expect("utf8 temp path"));
+
+        let fake_name = "r_wg_fake_dns_command";
+        let fake_binary = temp_dir.join(fake_name);
+        fs::write(&fake_binary, "#!/bin/sh\necho hijack\n").expect("write fake binary");
+
+        assert!(resolve_command(fake_name).is_none());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn resolve_command_accepts_absolute_path() {
+        let temp_dir = unique_temp_dir("absolute");
+        let binary = temp_dir.join("tool");
+        fs::write(&binary, "placeholder").expect("write placeholder binary");
+
+        assert_eq!(
+            resolve_command(binary.to_str().expect("utf8 path")),
+            Some(binary.clone())
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }
 
 /// 执行命令并检查返回码。
