@@ -8,25 +8,22 @@ use crate::log::events::dns as log_dns;
 
 /// 解析命令路径，优先使用 PATH，其次尝试常见系统目录。
 ///
-/// 避免硬编码路径，同时确保在 PATH 缺失时仍可找到系统工具。
+/// 为避免 PATH 劫持，仅在受信任的系统目录中查找工具。
 pub(super) fn resolve_command(program: &str) -> Option<PathBuf> {
     if program.contains('/') {
         let path = PathBuf::from(program);
         return path.is_file().then_some(path);
     }
 
-    // PATH 中可执行优先，避免硬编码路径。
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            let candidate = dir.join(program);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    // 一些系统工具可能不在 PATH，补一层常见目录兜底。
-    for dir in ["/usr/sbin", "/sbin", "/usr/bin", "/bin"] {
+    // 仅在常见系统目录中查找，避免受到进程环境 PATH 影响。
+    for dir in [
+        "/usr/local/sbin",
+        "/usr/local/bin",
+        "/usr/sbin",
+        "/usr/bin",
+        "/sbin",
+        "/bin",
+    ] {
         let candidate = Path::new(dir).join(program);
         if candidate.is_file() {
             return Some(candidate);
