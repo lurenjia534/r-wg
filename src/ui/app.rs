@@ -37,6 +37,7 @@ pub fn run() {
                 // 弱引用：窗口关闭后不会阻止资源释放。
                 let view_handle = view.downgrade();
                 // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。
+                #[cfg(target_os = "windows")]
                 sync_engine_status(view_handle.clone(), engine.clone(), cx);
                 // 初始化系统托盘并启动命令监听。
                 tray::init(
@@ -134,6 +135,7 @@ pub fn run() {
 /// 这里主要处理 Windows helper 已经在运行、但 UI 是后打开的情况。
 /// 此时我们只能确认“当前确实有隧道在跑”，未必能拿到精确配置项，
 /// 所以先恢复为通用运行态，再启动统计轮询。
+#[cfg(target_os = "windows")]
 fn sync_engine_status(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut App) {
     cx.spawn(async move |cx| {
         let result = cx.background_spawn(async move { engine.status() }).await;

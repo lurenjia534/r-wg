@@ -13,6 +13,7 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -36,6 +37,7 @@ const SOCKET_UNIT_NAME: &str = "r-wg.socket";
 const SERVICE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const SERVICE_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const SERVICE_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+static SERVICE_TERMINATE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Linux 特权 backend 的当前探测状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,10 +177,14 @@ pub fn manage_privileged_service(action: PrivilegedServiceAction) -> Result<(), 
         args.push(OsString::from("none"));
         args.push(OsString::from("--allowed-uid"));
         args.push(OsString::from(current_uid.to_string()));
-        if let Some(user) = current_username(current_uid) {
-            args.push(OsString::from("--socket-user"));
-            args.push(OsString::from(user));
-        }
+        let user = current_username(current_uid).ok_or_else(|| {
+            remote_error(
+                "failed to resolve current username for privileged backend socket ownership"
+                    .to_string(),
+            )
+        })?;
+        args.push(OsString::from("--socket-user"));
+        args.push(OsString::from(user));
     }
 
     let output = if is_running_as_root() {
@@ -223,11 +229,7 @@ pub fn maybe_run_service_mode() -> bool {
     // 一旦已经进入 GPUI 应用生命周期，再切换成 system service / root 管理命令就太晚了。
     let entry = match parse_linux_entry_command(env::args_os()) {
         Ok(entry) => entry,
-        Err(err) => {
-            crate::log::init();
-            tracing::error!("linux privileged backend command parse failed: {err}");
-            return true;
-        }
+        Err(err) => exit_linux_entry_error("linux privileged backend command parse failed", err),
     };
     let Some(entry) = entry else {
         return false;
@@ -235,18 +237,16 @@ pub fn maybe_run_service_mode() -> bool {
 
     crate::log::init();
 
-    match entry {
+    let result = match entry {
         LinuxEntryCommand::ServiceMode(options) => {
             let _mtu = gotatun::tun::MtuWatcher::new(1500);
-            if let Err(err) = run_service(options) {
-                tracing::error!("linux service exited: {err}");
-            }
+            install_signal_handlers();
+            run_service(options)
         }
-        LinuxEntryCommand::Manage(command) => {
-            if let Err(err) = run_manage_command(command) {
-                tracing::error!("{err}");
-            }
-        }
+        LinuxEntryCommand::Manage(command) => run_manage_command(command),
+    };
+    if let Err(err) = result {
+        exit_linux_entry_error("linux privileged backend command failed", err);
     }
 
     true
@@ -343,6 +343,7 @@ impl RemoteEngine {
 }
 
 fn run_service(options: ServiceOptions) -> Result<(), EngineError> {
+    SERVICE_TERMINATE_REQUESTED.store(false, Ordering::Relaxed);
     let socket_gid = match options.socket_group.as_deref() {
         Some(group) => Some(lookup_group_gid(group)?),
         None => None,
@@ -378,6 +379,9 @@ fn run_service(options: ServiceOptions) -> Result<(), EngineError> {
     let mut last_activity = std::time::Instant::now();
 
     loop {
+        if SERVICE_TERMINATE_REQUESTED.load(Ordering::Relaxed) {
+            return graceful_stop_for_shutdown(&engine);
+        }
         match listener.accept() {
             Ok((stream, _)) => {
                 last_activity = std::time::Instant::now();
@@ -441,6 +445,7 @@ fn install_or_repair(options: InstallOptions, repairing: bool) -> Result<(), Eng
     run_command("systemctl", ["daemon-reload"])?;
     run_command("systemctl", ["enable", SOCKET_UNIT_NAME])?;
     if repairing {
+        graceful_stop_active_backend()?;
         // repair 需要重启 socket unit，确保旧 socket 权限和 unit 内容被完整替换。
         run_command("systemctl", ["restart", SOCKET_UNIT_NAME])?;
     } else {
@@ -453,6 +458,7 @@ fn install_or_repair(options: InstallOptions, repairing: bool) -> Result<(), Eng
 }
 
 fn remove_installation(options: RemoveOptions) -> Result<(), EngineError> {
+    graceful_stop_active_backend()?;
     let _ = run_command("systemctl", ["disable", "--now", SOCKET_UNIT_NAME]);
     let _ = run_command("systemctl", ["stop", SERVICE_UNIT_NAME]);
 
@@ -507,6 +513,8 @@ fn handle_service_client(
     allowed_uid: Option<u32>,
     allowed_gid: Option<u32>,
 ) -> io::Result<()> {
+    let _ = stream.set_read_timeout(Some(SERVICE_IO_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(SERVICE_IO_TIMEOUT));
     // 服务端即使已经依赖 socket 文件权限，也仍然额外校验 peer credentials。
     // 这样即使 socket 权限被误改宽，也能在应用层再挡一次不可信调用方。
     let reply = match peer_credentials(&stream) {
@@ -588,7 +596,7 @@ fn is_peer_allowed(
     if let Some(gid) = allowed_gid {
         return peer_in_group(creds.pid, gid).unwrap_or(false);
     }
-    true
+    allowed_uid.is_none() && allowed_gid.is_none()
 }
 
 fn peer_in_group(pid: u32, wanted_gid: u32) -> io::Result<bool> {
@@ -971,7 +979,7 @@ fn render_service_unit(
         exec_start.push_str(&uid.to_string());
     }
     format!(
-        "[Unit]\nDescription=r-wg privileged backend\nAfter=network-online.target\nWants=network-online.target\nRequires=r-wg.socket\n\n[Service]\nType=simple\nExecStart={exec_start}\nRestart=on-failure\nRestartSec=1\nRuntimeDirectory=r-wg\nRuntimeDirectoryMode=0755\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=r-wg privileged backend\nAfter=network-online.target\nWants=network-online.target\nRequires=r-wg.socket\n\n[Service]\nType=simple\nExecStart={exec_start}\nRestart=on-failure\nRestartSec=1\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 
@@ -983,23 +991,40 @@ fn render_socket_unit(socket_user: Option<&str>, socket_group: Option<&str>) -> 
         (Some(user), _) => {
             // 对开发机的默认安装流，优先把 socket 直接给发起安装的桌面用户，
             // 避免还要额外处理 group membership 和重新登录的问题。
-            unit.push_str("SocketMode=0600\n");
+            unit.push_str("DirectoryMode=0700\nSocketMode=0600\n");
             unit.push_str("SocketUser=");
             unit.push_str(user);
             unit.push('\n');
         }
         (None, Some(group)) => {
             // 保留 group 模式，便于后续 package/installer 或多用户机器按组授权。
-            unit.push_str("SocketMode=0660\nSocketUser=root\nSocketGroup=");
+            unit.push_str("DirectoryMode=0750\nSocketMode=0660\nSocketUser=root\nSocketGroup=");
             unit.push_str(group);
             unit.push('\n');
         }
         (None, None) => {
-            unit.push_str("SocketMode=0600\nSocketUser=root\n");
+            unit.push_str("DirectoryMode=0700\nSocketMode=0600\nSocketUser=root\n");
         }
     }
     unit.push_str("RemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n");
     unit
+}
+
+fn graceful_stop_active_backend() -> Result<(), EngineError> {
+    if !systemd_unit_is_active(SERVICE_UNIT_NAME) {
+        return Ok(());
+    }
+    match RemoteEngine::new().stop() {
+        Ok(()) | Err(EngineError::NotRunning) => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+fn graceful_stop_for_shutdown(engine: &LocalEngine) -> Result<(), EngineError> {
+    match engine.stop() {
+        Ok(()) | Err(EngineError::NotRunning) | Err(EngineError::ChannelClosed) => Ok(()),
+        Err(err) => Err(err),
+    }
 }
 
 fn inherited_listener() -> Result<Option<UnixListener>, EngineError> {
@@ -1043,6 +1068,23 @@ fn systemctl_success<const N: usize>(args: [&str; N]) -> bool {
         .unwrap_or(false)
 }
 
+fn install_signal_handlers() {
+    unsafe {
+        libc::signal(
+            libc::SIGTERM,
+            signal_terminate_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            signal_terminate_handler as *const () as libc::sighandler_t,
+        );
+    }
+}
+
+extern "C" fn signal_terminate_handler(_: libc::c_int) {
+    SERVICE_TERMINATE_REQUESTED.store(true, Ordering::Relaxed);
+}
+
 fn run_command<const N: usize>(program: &str, args: [&str; N]) -> Result<(), EngineError> {
     let output = Command::new(program)
         .args(args)
@@ -1076,6 +1118,12 @@ fn ensure_root() -> Result<(), EngineError> {
 
 fn is_running_as_root() -> bool {
     unsafe { libc::geteuid() == 0 }
+}
+
+fn exit_linux_entry_error(context: &str, err: EngineError) -> ! {
+    eprintln!("{context}: {err}");
+    tracing::error!("{context}: {err}");
+    std::process::exit(1);
 }
 
 fn current_username(uid: u32) -> Option<String> {
@@ -1160,9 +1208,10 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        parse_linux_entry_command, render_service_unit, render_socket_unit, InstallOptions,
-        LinuxEntryCommand, ManageCommand, RemoveOptions, ServiceOptions, DEFAULT_INSTALLED_BINARY,
-        DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH, DEFAULT_UNIT_PATH,
+        is_peer_allowed, parse_linux_entry_command, render_service_unit, render_socket_unit,
+        InstallOptions, LinuxEntryCommand, ManageCommand, PeerCredentials, RemoveOptions,
+        ServiceOptions, DEFAULT_INSTALLED_BINARY, DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH,
+        DEFAULT_UNIT_PATH,
     };
 
     fn parse(args: &[&str]) -> LinuxEntryCommand {
@@ -1254,12 +1303,14 @@ mod tests {
         assert!(unit.contains(
             "ExecStart=/opt/r-wg/r-wg --linux-service --socket-group vpnusers --allowed-uid 1000"
         ));
+        assert!(!unit.contains("RuntimeDirectory="));
         assert!(unit.contains("WantedBy=multi-user.target"));
     }
 
     #[test]
     fn render_socket_unit_uses_group_and_socket_target() {
         let unit = render_socket_unit(None, Some("vpnusers"));
+        assert!(unit.contains("DirectoryMode=0750"));
         assert!(unit.contains("SocketGroup=vpnusers"));
         assert!(unit.contains("WantedBy=sockets.target"));
     }
@@ -1267,7 +1318,26 @@ mod tests {
     #[test]
     fn render_socket_unit_uses_socket_user_when_present() {
         let unit = render_socket_unit(Some("luren"), None);
+        assert!(unit.contains("DirectoryMode=0700"));
         assert!(unit.contains("SocketUser=luren"));
         assert!(unit.contains("SocketMode=0600"));
+    }
+
+    #[test]
+    fn is_peer_allowed_requires_uid_match_when_only_uid_is_configured() {
+        let peer = PeerCredentials {
+            pid: 1234,
+            uid: 2000,
+        };
+        assert!(!is_peer_allowed(peer, Some(1000), None));
+    }
+
+    #[test]
+    fn is_peer_allowed_defaults_to_open_only_when_no_restrictions_exist() {
+        let peer = PeerCredentials {
+            pid: 1234,
+            uid: 2000,
+        };
+        assert!(is_peer_allowed(peer, None, None));
     }
 }

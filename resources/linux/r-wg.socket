@@ -3,6 +3,7 @@ Description=r-wg privileged backend socket
 
 [Socket]
 ListenStream=/run/r-wg/control.sock
+DirectoryMode=0750
 SocketMode=0660
 SocketUser=root
 SocketGroup=r-wg
