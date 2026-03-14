@@ -6,12 +6,12 @@
 //! - helper 进程持有 gotatun 设备与 Windows 网络配置生命周期；
 //! - 已经管理员启动时，直接复用现有本地引擎，不额外走 IPC。
 //!
-//! 这里没有改 Linux 路径；Linux 仍然走原来的本地引擎与 `cap_net_admin` 检查。
+//! Linux 现已切到 systemd privileged service + UDS；这里仍然只负责 Windows 路径。
 
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufReader};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -28,6 +28,10 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
 use super::engine::Engine as LocalEngine;
+use super::ipc::{
+    error_reply, map_backend_error, read_json_line, unexpected_reply, unit_reply, write_json_line,
+    BackendCommand, BackendReply,
+};
 use super::{EngineError, EngineStats, EngineStatus, StartRequest};
 
 /// helper 首次拉起后的最长等待时间。
@@ -81,52 +85,7 @@ struct HelperSession {
 #[derive(Debug, Serialize, Deserialize)]
 struct HelperEnvelope {
     secret: String,
-    command: HelperCommand,
-}
-
-/// UI -> helper 的命令集合。
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum HelperCommand {
-    /// 只检查 helper 是否在线，不改状态。
-    Ping,
-    /// 启动隧道；管理员 helper 会真正持有运行态。
-    Start { request: StartRequest },
-    /// 停止隧道并做完整清理。
-    Stop,
-    /// 查询当前运行状态。
-    Status,
-    /// 查询当前 peer 统计。
-    Stats,
-}
-
-/// helper -> UI 的响应集合。
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum HelperReply {
-    Ok,
-    Status {
-        status: EngineStatus,
-    },
-    Stats {
-        stats: EngineStats,
-    },
-    Error {
-        kind: HelperErrorKind,
-        message: String,
-    },
-}
-
-/// 远端错误的可恢复分类。
-///
-/// 文本错误消息单独放在 `message`，这里只保留 UI 需要特殊处理的几种状态。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum HelperErrorKind {
-    ChannelClosed,
-    AlreadyRunning,
-    NotRunning,
-    Other,
+    command: BackendCommand,
 }
 
 /// 进程入口早期分流：当前 exe 是否应进入管理员 helper 模式。
@@ -220,7 +179,7 @@ impl RemoteEngine {
         let session = self.ensure_helper()?;
         match self.send_command(
             &session,
-            HelperCommand::Start {
+            BackendCommand::Start {
                 request: request.clone(),
             },
         ) {
@@ -228,7 +187,7 @@ impl RemoteEngine {
             Err(_) => {
                 self.clear_session_file();
                 let session = self.ensure_helper()?;
-                let reply = self.send_command(&session, HelperCommand::Start { request })?;
+                let reply = self.send_command(&session, BackendCommand::Start { request })?;
                 self.expect_unit(reply)
             }
         }
@@ -241,7 +200,7 @@ impl RemoteEngine {
         let Some(session) = self.load_session() else {
             return Err(EngineError::NotRunning);
         };
-        match self.send_command(&session, HelperCommand::Stop) {
+        match self.send_command(&session, BackendCommand::Stop) {
             Ok(reply) => self.expect_unit(reply),
             Err(err) => {
                 self.clear_session_file();
@@ -258,9 +217,9 @@ impl RemoteEngine {
         let Some(session) = self.load_session() else {
             return Ok(EngineStatus::Stopped);
         };
-        match self.send_command(&session, HelperCommand::Status) {
-            Ok(HelperReply::Status { status }) => Ok(status),
-            Ok(HelperReply::Error { kind, message }) => Err(map_helper_error(kind, message)),
+        match self.send_command(&session, BackendCommand::Status) {
+            Ok(BackendReply::Status { status }) => Ok(status),
+            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
             Ok(other) => Err(unexpected_reply(other)),
             Err(_) => {
                 self.clear_session_file();
@@ -276,9 +235,9 @@ impl RemoteEngine {
         let Some(session) = self.load_session() else {
             return Err(EngineError::NotRunning);
         };
-        match self.send_command(&session, HelperCommand::Stats) {
-            Ok(HelperReply::Stats { stats }) => Ok(stats),
-            Ok(HelperReply::Error { kind, message }) => Err(map_helper_error(kind, message)),
+        match self.send_command(&session, BackendCommand::Stats) {
+            Ok(BackendReply::Stats { stats }) => Ok(stats),
+            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
             Ok(other) => Err(unexpected_reply(other)),
             Err(err) => {
                 self.clear_session_file();
@@ -292,7 +251,7 @@ impl RemoteEngine {
     /// 优先复用已有 helper；只有在没有可用 helper 时才触发新的 UAC 提权。
     fn ensure_helper(&self) -> Result<HelperSession, EngineError> {
         if let Some(session) = self.load_session() {
-            if self.send_command(&session, HelperCommand::Ping).is_ok() {
+            if self.send_command(&session, BackendCommand::Ping).is_ok() {
                 return Ok(session);
             }
             self.clear_session_file();
@@ -302,7 +261,7 @@ impl RemoteEngine {
         let start = Instant::now();
         while start.elapsed() < HELPER_START_TIMEOUT {
             if let Some(session) = self.load_session() {
-                if self.send_command(&session, HelperCommand::Ping).is_ok() {
+                if self.send_command(&session, BackendCommand::Ping).is_ok() {
                     return Ok(session);
                 }
             }
@@ -381,8 +340,8 @@ impl RemoteEngine {
     fn send_command(
         &self,
         session: &HelperSession,
-        command: HelperCommand,
-    ) -> Result<HelperReply, EngineError> {
+        command: BackendCommand,
+    ) -> Result<BackendReply, EngineError> {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, session.port));
         let connect_timeout = HELPER_IO_TIMEOUT.min(Duration::from_secs(5));
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout)
@@ -401,10 +360,10 @@ impl RemoteEngine {
     }
 
     /// 把“只关心成功/失败”的响应统一转换成 `Result<()>`。
-    fn expect_unit(&self, reply: HelperReply) -> Result<(), EngineError> {
+    fn expect_unit(&self, reply: BackendReply) -> Result<(), EngineError> {
         match reply {
-            HelperReply::Ok => Ok(()),
-            HelperReply::Error { kind, message } => Err(map_helper_error(kind, message)),
+            BackendReply::Ok => Ok(()),
+            BackendReply::Error { kind, message } => Err(map_backend_error(kind, message)),
             other => Err(unexpected_reply(other)),
         }
     }
@@ -474,68 +433,30 @@ fn handle_helper_client(
     let envelope: HelperEnvelope = read_json_line(&mut reader)?;
 
     let reply = if envelope.secret != secret {
-        HelperReply::Error {
-            kind: HelperErrorKind::Other,
+        BackendReply::Error {
+            kind: super::ipc::BackendErrorKind::Other,
             message: "helper authentication failed".to_string(),
         }
     } else {
         match envelope.command {
-            HelperCommand::Ping => HelperReply::Ok,
-            HelperCommand::Start { request } => unit_reply(engine.start(request)),
-            HelperCommand::Stop => unit_reply(engine.stop()),
-            HelperCommand::Status => match engine.status() {
-                Ok(status) => HelperReply::Status { status },
+            BackendCommand::Ping => BackendReply::Ok,
+            BackendCommand::Info => BackendReply::Info {
+                protocol_version: super::ipc::IPC_PROTOCOL_VERSION,
+            },
+            BackendCommand::Start { request } => unit_reply(engine.start(request)),
+            BackendCommand::Stop => unit_reply(engine.stop()),
+            BackendCommand::Status => match engine.status() {
+                Ok(status) => BackendReply::Status { status },
                 Err(err) => error_reply(err),
             },
-            HelperCommand::Stats => match engine.stats() {
-                Ok(stats) => HelperReply::Stats { stats },
+            BackendCommand::Stats => match engine.stats() {
+                Ok(stats) => BackendReply::Stats { stats },
                 Err(err) => error_reply(err),
             },
         }
     };
 
     write_json_line(&mut stream, &reply)
-}
-
-/// `Result<()>` -> helper 响应。
-fn unit_reply(result: Result<(), EngineError>) -> HelperReply {
-    match result {
-        Ok(()) => HelperReply::Ok,
-        Err(err) => error_reply(err),
-    }
-}
-
-/// 引擎错误 -> helper 错误响应。
-fn error_reply(err: EngineError) -> HelperReply {
-    HelperReply::Error {
-        kind: helper_error_kind(&err),
-        message: err.to_string(),
-    }
-}
-
-/// 把本地错误映射成远端可识别的分类。
-fn helper_error_kind(err: &EngineError) -> HelperErrorKind {
-    match err {
-        EngineError::ChannelClosed => HelperErrorKind::ChannelClosed,
-        EngineError::AlreadyRunning => HelperErrorKind::AlreadyRunning,
-        EngineError::NotRunning => HelperErrorKind::NotRunning,
-        _ => HelperErrorKind::Other,
-    }
-}
-
-/// 把 helper 返回的错误重新还原成 UI 可理解的 `EngineError`。
-fn map_helper_error(kind: HelperErrorKind, message: String) -> EngineError {
-    match kind {
-        HelperErrorKind::ChannelClosed => EngineError::ChannelClosed,
-        HelperErrorKind::AlreadyRunning => EngineError::AlreadyRunning,
-        HelperErrorKind::NotRunning => EngineError::NotRunning,
-        HelperErrorKind::Other => EngineError::Remote(message),
-    }
-}
-
-/// 兜底保护：协议结构与预期不一致时，直接报远端错误。
-fn unexpected_reply(reply: HelperReply) -> EngineError {
-    EngineError::Remote(format!("unexpected helper reply: {reply:?}"))
 }
 
 /// 把 helper session 持久化到用户本地目录。
@@ -553,29 +474,6 @@ fn write_session_file(path: &Path, session: &HelperSession) -> Result<(), Engine
         .map_err(|err| EngineError::Remote(format!("failed to encode helper session: {err}")))?;
     fs::write(path, json)
         .map_err(|err| EngineError::Remote(format!("failed to write helper session: {err}")))
-}
-
-/// 以“单行 JSON”的形式写出一条消息。
-fn write_json_line<T: Serialize>(writer: &mut impl Write, value: &T) -> io::Result<()> {
-    let payload = serde_json::to_string(value)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-    writer.write_all(payload.as_bytes())?;
-    writer.write_all(b"\n")?;
-    writer.flush()
-}
-
-/// 读取一条“单行 JSON”消息。
-fn read_json_line<T: for<'de> Deserialize<'de>>(reader: &mut impl BufRead) -> io::Result<T> {
-    let mut line = String::new();
-    let read = reader.read_line(&mut line)?;
-    if read == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "helper closed the connection",
-        ));
-    }
-    serde_json::from_str(line.trim_end())
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
 /// helper session 文件的默认位置。

@@ -1,0 +1,12 @@
+[Unit]
+Description=r-wg privileged backend socket
+
+[Socket]
+ListenStream=/run/r-wg/control.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=r-wg
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

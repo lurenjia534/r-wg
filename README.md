@@ -17,42 +17,55 @@ r-wg is a Rust-based WireGuard client with a GPUI front end and a Rust backend (
 ## Requirements
 
 - Rust toolchain (rustup).
-- Linux: `cap_net_admin` to configure TUN and routes (or run as root).
+- Linux: `systemd` for the privileged backend service.
 - Optional: `resolvectl` or `resolvconf` for DNS changes.
 
 ## Build and Run
 
-### Linux (non-root with capabilities)
+### Linux (socket-activated privileged backend)
 
 ```sh
-scripts/linux/build_with_cap.sh
-scripts/linux/run_with_cap.sh
+cargo build
+sudo install -Dm755 target/debug/r-wg /usr/local/libexec/r-wg/r-wg
+sudo groupadd --system r-wg 2>/dev/null || true
+sudo usermod -aG r-wg "$USER"
+sudo install -Dm644 resources/linux/r-wg.service /etc/systemd/system/r-wg.service
+sudo install -Dm644 resources/linux/r-wg.socket /etc/systemd/system/r-wg.socket
+sudo systemctl daemon-reload
+sudo systemctl enable --now r-wg.socket
+r-wg
 ```
 
-To run with logs:
+After adding your user to the `r-wg` group, start a new login session before launching the UI.
+
+The backend service now starts on demand when the UI connects and exits again after it becomes idle.
+
+To inspect the backend:
 
 ```sh
-RWG_LOG=1 scripts/linux/run_with_cap.sh
+journalctl -u r-wg.socket -f
+journalctl -u r-wg.service -f
 ```
 
 For more options (levels, scopes, buffer), see `docs/logging.md`.
 
-If you build manually, set the capability on the binary:
+The app now expects a privileged backend instead of `setcap`. The Advanced page shows backend
+status and supports `Install`, `Repair`, and `Remove` via `pkexec` for development builds.
+That flow copies the current executable into `/usr/local/libexec/r-wg/r-wg` before enabling
+`r-wg.socket`, so the root-managed backend does not point at your workspace binary.
 
-```sh
-cargo build
-sudo setcap cap_net_admin+ep target/debug/r-wg
-./target/debug/r-wg
-```
-
-Note: file capabilities are not preserved in release archives, so after downloading a release
-you must run `sudo setcap cap_net_admin+ep r-wg` (or run the binary with `sudo`).
+Legacy helper scripts under `scripts/linux/` still exist during the transition, but the supported
+Linux path is the `systemd` service above.
 
 ### Release build
 
 ```sh
-scripts/linux/build_with_cap.sh --release
-scripts/linux/run_with_cap.sh --release
+cargo build --release
+sudo install -Dm755 target/release/r-wg /usr/local/libexec/r-wg/r-wg
+sudo install -Dm644 resources/linux/r-wg.service /etc/systemd/system/r-wg.service
+sudo install -Dm644 resources/linux/r-wg.socket /etc/systemd/system/r-wg.socket
+sudo systemctl daemon-reload
+sudo systemctl restart r-wg.socket
 ```
 
 ## Configuration Format

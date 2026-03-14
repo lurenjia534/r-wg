@@ -130,9 +130,9 @@ impl WgApp {
         delay: Option<Duration>,
         cx: &mut Context<Self>,
     ) {
-        // 启动前权限检查（Linux cap_net_admin）。
+        // 启动前检查 Linux privileged backend 是否可用。
         if let Some(message) = start_permission_message() {
-            // 运行前检查权限提示（Linux cap_net_admin）。
+            // 运行前直接提示 service/backend 状态，避免进入耗时启动流程后才失败。
             self.set_error(message);
             cx.notify();
             return;

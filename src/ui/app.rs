@@ -31,6 +31,9 @@ pub fn run() {
             cx.open_window(WindowOptions::default(), move |window, cx| {
                 // 创建应用状态并挂到窗口根视图。
                 let view = cx.new(|_cx| WgApp::new(engine.clone(), theme_mode));
+                let _ = view.update(cx, |this, cx| {
+                    this.refresh_privileged_backend_status(cx);
+                });
                 // 弱引用：窗口关闭后不会阻止资源释放。
                 let view_handle = view.downgrade();
                 // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。

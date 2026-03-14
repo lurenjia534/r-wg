@@ -45,6 +45,7 @@ The ring buffer uses a lock-free `ArrayQueue` with a capacity of 2000 lines. UI 
 ## Example
 
 ```sh
-RWG_LOG=1 RWG_LOG_LEVEL=debug RWG_LOG_SCOPES=net,engine \
-  scripts/linux/run_with_cap.sh
+RWG_LOG=1 RWG_LOG_LEVEL=debug RWG_LOG_SCOPES=net,engine r-wg
+# or inspect the privileged backend directly:
+journalctl -u r-wg.service -f
 ```

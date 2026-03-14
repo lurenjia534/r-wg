@@ -5,14 +5,11 @@
 mod ui;
 
 fn main() {
-    // Windows helper 模式必须在创建 UI 前尽早分流；
-    // 一旦当前进程接管为管理员 helper，就不再继续走主界面初始化。
-    if r_wg::backend::wg::maybe_run_elevated_helper() {
+    // Windows helper / Linux privileged service 都必须在创建 UI 前尽早分流。
+    if r_wg::backend::wg::maybe_run_privileged_backend() {
         return;
     }
 
-    // 普通 UI / 已提权本地模式仍然保留原有 MtuWatcher。
-    let _mtu = gotatun::tun::MtuWatcher::new(1500);
     r_wg::log::init();
     ui::run();
 }

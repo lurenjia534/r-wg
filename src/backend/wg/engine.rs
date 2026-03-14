@@ -101,12 +101,16 @@ pub enum EngineError {
     AlreadyRunning,
     /// 未启动却请求停止或其它操作。
     NotRunning,
+    /// 调用方无权访问特权后端。
+    AccessDenied,
     /// gotatun 设备层错误（如 TUN 创建失败）。
     Device(device::Error),
     /// WireGuard 配置错误（解析或字段非法）。
     Config(ConfigError),
     /// 系统网络配置错误（地址/路由/DNS 应用失败）。
     Network(platform::NetworkError),
+    /// UI 与特权后端协议版本不一致。
+    VersionMismatch { expected: u32, actual: u32 },
     /// Windows 提权 helper / IPC 层返回的文本错误。
     Remote(String),
 }
@@ -118,9 +122,14 @@ impl fmt::Display for EngineError {
             EngineError::ChannelClosed => write!(f, "backend channel closed"),
             EngineError::AlreadyRunning => write!(f, "backend already running"),
             EngineError::NotRunning => write!(f, "backend not running"),
+            EngineError::AccessDenied => write!(f, "access denied to privileged backend"),
             EngineError::Device(err) => write!(f, "device error: {err}"),
             EngineError::Config(err) => write!(f, "config error: {err}"),
             EngineError::Network(err) => write!(f, "network error: {err}"),
+            EngineError::VersionMismatch { expected, actual } => write!(
+                f,
+                "privileged backend protocol mismatch (expected v{expected}, got v{actual})"
+            ),
             EngineError::Remote(message) => write!(f, "{message}"),
         }
     }

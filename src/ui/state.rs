@@ -553,6 +553,9 @@ pub(crate) struct UiState {
     // 日志状态与提示。
     pub(crate) status: SharedString,
     pub(crate) last_error: Option<SharedString>,
+    pub(crate) backend_status: SharedString,
+    pub(crate) backend_detail: SharedString,
+    pub(crate) backend_available: bool,
 }
 
 impl UiState {
@@ -564,6 +567,9 @@ impl UiState {
             proxy_search_input: None,
             status: "Ready".into(),
             last_error: None,
+            backend_status: "Unknown".into(),
+            backend_detail: "Refresh to probe the Linux privileged backend.".into(),
+            backend_available: false,
         }
     }
 
@@ -575,6 +581,17 @@ impl UiState {
         let message = message.into();
         self.status = message.clone();
         self.last_error = Some(message);
+    }
+
+    pub(crate) fn set_backend_status(
+        &mut self,
+        status: impl Into<SharedString>,
+        detail: impl Into<SharedString>,
+        available: bool,
+    ) {
+        self.backend_status = status.into();
+        self.backend_detail = detail.into();
+        self.backend_available = available;
     }
 }
 

@@ -114,7 +114,7 @@ pub(crate) fn render_about(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Use elevated capabilities on Linux for netlink routing/DNS."),
+                    .child("Use the Linux privileged backend service for routing and DNS changes."),
             )
             .child(
                 h_flex()

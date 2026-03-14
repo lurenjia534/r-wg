@@ -1,11 +1,21 @@
 use gpui::{div, px, Context, Div, Entity, ParentElement, SharedString, Styled};
 use gpui_component::setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings};
 use gpui_component::theme::{Theme, ThemeMode};
+#[cfg(target_os = "linux")]
+use gpui_component::{
+    button::{Button, ButtonVariants},
+    group_box::{GroupBox, GroupBoxVariants},
+    h_flex,
+    tag::Tag,
+    v_flex, ActiveTheme as _, Sizable as _,
+};
+#[cfg(target_os = "linux")]
+use r_wg::backend::wg::PrivilegedServiceAction;
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use super::super::state::{RightTab, TrafficPeriod, WgApp};
 
-pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
+pub(crate) fn render_advanced(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
     let app_handle = cx.entity();
 
     let general_page = SettingPage::new("General")
@@ -52,13 +62,19 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
         .page(network_page)
         .page(monitoring_page);
 
-    div()
+    let content = div()
         .flex()
         .flex_col()
+        .gap_3()
         .flex_1()
         .w_full()
         .min_h(px(0.0))
-        .child(settings)
+        .child(settings);
+
+    #[cfg(target_os = "linux")]
+    let content = content.child(render_privileged_backend_card(app, cx));
+
+    content
 }
 
 fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
@@ -197,6 +213,113 @@ fn right_tab_item(app: Entity<WgApp>) -> SettingItem {
 
 fn shared(value: &'static str) -> SharedString {
     SharedString::new_static(value)
+}
+
+#[cfg(target_os = "linux")]
+fn render_privileged_backend_card(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
+    let (status, detail, available) = (
+        app.ui.backend_status.clone(),
+        app.ui.backend_detail.clone(),
+        app.ui.backend_available,
+    );
+    let status_text = status.to_string();
+
+    let tag = if available {
+        Tag::success().small().rounded_full().child(status)
+    } else if status_text == "Access denied" || status_text == "Version mismatch" {
+        Tag::danger().small().rounded_full().child(status)
+    } else {
+        Tag::warning().small().rounded_full().child(status)
+    };
+
+    let show_install = matches!(status_text.as_str(), "Not installed");
+    let show_repair = matches!(
+        status_text.as_str(),
+        "Installed" | "Running" | "Version mismatch" | "Access denied" | "Unreachable"
+    );
+    let show_remove = matches!(
+        status_text.as_str(),
+        "Installed" | "Running" | "Version mismatch" | "Access denied"
+    );
+
+    let actions = h_flex().items_center().gap_2().child(
+        Button::new("backend-refresh-status")
+            .label("Refresh")
+            .outline()
+            .small()
+            .compact()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.refresh_privileged_backend_status(cx);
+            })),
+    );
+    let actions = if show_install {
+        actions.child(
+            Button::new("backend-install")
+                .label("Install")
+                .small()
+                .compact()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.run_privileged_backend_action(PrivilegedServiceAction::Install, cx);
+                })),
+        )
+    } else {
+        actions
+    };
+    let actions = if show_repair {
+        actions.child(
+            Button::new("backend-repair")
+                .label("Repair")
+                .outline()
+                .small()
+                .compact()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.run_privileged_backend_action(PrivilegedServiceAction::Repair, cx);
+                })),
+        )
+    } else {
+        actions
+    };
+    let actions = if show_remove {
+        actions.child(
+            Button::new("backend-remove")
+                .label("Remove")
+                .ghost()
+                .small()
+                .compact()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.run_privileged_backend_action(PrivilegedServiceAction::Remove, cx);
+                })),
+        )
+    } else {
+        actions
+    };
+
+    div().child(
+        GroupBox::new().fill().title("Privileged Backend").child(
+            v_flex()
+                .gap_3()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("System service used for TUN, routing, and DNS changes."),
+                        )
+                        .child(tag),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(detail),
+                )
+                .child(actions),
+        ),
+    )
 }
 
 fn theme_mode_options() -> Vec<(SharedString, SharedString)> {
