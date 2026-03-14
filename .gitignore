@@ -1,4 +1,6 @@
 /target
+.snapshots/
+.tmp/
 **/*.rs.bk
 .DS_Store
 Thumbs.db
