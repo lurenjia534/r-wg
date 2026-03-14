@@ -33,16 +33,15 @@ pub enum BackendCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BackendReply {
+    /// 纯成功响应：用于 Ping / Start / Stop 这类不需要额外载荷的命令。
     Ok,
-    Info {
-        protocol_version: u32,
-    },
-    Status {
-        status: EngineStatus,
-    },
-    Stats {
-        stats: EngineStats,
-    },
+    /// 协议/元信息握手响应：当前只暴露协议版本，后续也可继续扩展。
+    Info { protocol_version: u32 },
+    /// 运行状态查询结果。
+    Status { status: EngineStatus },
+    /// 统计信息查询结果。
+    Stats { stats: EngineStats },
+    /// 远端执行失败；`kind` 负责分类，`message` 保留可读细节。
     Error {
         kind: BackendErrorKind,
         message: String,
@@ -110,6 +109,8 @@ pub fn protocol_mismatch(expected: u32, actual: u32) -> EngineError {
 
 /// 以“单行 JSON”的形式写出一条消息。
 pub fn write_json_line<T: Serialize>(writer: &mut impl Write, value: &T) -> io::Result<()> {
+    // IPC 刻意保持“一请求一行 JSON”，这样 Windows TCP helper 与 Linux UDS service
+    // 可以共用同一套编解码逻辑，而不必再引入 framing 协议或流式解析状态机。
     let payload = serde_json::to_string(value)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     writer.write_all(payload.as_bytes())?;
@@ -122,6 +123,8 @@ pub fn read_json_line<T: for<'de> Deserialize<'de>>(reader: &mut impl BufRead) -
     let mut line = String::new();
     let read = reader.read_line(&mut line)?;
     if read == 0 {
+        // 这里统一视为“对端提前断开”，让上层把它映射成 ChannelClosed /
+        // backend unavailable，而不是继续拿空字符串做 JSON 解析。
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "backend closed the connection",

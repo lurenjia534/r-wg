@@ -25,6 +25,8 @@ impl WgApp {
 
     #[cfg(target_os = "linux")]
     pub(crate) fn refresh_privileged_backend_status(&mut self, cx: &mut Context<Self>) {
+        // 探测放到后台线程：systemctl / socket 探测虽然不重，但它们都属于同步系统调用，
+        // 不应该阻塞 UI 渲染线程。
         self.ui
             .set_backend_status("Checking...", "Probing Linux privileged backend...", false);
         cx.notify();
@@ -90,6 +92,8 @@ impl WgApp {
             format!("{verb} the Linux privileged backend via pkexec..."),
             false,
         );
+        // 安装/修复/移除都可能触发授权弹窗与 systemd 操作，必须异步执行；
+        // 这里先把设置页状态切到 Working，避免用户误以为按钮没有响应。
         cx.notify();
 
         cx.spawn(async move |view, cx| {

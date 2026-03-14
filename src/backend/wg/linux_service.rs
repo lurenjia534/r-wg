@@ -117,6 +117,9 @@ struct PeerCredentials {
 
 /// UI 侧探测 Linux 特权 service 是否可用。
 pub fn probe_privileged_service() -> PrivilegedServiceStatus {
+    // 注意：这里不能“无脑尝试连接 socket”来判断 Installed。
+    // 在 socket activation 模式下，探测动作本身会把 service 拉起来，
+    // 这会把一个原本只是“已安装待命”的后端误判成“正在运行”。
     if !installation_exists() {
         return PrivilegedServiceStatus::NotInstalled;
     }
@@ -162,6 +165,10 @@ pub fn manage_privileged_service(action: PrivilegedServiceAction) -> Result<(), 
     ];
     if !matches!(action, PrivilegedServiceAction::Remove) {
         let current_uid = unsafe { libc::getuid() };
+        // 这里显式把“发起安装的原始用户”编码进 root 管理命令：
+        // - pkexec 会清洗大部分环境变量，不能依赖外层 shell 上下文；
+        // - 后端安装完成后需要把 socket 权限/allowed uid 定向给当前桌面用户，
+        //   否则最容易出现“安装成功，但当前用户依然打不开控制 socket”。
         args.push(OsString::from("--source"));
         args.push(current_exe.as_os_str().to_os_string());
         args.push(OsString::from("--socket-group"));
@@ -212,6 +219,8 @@ pub fn manage_privileged_service(action: PrivilegedServiceAction) -> Result<(), 
 
 /// 入口早分流：当前进程是否应接管为 Linux system service 或其管理命令。
 pub fn maybe_run_service_mode() -> bool {
+    // 和 Windows helper 一样，Linux 的 service/install/remove 都必须在 UI 初始化前分流：
+    // 一旦已经进入 GPUI 应用生命周期，再切换成 system service / root 管理命令就太晚了。
     let entry = match parse_linux_entry_command(env::args_os()) {
         Ok(entry) => entry,
         Err(err) => {
@@ -339,8 +348,12 @@ fn run_service(options: ServiceOptions) -> Result<(), EngineError> {
         None => None,
     };
     let listener = if let Some(listener) = inherited_listener()? {
+        // systemd socket activation 路径：
+        // socket 已经由 PID 1 创建并设置好权限，这里只接管 fd=3 开始 accept。
         listener
     } else {
+        // 直接运行 `r-wg --linux-service` 的兜底路径：
+        // 允许开发时绕过 systemd 手动拉起 service，但正式安装路径仍然优先使用 socket unit。
         if let Some(parent) = options.socket_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|err| remote_error(format!("failed to create runtime dir: {err}")))?;
@@ -373,6 +386,8 @@ fn run_service(options: ServiceOptions) -> Result<(), EngineError> {
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                 let running = matches!(engine.status(), Ok(EngineStatus::Running));
                 if !running && last_activity.elapsed() >= SERVICE_IDLE_TIMEOUT {
+                    // socket activation 下，service 不需要永久驻留；
+                    // 空闲退出后，下一次 UI 访问 socket 会由 systemd 再次自动拉起。
                     break Ok(());
                 }
                 thread::sleep(SERVICE_POLL_INTERVAL);
@@ -426,8 +441,11 @@ fn install_or_repair(options: InstallOptions, repairing: bool) -> Result<(), Eng
     run_command("systemctl", ["daemon-reload"])?;
     run_command("systemctl", ["enable", SOCKET_UNIT_NAME])?;
     if repairing {
+        // repair 需要重启 socket unit，确保旧 socket 权限和 unit 内容被完整替换。
         run_command("systemctl", ["restart", SOCKET_UNIT_NAME])?;
     } else {
+        // install 只启动 socket，不主动启动 service；
+        // 后端会在首次连接时由 systemd 按需拉起。
         run_command("systemctl", ["start", SOCKET_UNIT_NAME])?;
     }
 
@@ -489,6 +507,8 @@ fn handle_service_client(
     allowed_uid: Option<u32>,
     allowed_gid: Option<u32>,
 ) -> io::Result<()> {
+    // 服务端即使已经依赖 socket 文件权限，也仍然额外校验 peer credentials。
+    // 这样即使 socket 权限被误改宽，也能在应用层再挡一次不可信调用方。
     let reply = match peer_credentials(&stream) {
         Ok(creds) if is_peer_allowed(creds, allowed_uid, allowed_gid) => {
             handle_command(&mut stream, engine)?
@@ -572,6 +592,8 @@ fn is_peer_allowed(
 }
 
 fn peer_in_group(pid: u32, wanted_gid: u32) -> io::Result<bool> {
+    // Linux UDS 的 SO_PEERCRED 只直接给 pid/uid/gid；
+    // 若要判断“调用方是否属于某个附加组”，最稳妥的本地办法就是读 /proc/<pid>/status。
     let status = fs::read_to_string(format!("/proc/{pid}/status"))?;
     let groups = status
         .lines()
@@ -788,6 +810,7 @@ fn parse_manage_command(
             socket_user,
             allowed_uid,
         })),
+        // remove 不需要 source/socket owner 这些安装期元信息，只需要知道清理哪些目标路径。
         "remove" => Ok(ManageCommand::Remove(RemoveOptions {
             binary_path,
             unit_path,
@@ -937,6 +960,8 @@ fn render_service_unit(
 ) -> String {
     let mut exec_start = format!("{}", binary_path.display());
     exec_start.push_str(" --linux-service");
+    // socket unit 负责“谁能连上 socket”，service unit 负责“service 端额外信任谁”。
+    // 因此 allowed uid 也要进 ExecStart，保证服务端 peer 校验与安装时的授权对象一致。
     if let Some(group) = socket_group {
         exec_start.push_str(" --socket-group ");
         exec_start.push_str(group);
@@ -956,12 +981,15 @@ fn render_socket_unit(socket_user: Option<&str>, socket_group: Option<&str>) -> 
     );
     match (socket_user, socket_group) {
         (Some(user), _) => {
+            // 对开发机的默认安装流，优先把 socket 直接给发起安装的桌面用户，
+            // 避免还要额外处理 group membership 和重新登录的问题。
             unit.push_str("SocketMode=0600\n");
             unit.push_str("SocketUser=");
             unit.push_str(user);
             unit.push('\n');
         }
         (None, Some(group)) => {
+            // 保留 group 模式，便于后续 package/installer 或多用户机器按组授权。
             unit.push_str("SocketMode=0660\nSocketUser=root\nSocketGroup=");
             unit.push_str(group);
             unit.push('\n');
@@ -975,6 +1003,9 @@ fn render_socket_unit(socket_user: Option<&str>, socket_group: Option<&str>) -> 
 }
 
 fn inherited_listener() -> Result<Option<UnixListener>, EngineError> {
+    // systemd 约定：
+    // - LISTEN_PID 指向当前 service 进程；
+    // - LISTEN_FDS 表示从 fd=3 开始传了多少个监听 fd。
     let listen_pid = env::var("LISTEN_PID")
         .ok()
         .and_then(|value| value.parse::<u32>().ok());
@@ -1048,6 +1079,8 @@ fn is_running_as_root() -> bool {
 }
 
 fn current_username(uid: u32) -> Option<String> {
+    // install/repair 从普通用户经 pkexec 进入 root 后，仍然需要恢复“原始用户是谁”，
+    // 以便生成归属到该用户的 socket unit。
     let mut pwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
     let mut result = std::ptr::null_mut();
     let mut buf = vec![0u8; 1024];
