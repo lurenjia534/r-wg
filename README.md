@@ -54,9 +54,6 @@ status and supports `Install`, `Repair`, and `Remove` via `pkexec` for developme
 That flow copies the current executable into `/usr/local/libexec/r-wg/r-wg` before enabling
 `r-wg.socket`, so the root-managed backend does not point at your workspace binary.
 
-Legacy helper scripts under `scripts/linux/` still exist during the transition, but the supported
-Linux path is the `systemd` service above.
-
 ### Release build
 
 ```sh
