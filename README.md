@@ -24,6 +24,17 @@ r-wg is a Rust-based WireGuard client with a GPUI front end and a Rust backend (
 
 ### Linux (socket-activated privileged backend)
 
+Recommended path for normal desktop use:
+
+- Launch `r-wg` directly.
+- Open `Advanced -> Privileged Backend`.
+- Click `Install`.
+- After installation finishes, keep launching the app normally; the privileged backend will be started automatically when a tunnel needs it.
+
+You do not need to wrap the app in a shell helper, run the UI with `sudo`, or manually apply `setcap`.
+
+Manual `systemd` installation is still available for packaging, debugging, or administrator-managed deployments:
+
 ```sh
 cargo build
 sudo install -Dm755 target/debug/r-wg /usr/local/libexec/r-wg/r-wg
