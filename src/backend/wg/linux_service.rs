@@ -138,6 +138,16 @@ pub fn probe_privileged_service() -> PrivilegedServiceStatus {
         return PrivilegedServiceStatus::NotInstalled;
     }
 
+    match socket_access_status(control_socket_path().as_path()) {
+        Ok(Some(false)) => return PrivilegedServiceStatus::AccessDenied,
+        Ok(Some(true)) | Ok(None) => {}
+        Err(err) => {
+            return PrivilegedServiceStatus::Unreachable(format!(
+                "failed to inspect Linux privileged backend socket access: {err}"
+            ))
+        }
+    }
+
     if systemd_unit_is_active(SERVICE_UNIT_NAME) {
         let engine = RemoteEngine::new();
         return match engine.send_command_raw(BackendCommand::Info) {
@@ -498,9 +508,11 @@ fn install_or_repair(mut options: InstallOptions, repairing: bool) -> Result<(),
     run_command("systemctl", ["enable", STARTUP_REPAIR_UNIT_NAME])?;
     if repairing {
         graceful_stop_active_backend()?;
+        cleanup_runtime_socket_dir(Path::new(DEFAULT_SOCKET_PATH))?;
         // repair 需要重启 socket unit，确保旧 socket 权限和 unit 内容被完整替换。
         run_command("systemctl", ["restart", SOCKET_UNIT_NAME])?;
     } else {
+        cleanup_runtime_socket_dir(Path::new(DEFAULT_SOCKET_PATH))?;
         // install 只启动 socket，不主动启动 service；
         // 后端会在首次连接时由 systemd 按需拉起。
         run_command("systemctl", ["start", SOCKET_UNIT_NAME])?;
@@ -514,6 +526,7 @@ fn remove_installation(options: RemoveOptions) -> Result<(), EngineError> {
     let _ = run_command("systemctl", ["disable", STARTUP_REPAIR_UNIT_NAME]);
     let _ = run_command("systemctl", ["disable", "--now", SOCKET_UNIT_NAME]);
     let _ = run_command("systemctl", ["stop", SERVICE_UNIT_NAME]);
+    let _ = cleanup_runtime_socket_dir(Path::new(DEFAULT_SOCKET_PATH));
 
     if options.unit_path.exists() {
         fs::remove_file(&options.unit_path).map_err(|err| {
@@ -686,6 +699,26 @@ fn installation_exists() -> bool {
     Path::new(DEFAULT_UNIT_PATH).exists()
         || Path::new(DEFAULT_SOCKET_UNIT_PATH).exists()
         || Path::new(DEFAULT_INSTALLED_BINARY).exists()
+}
+
+fn socket_access_status(socket_path: &Path) -> io::Result<Option<bool>> {
+    let socket_path = CString::new(socket_path.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "socket path contains interior NUL byte",
+        )
+    })?;
+    let rc = unsafe { libc::access(socket_path.as_ptr(), libc::W_OK) };
+    if rc == 0 {
+        return Ok(Some(true));
+    }
+
+    let err = io::Error::last_os_error();
+    match err.kind() {
+        io::ErrorKind::NotFound => Ok(None),
+        io::ErrorKind::PermissionDenied => Ok(Some(false)),
+        _ => Err(err),
+    }
 }
 
 fn parse_linux_entry_command(
@@ -1146,16 +1179,15 @@ fn render_socket_unit(socket_user: Option<&str>, socket_group: Option<&str>) -> 
     );
     match (socket_user, socket_group) {
         (Some(user), _) => {
-            // 对开发机的默认安装流，优先把 socket 直接给发起安装的桌面用户，
-            // 避免还要额外处理 group membership 和重新登录的问题。
-            unit.push_str("DirectoryMode=0700\nSocketMode=0600\n");
+            // 目录需要允许目标用户穿过到 socket；真正的授权仍由 socket 权限和 peer 校验负责。
+            unit.push_str("DirectoryMode=0711\nSocketMode=0600\n");
             unit.push_str("SocketUser=");
             unit.push_str(user);
             unit.push('\n');
         }
         (None, Some(group)) => {
             // 保留 group 模式，便于后续 package/installer 或多用户机器按组授权。
-            unit.push_str("DirectoryMode=0750\nSocketMode=0660\nSocketUser=root\nSocketGroup=");
+            unit.push_str("DirectoryMode=0711\nSocketMode=0660\nSocketUser=root\nSocketGroup=");
             unit.push_str(group);
             unit.push('\n');
         }
@@ -1367,16 +1399,33 @@ fn _version_check(reply: BackendReply) -> Result<(), EngineError> {
     }
 }
 
+fn cleanup_runtime_socket_dir(socket_path: &Path) -> Result<(), EngineError> {
+    let Some(parent) = socket_path.parent() else {
+        return Ok(());
+    };
+
+    match fs::remove_dir_all(parent) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(remote_error(format!(
+            "failed to clean runtime socket dir {}: {err}",
+            parent.display()
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        is_peer_allowed, load_existing_install_auth_mode, parse_linux_entry_command,
-        render_service_unit, render_socket_unit, render_startup_repair_unit, InstallAuthMode,
-        InstallOptions, LinuxEntryCommand, ManageCommand, PeerCredentials, RemoveOptions,
-        ServiceOptions, DEFAULT_INSTALLED_BINARY, DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH,
-        DEFAULT_STARTUP_REPAIR_UNIT_PATH, DEFAULT_UNIT_PATH,
+        cleanup_runtime_socket_dir, is_peer_allowed, load_existing_install_auth_mode,
+        parse_linux_entry_command, render_service_unit, render_socket_unit,
+        render_startup_repair_unit, InstallAuthMode, InstallOptions, LinuxEntryCommand,
+        ManageCommand, PeerCredentials, RemoveOptions, ServiceOptions, DEFAULT_INSTALLED_BINARY,
+        DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH, DEFAULT_STARTUP_REPAIR_UNIT_PATH,
+        DEFAULT_UNIT_PATH,
     };
 
     fn parse(args: &[&str]) -> LinuxEntryCommand {
@@ -1486,7 +1535,7 @@ mod tests {
     #[test]
     fn render_socket_unit_uses_group_and_socket_target() {
         let unit = render_socket_unit(None, Some("vpnusers"));
-        assert!(unit.contains("DirectoryMode=0750"));
+        assert!(unit.contains("DirectoryMode=0711"));
         assert!(unit.contains("SocketGroup=vpnusers"));
         assert!(unit.contains("WantedBy=sockets.target"));
     }
@@ -1494,9 +1543,25 @@ mod tests {
     #[test]
     fn render_socket_unit_uses_socket_user_when_present() {
         let unit = render_socket_unit(Some("luren"), None);
-        assert!(unit.contains("DirectoryMode=0700"));
+        assert!(unit.contains("DirectoryMode=0711"));
         assert!(unit.contains("SocketUser=luren"));
         assert!(unit.contains("SocketMode=0600"));
+    }
+
+    #[test]
+    fn cleanup_runtime_socket_dir_removes_existing_parent_dir() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!("r-wg-runtime-{unique}"));
+        let socket_path = parent.join("control.sock");
+        std::fs::create_dir_all(&parent).expect("runtime dir should be created");
+        std::fs::write(&socket_path, b"").expect("socket placeholder should be created");
+
+        cleanup_runtime_socket_dir(&socket_path).expect("runtime dir cleanup should succeed");
+
+        assert!(!parent.exists());
     }
 
     #[test]
