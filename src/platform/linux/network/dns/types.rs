@@ -1,12 +1,13 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// 记录本次使用的 DNS 后端与其回滚信息，供 stop/cleanup 时撤销。
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in crate::platform::linux::network) struct DnsState {
     pub(super) backend: DnsBackend,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum DnsBackend {
     /// systemd-resolved: 对接口设置 DNS，可通过 resolvectl revert 回滚。
     Resolved,
@@ -18,7 +19,7 @@ pub(super) enum DnsBackend {
     ResolvConf { path: PathBuf, original: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct NmConnectionState {
     pub(super) name: String,
     pub(super) device: String,

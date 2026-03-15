@@ -32,8 +32,10 @@ const DEFAULT_SOCKET_GROUP: &str = "r-wg";
 const DEFAULT_INSTALLED_BINARY: &str = "/usr/local/libexec/r-wg/r-wg";
 const DEFAULT_UNIT_PATH: &str = "/etc/systemd/system/r-wg.service";
 const DEFAULT_SOCKET_UNIT_PATH: &str = "/etc/systemd/system/r-wg.socket";
+const DEFAULT_STARTUP_REPAIR_UNIT_PATH: &str = "/etc/systemd/system/r-wg-repair.service";
 const SERVICE_UNIT_NAME: &str = "r-wg.service";
 const SOCKET_UNIT_NAME: &str = "r-wg.socket";
+const STARTUP_REPAIR_UNIT_NAME: &str = "r-wg-repair.service";
 const SERVICE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const SERVICE_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const SERVICE_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -93,6 +95,7 @@ enum ManageCommand {
     Install(InstallOptions),
     Repair(InstallOptions),
     Remove(RemoveOptions),
+    StartupRepair,
 }
 
 struct InstallOptions {
@@ -100,6 +103,7 @@ struct InstallOptions {
     binary_path: PathBuf,
     unit_path: PathBuf,
     socket_unit_path: PathBuf,
+    startup_repair_unit_path: PathBuf,
     socket_group: Option<String>,
     socket_user: Option<String>,
     allowed_uid: Option<u32>,
@@ -116,6 +120,7 @@ struct RemoveOptions {
     binary_path: PathBuf,
     unit_path: PathBuf,
     socket_unit_path: PathBuf,
+    startup_repair_unit_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -382,6 +387,9 @@ fn run_service(options: ServiceOptions) -> Result<(), EngineError> {
         ))
     })?;
 
+    crate::platform::linux::attempt_startup_repair()
+        .map_err(|err| remote_error(format!("startup repair failed: {err}")))?;
+
     let engine = LocalEngine::new();
     let mut last_activity = std::time::Instant::now();
 
@@ -429,6 +437,8 @@ fn run_manage_command(command: ManageCommand) -> Result<(), EngineError> {
         ManageCommand::Install(options) => install_or_repair(options, false),
         ManageCommand::Repair(options) => install_or_repair(options, true),
         ManageCommand::Remove(options) => remove_installation(options),
+        ManageCommand::StartupRepair => crate::platform::linux::attempt_startup_repair()
+            .map_err(|err| remote_error(format!("startup repair failed: {err}"))),
     }
 }
 
@@ -478,9 +488,14 @@ fn install_or_repair(mut options: InstallOptions, repairing: bool) -> Result<(),
             options.socket_group.as_deref(),
         ),
     )?;
+    write_service_unit(
+        &options.startup_repair_unit_path,
+        render_startup_repair_unit(&options.binary_path),
+    )?;
 
     run_command("systemctl", ["daemon-reload"])?;
     run_command("systemctl", ["enable", SOCKET_UNIT_NAME])?;
+    run_command("systemctl", ["enable", STARTUP_REPAIR_UNIT_NAME])?;
     if repairing {
         graceful_stop_active_backend()?;
         // repair 需要重启 socket unit，确保旧 socket 权限和 unit 内容被完整替换。
@@ -496,6 +511,7 @@ fn install_or_repair(mut options: InstallOptions, repairing: bool) -> Result<(),
 
 fn remove_installation(options: RemoveOptions) -> Result<(), EngineError> {
     graceful_stop_active_backend()?;
+    let _ = run_command("systemctl", ["disable", STARTUP_REPAIR_UNIT_NAME]);
     let _ = run_command("systemctl", ["disable", "--now", SOCKET_UNIT_NAME]);
     let _ = run_command("systemctl", ["stop", SERVICE_UNIT_NAME]);
 
@@ -512,6 +528,14 @@ fn remove_installation(options: RemoveOptions) -> Result<(), EngineError> {
             remote_error(format!(
                 "failed to remove socket unit {}: {err}",
                 options.socket_unit_path.display()
+            ))
+        })?;
+    }
+    if options.startup_repair_unit_path.exists() {
+        fs::remove_file(&options.startup_repair_unit_path).map_err(|err| {
+            remote_error(format!(
+                "failed to remove startup repair unit {}: {err}",
+                options.startup_repair_unit_path.display()
             ))
         })?;
     }
@@ -756,6 +780,7 @@ fn parse_manage_command(
     let mut binary_path = PathBuf::from(DEFAULT_INSTALLED_BINARY);
     let mut unit_path = PathBuf::from(DEFAULT_UNIT_PATH);
     let mut socket_unit_path = PathBuf::from(DEFAULT_SOCKET_UNIT_PATH);
+    let mut startup_repair_unit_path = PathBuf::from(DEFAULT_STARTUP_REPAIR_UNIT_PATH);
     let mut socket_group = Some(DEFAULT_SOCKET_GROUP.to_string());
     let mut socket_user = None;
     let mut allowed_uid = None;
@@ -778,6 +803,10 @@ fn parse_manage_command(
             }
             Some("socket_unit_path") => {
                 socket_unit_path = PathBuf::from(arg);
+                continue;
+            }
+            Some("startup_repair_unit_path") => {
+                startup_repair_unit_path = PathBuf::from(arg);
                 continue;
             }
             Some("socket_group") => {
@@ -816,6 +845,7 @@ fn parse_manage_command(
             "--binary-path" => pending = Some("binary_path".to_string()),
             "--unit-path" => pending = Some("unit_path".to_string()),
             "--socket-unit-path" => pending = Some("socket_unit_path".to_string()),
+            "--startup-repair-unit-path" => pending = Some("startup_repair_unit_path".to_string()),
             "--socket-group" => pending = Some("socket_group".to_string()),
             "--socket-user" => pending = Some("socket_user".to_string()),
             "--allowed-uid" => pending = Some("allowed_uid".to_string()),
@@ -841,6 +871,7 @@ fn parse_manage_command(
             binary_path,
             unit_path,
             socket_unit_path,
+            startup_repair_unit_path,
             socket_group,
             socket_user,
             allowed_uid,
@@ -851,6 +882,7 @@ fn parse_manage_command(
             binary_path,
             unit_path,
             socket_unit_path,
+            startup_repair_unit_path,
             socket_group,
             socket_user,
             allowed_uid,
@@ -860,7 +892,9 @@ fn parse_manage_command(
             binary_path,
             unit_path,
             socket_unit_path,
+            startup_repair_unit_path,
         })),
+        "startup-repair" => Ok(ManageCommand::StartupRepair),
         other => Err(remote_error(format!("unknown service action: {other}"))),
     }
 }
@@ -1102,7 +1136,7 @@ fn render_service_unit(
         exec_start.push_str(&uid.to_string());
     }
     format!(
-        "[Unit]\nDescription=r-wg privileged backend\nAfter=network-online.target\nWants=network-online.target\nRequires=r-wg.socket\n\n[Service]\nType=simple\nExecStart={exec_start}\nRestart=on-failure\nRestartSec=1\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=r-wg privileged backend\nAfter=network-online.target\nWants=network-online.target\nRequires=r-wg.socket\n\n[Service]\nType=simple\nExecStart={exec_start}\nRestart=on-failure\nRestartSec=1\nStateDirectory=r-wg\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 
@@ -1131,6 +1165,13 @@ fn render_socket_unit(socket_user: Option<&str>, socket_group: Option<&str>) -> 
     }
     unit.push_str("RemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n");
     unit
+}
+
+fn render_startup_repair_unit(binary_path: &Path) -> String {
+    format!(
+        "[Unit]\nDescription=r-wg boot-time startup repair\nAfter=local-fs.target\nConditionPathExists=/var/lib/r-wg/recovery.json\n\n[Service]\nType=oneshot\nExecStart={} service startup-repair\nStateDirectory=r-wg\n\n[Install]\nWantedBy=multi-user.target\n",
+        binary_path.display()
+    )
 }
 
 fn graceful_stop_active_backend() -> Result<(), EngineError> {
@@ -1332,10 +1373,10 @@ mod tests {
 
     use super::{
         is_peer_allowed, load_existing_install_auth_mode, parse_linux_entry_command,
-        render_service_unit, render_socket_unit, InstallAuthMode, InstallOptions,
-        LinuxEntryCommand, ManageCommand, PeerCredentials, RemoveOptions, ServiceOptions,
-        DEFAULT_INSTALLED_BINARY, DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH,
-        DEFAULT_UNIT_PATH,
+        render_service_unit, render_socket_unit, render_startup_repair_unit, InstallAuthMode,
+        InstallOptions, LinuxEntryCommand, ManageCommand, PeerCredentials, RemoveOptions,
+        ServiceOptions, DEFAULT_INSTALLED_BINARY, DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH,
+        DEFAULT_STARTUP_REPAIR_UNIT_PATH, DEFAULT_UNIT_PATH,
     };
 
     fn parse(args: &[&str]) -> LinuxEntryCommand {
@@ -1390,6 +1431,7 @@ mod tests {
             binary_path,
             unit_path,
             socket_unit_path,
+            startup_repair_unit_path,
             socket_group,
             socket_user,
             allowed_uid,
@@ -1401,6 +1443,10 @@ mod tests {
         assert_eq!(binary_path, PathBuf::from(DEFAULT_INSTALLED_BINARY));
         assert_eq!(unit_path, PathBuf::from(DEFAULT_UNIT_PATH));
         assert_eq!(socket_unit_path, PathBuf::from(DEFAULT_SOCKET_UNIT_PATH));
+        assert_eq!(
+            startup_repair_unit_path,
+            PathBuf::from(DEFAULT_STARTUP_REPAIR_UNIT_PATH)
+        );
         assert_eq!(socket_group.as_deref(), Some(DEFAULT_SOCKET_GROUP));
         assert_eq!(socket_user, None);
         assert_eq!(allowed_uid, None);
@@ -1412,6 +1458,7 @@ mod tests {
             binary_path,
             unit_path,
             socket_unit_path,
+            startup_repair_unit_path,
         })) = parse(&["r-wg", "service", "remove"])
         else {
             panic!("expected remove command");
@@ -1419,6 +1466,10 @@ mod tests {
         assert_eq!(binary_path, PathBuf::from(DEFAULT_INSTALLED_BINARY));
         assert_eq!(unit_path, PathBuf::from(DEFAULT_UNIT_PATH));
         assert_eq!(socket_unit_path, PathBuf::from(DEFAULT_SOCKET_UNIT_PATH));
+        assert_eq!(
+            startup_repair_unit_path,
+            PathBuf::from(DEFAULT_STARTUP_REPAIR_UNIT_PATH)
+        );
     }
 
     #[test]
@@ -1427,6 +1478,7 @@ mod tests {
         assert!(unit.contains(
             "ExecStart=/opt/r-wg/r-wg --linux-service --socket-group vpnusers --allowed-uid 1000"
         ));
+        assert!(unit.contains("StateDirectory=r-wg"));
         assert!(!unit.contains("RuntimeDirectory="));
         assert!(unit.contains("WantedBy=multi-user.target"));
     }
@@ -1523,5 +1575,13 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn render_startup_repair_unit_targets_recovery_journal() {
+        let unit = render_startup_repair_unit(Path::new("/opt/r-wg/r-wg"));
+        assert!(unit.contains("ExecStart=/opt/r-wg/r-wg service startup-repair"));
+        assert!(unit.contains("ConditionPathExists=/var/lib/r-wg/recovery.json"));
+        assert!(unit.contains("StateDirectory=r-wg"));
     }
 }

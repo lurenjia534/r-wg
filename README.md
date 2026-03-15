@@ -31,20 +31,28 @@ sudo groupadd --system r-wg 2>/dev/null || true
 sudo usermod -aG r-wg "$USER"
 sudo install -Dm644 resources/linux/r-wg.service /etc/systemd/system/r-wg.service
 sudo install -Dm644 resources/linux/r-wg.socket /etc/systemd/system/r-wg.socket
+sudo install -Dm644 resources/linux/r-wg-repair.service /etc/systemd/system/r-wg-repair.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now r-wg.socket
+sudo systemctl enable r-wg-repair.service
 r-wg
 ```
 
 After adding your user to the `r-wg` group, start a new login session before launching the UI.
 
 The backend service now starts on demand when the UI connects and exits again after it becomes idle.
+If the previous backend crashed and left a recovery journal behind, `r-wg-repair.service`
+will run once during boot to restore DNS state and clean stale Linux routing residue before the
+user launches the UI.
+
+The recovery journal is stored under `/var/lib/r-wg/recovery.json` via `StateDirectory=r-wg`.
 
 To inspect the backend:
 
 ```sh
 journalctl -u r-wg.socket -f
 journalctl -u r-wg.service -f
+journalctl -u r-wg-repair.service -f
 ```
 
 For more options (levels, scopes, buffer), see `docs/logging.md`.
@@ -61,8 +69,10 @@ cargo build --release
 sudo install -Dm755 target/release/r-wg /usr/local/libexec/r-wg/r-wg
 sudo install -Dm644 resources/linux/r-wg.service /etc/systemd/system/r-wg.service
 sudo install -Dm644 resources/linux/r-wg.socket /etc/systemd/system/r-wg.socket
+sudo install -Dm644 resources/linux/r-wg-repair.service /etc/systemd/system/r-wg-repair.service
 sudo systemctl daemon-reload
 sudo systemctl restart r-wg.socket
+sudo systemctl enable r-wg-repair.service
 ```
 
 ## Configuration Format

@@ -7,6 +7,7 @@ mod dns;
 mod logging;
 mod netlink;
 mod policy;
+mod recovery;
 mod routes;
 
 use rtnetlink::{LinkMessageBuilder, LinkUnspec};
@@ -21,6 +22,10 @@ use netlink::{build_route_message, delete_address, delete_route, link_index, net
 use policy::{
     apply_policy_rules, cleanup_policy_rules_for_state, cleanup_policy_rules_once,
     cleanup_stale_default_routes_once, PolicyRoutingState,
+};
+use recovery::{
+    attempt_startup_repair_sync, clear_recovery_journal, write_applying_journal,
+    write_running_journal,
 };
 use routes::{collect_allowed_routes, detect_full_tunnel, route_table_for};
 
@@ -105,6 +110,7 @@ pub async fn apply_network_config(
         interface.dns_search.len(),
     );
     log_privileges();
+    write_applying_journal(tun_name)?;
 
     // 建立 netlink 连接并查询接口索引，后续所有操作都基于 ifindex。
     let netlink = netlink_handle()?;
@@ -205,6 +211,11 @@ pub async fn apply_network_config(
             }
         }
 
+        if let Err(err) = write_running_journal(&state) {
+            let _ = cleanup_network_config(state).await;
+            return Err(err);
+        }
+
         Ok(state)
     }
     .await;
@@ -259,10 +270,12 @@ pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), Ne
         }
 
         // 按记录的 DNS 状态回滚。
-        if let Some(dns) = state.dns {
+        let dns_cleanup_result = if let Some(dns) = state.dns {
             log_dns::revert_start();
-            let _ = cleanup_dns(state.tun_name.as_str(), dns).await;
-        }
+            cleanup_dns(state.tun_name.as_str(), dns).await
+        } else {
+            Ok(())
+        };
 
         // 清理 policy rule，恢复系统默认路由策略。
         if let Some(policy) = state.policy {
@@ -271,10 +284,16 @@ pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), Ne
             }
         }
 
-        Ok(())
+        dns_cleanup_result
     }
     .await;
 
     netlink.shutdown().await;
-    result
+    result?;
+    clear_recovery_journal()?;
+    Ok(())
+}
+
+pub fn attempt_startup_repair() -> Result<(), NetworkError> {
+    attempt_startup_repair_sync()
 }

@@ -1,0 +1,12 @@
+[Unit]
+Description=r-wg boot-time startup repair
+After=local-fs.target
+ConditionPathExists=/var/lib/r-wg/recovery.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/r-wg/r-wg service startup-repair
+StateDirectory=r-wg
+
+[Install]
+WantedBy=multi-user.target
