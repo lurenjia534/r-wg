@@ -105,6 +105,13 @@ struct InstallOptions {
     allowed_uid: Option<u32>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct InstallAuthMode {
+    socket_group: Option<String>,
+    socket_user: Option<String>,
+    allowed_uid: Option<u32>,
+}
+
 struct RemoveOptions {
     binary_path: PathBuf,
     unit_path: PathBuf,
@@ -413,12 +420,30 @@ fn run_manage_command(command: ManageCommand) -> Result<(), EngineError> {
     }
 }
 
-fn install_or_repair(options: InstallOptions, repairing: bool) -> Result<(), EngineError> {
+fn install_or_repair(mut options: InstallOptions, repairing: bool) -> Result<(), EngineError> {
     if !options.source_path.is_file() {
         return Err(remote_error(format!(
             "source binary not found: {}",
             options.source_path.display()
         )));
+    }
+
+    if repairing {
+        // Repair 的职责应该是“在保留当前安装策略的前提下修复二进制和 unit 内容”，
+        // 而不是把系统上已经存在的授权模型强行改写成“当前 UI 默认策略”。
+        //
+        // 因此这里只要本机已经装过 backend，就优先从现有 service/socket unit
+        // 读回 socket_user / socket_group / allowed_uid，再覆盖命令行默认值。
+        // 这样：
+        // - group 模式安装不会被一次 Repair 偷偷改成单用户模式；
+        // - 单用户模式安装也不会被 Repair 意外回退成 group 模式。
+        if let Some(existing) =
+            load_existing_install_auth_mode(&options.unit_path, &options.socket_unit_path)?
+        {
+            options.socket_group = existing.socket_group;
+            options.socket_user = existing.socket_user;
+            options.allowed_uid = existing.allowed_uid;
+        }
     }
 
     if let Some(group) = options.socket_group.as_deref() {
@@ -961,6 +986,92 @@ fn write_service_unit(unit_path: &Path, contents: String) -> Result<(), EngineEr
     })
 }
 
+fn load_existing_install_auth_mode(
+    unit_path: &Path,
+    socket_unit_path: &Path,
+) -> Result<Option<InstallAuthMode>, EngineError> {
+    // 这里刻意直接读“当前落盘的 unit 文件”，而不是猜测默认策略：
+    // - Repair 面对的是“系统上实际生效的安装”，不是“源码里当前想要的默认值”；
+    // - 只要 unit 文件还在，它们就是最权威的授权配置来源。
+    let service_text = match fs::read_to_string(unit_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(remote_error(format!(
+                "failed to read existing service unit {}: {err}",
+                unit_path.display()
+            )))
+        }
+    };
+    let socket_text = match fs::read_to_string(socket_unit_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(remote_error(format!(
+                "failed to read existing socket unit {}: {err}",
+                socket_unit_path.display()
+            )))
+        }
+    };
+
+    let mut mode = InstallAuthMode::default();
+
+    if let Some(exec_start) = unit_value(&service_text, "ExecStart") {
+        // service unit 里只关心 peer 校验相关参数：
+        // - `--socket-group`：服务端额外接受某个组的客户端；
+        // - `--allowed-uid`：服务端额外接受某个 uid 的客户端。
+        //
+        // 这里不试图做完整 shell 解析，因为 ExecStart 是我们自己渲染出来的固定格式，
+        // 只会包含简单的空格分隔 token；对当前场景，用轻量 parser 更直接也更稳。
+        let mut parts = exec_start.split_whitespace();
+        while let Some(part) = parts.next() {
+            match part {
+                "--socket-group" => {
+                    if let Some(value) = parts.next() {
+                        mode.socket_group = Some(value.to_string());
+                    }
+                }
+                "--allowed-uid" => {
+                    if let Some(value) = parts.next() {
+                        mode.allowed_uid = value.parse().ok();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(socket_user) = unit_value(&socket_text, "SocketUser") {
+        // `SocketUser=root` 是 group 模式或 root-only 模式下的常见默认值，
+        // 对 Repair 来说这不代表“要显式锁定到 root 用户”，因此只在它不是 root 时才记入模型。
+        if socket_user != "root" {
+            mode.socket_user = Some(socket_user.to_string());
+        }
+    }
+    if let Some(socket_group) = unit_value(&socket_text, "SocketGroup") {
+        // socket unit 决定的是“文件系统层面谁能打开 socket”，
+        // 它和 service unit 里的 `--socket-group` 语义相关，但不完全等价：
+        // - socket unit 负责 UDS 文件权限；
+        // - service unit 负责应用层 SO_PEERCRED 二次校验。
+        //
+        // 对 Repair 来说，二者都必须一并保留，才能完整复原原安装策略。
+        mode.socket_group = Some(socket_group.to_string());
+    }
+
+    Ok(Some(mode))
+}
+
+fn unit_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    // unit 文件这里不需要通用 ini parser：
+    // - 我们只读取少量单行键；
+    // - 写入格式完全由本程序控制；
+    // - 目标是让 Repair 保留授权策略，而不是做完整 systemd 语法重建。
+    text.lines()
+        .map(str::trim)
+        .find(|line| line.starts_with(key) && line[key.len()..].starts_with('='))
+        .map(|line| line[key.len() + 1..].trim())
+}
+
 fn render_service_unit(
     binary_path: &Path,
     socket_group: Option<&str>,
@@ -1208,9 +1319,10 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        is_peer_allowed, parse_linux_entry_command, render_service_unit, render_socket_unit,
-        InstallOptions, LinuxEntryCommand, ManageCommand, PeerCredentials, RemoveOptions,
-        ServiceOptions, DEFAULT_INSTALLED_BINARY, DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH,
+        is_peer_allowed, load_existing_install_auth_mode, parse_linux_entry_command,
+        render_service_unit, render_socket_unit, InstallAuthMode, InstallOptions,
+        LinuxEntryCommand, ManageCommand, PeerCredentials, RemoveOptions, ServiceOptions,
+        DEFAULT_INSTALLED_BINARY, DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH,
         DEFAULT_UNIT_PATH,
     };
 
@@ -1339,5 +1451,65 @@ mod tests {
             uid: 2000,
         };
         assert!(is_peer_allowed(peer, None, None));
+    }
+
+    #[test]
+    fn load_existing_install_auth_mode_preserves_group_model() {
+        let dir = std::env::temp_dir().join(format!("r-wg-auth-mode-group-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir should exist");
+        let service = dir.join("r-wg.service");
+        let socket = dir.join("r-wg.socket");
+        std::fs::write(
+            &service,
+            render_service_unit(Path::new("/opt/r-wg/r-wg"), Some("vpnusers"), None),
+        )
+        .expect("service unit should write");
+        std::fs::write(&socket, render_socket_unit(None, Some("vpnusers")))
+            .expect("socket unit should write");
+
+        let mode = load_existing_install_auth_mode(&service, &socket)
+            .expect("mode should load")
+            .expect("mode should exist");
+        assert_eq!(
+            mode,
+            InstallAuthMode {
+                socket_group: Some("vpnusers".to_string()),
+                socket_user: None,
+                allowed_uid: None,
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_existing_install_auth_mode_preserves_single_user_model() {
+        let dir = std::env::temp_dir().join(format!("r-wg-auth-mode-user-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir should exist");
+        let service = dir.join("r-wg.service");
+        let socket = dir.join("r-wg.socket");
+        std::fs::write(
+            &service,
+            render_service_unit(Path::new("/opt/r-wg/r-wg"), None, Some(1000)),
+        )
+        .expect("service unit should write");
+        std::fs::write(&socket, render_socket_unit(Some("luren"), None))
+            .expect("socket unit should write");
+
+        let mode = load_existing_install_auth_mode(&service, &socket)
+            .expect("mode should load")
+            .expect("mode should exist");
+        assert_eq!(
+            mode,
+            InstallAuthMode {
+                socket_group: None,
+                socket_user: Some("luren".to_string()),
+                allowed_uid: Some(1000),
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
