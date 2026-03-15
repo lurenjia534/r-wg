@@ -392,7 +392,19 @@ fn run_service(options: ServiceOptions) -> Result<(), EngineError> {
         match listener.accept() {
             Ok((stream, _)) => {
                 last_activity = std::time::Instant::now();
-                let _ = handle_service_client(stream, &engine, options.allowed_uid, socket_gid);
+                let engine = engine.clone();
+                if let Err(err) = thread::Builder::new()
+                    .name("wg-linux-service-client".to_string())
+                    .spawn(move || {
+                        if let Err(err) =
+                            handle_service_client(stream, &engine, options.allowed_uid, socket_gid)
+                        {
+                            tracing::debug!("linux service client handling failed: {err}");
+                        }
+                    })
+                {
+                    tracing::warn!("failed to spawn linux service client worker: {err}");
+                }
             }
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                 let running = matches!(engine.status(), Ok(EngineStatus::Running));
