@@ -2,6 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io::ErrorKind;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 use gpui::{AppContext, ClipboardItem, Context, SharedString, Window};
@@ -9,7 +10,9 @@ use gpui_component::input::InputState;
 use r_wg::backend::wg::config;
 
 use super::super::persistence;
-use super::super::state::{ConfigSource, LoadedConfigState, ParseCache, TunnelConfig, WgApp};
+use super::super::state::{
+    ConfigSource, EndpointFamily, LoadedConfigState, ParseCache, TunnelConfig, WgApp,
+};
 
 const CONFIG_TEXT_CACHE_LIMIT: usize = 32;
 
@@ -158,13 +161,14 @@ impl WgApp {
             }
         };
 
-        if let Some(cfg) = self.configs.get(idx) {
-            self.selection.proxy_endpoint_family.remove(&cfg.id);
-            self.selection.proxy_endpoint_loading.remove(&cfg.id);
+        let config_id = self.configs[idx].id;
+        self.selection.selected_id = Some(config_id);
+        self.load_config_into_inputs(config_id, window, cx);
+        if self.configs[idx].endpoint_family == EndpointFamily::Unknown {
+            let text = self.configs[idx].text.clone();
+            let path = self.configs[idx].storage_path.clone();
+            self.schedule_endpoint_family_refresh(config_id, text, path, cx);
         }
-
-        self.selection.selected = Some(idx);
-        self.load_config_into_inputs(idx, window, cx);
     }
 
     /// 将选中的配置写入输入框。
@@ -172,7 +176,7 @@ impl WgApp {
     /// 说明：这是 UI 和模型之间的同步点，避免直接从输入框去驱动数据模型。
     pub(crate) fn load_config_into_inputs(
         &mut self,
-        idx: usize,
+        config_id: u64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -186,11 +190,16 @@ impl WgApp {
             return;
         };
 
-        let config = &self.configs[idx];
+        let Some(config) = self.configs.get_by_id(config_id) else {
+            return;
+        };
         let name = config.name.clone();
+        let text = config.text.clone();
+        let path = config.storage_path.clone();
+        let endpoint_family = config.endpoint_family;
 
         // 优先走内存：如果 text 已经存在，直接写入输入框。
-        if let Some(text) = config.text.clone() {
+        if let Some(text) = text {
             let text_hash = text_hash(text.as_ref());
             if let Some(loaded) = &self.selection.loaded_config {
                 if loaded.name == name && loaded.text_hash == text_hash {
@@ -204,15 +213,17 @@ impl WgApp {
             config_input.update(cx, |input, cx| {
                 input.set_value(text.clone(), window, cx);
             });
-            self.selection.loading_config = None;
+            self.selection.loading_config_id = None;
             self.selection.loading_config_path = None;
             self.update_parse_cache(&name, text.as_ref(), text_hash);
             self.selection.loaded_config = Some(LoadedConfigState { name, text_hash });
+            if endpoint_family == EndpointFamily::Unknown {
+                self.schedule_endpoint_family_refresh(config_id, Some(text), path, cx);
+            }
             return;
         }
 
         // 如果缓存里有文本，直接复用缓存。
-        let path = config.storage_path.clone();
         if let Some(text) = self.cached_config_text(&path) {
             let text_hash = text_hash(text.as_ref());
             if let Some(loaded) = &self.selection.loaded_config {
@@ -227,17 +238,23 @@ impl WgApp {
             config_input.update(cx, |input, cx| {
                 input.set_value(text.clone(), window, cx);
             });
-            self.selection.loading_config = None;
+            self.selection.loading_config_id = None;
             self.selection.loading_config_path = None;
             self.update_parse_cache(&name, text.as_ref(), text_hash);
             self.selection.loaded_config = Some(LoadedConfigState { name, text_hash });
+            if endpoint_family == EndpointFamily::Unknown {
+                self.schedule_endpoint_family_refresh(config_id, Some(text), path, cx);
+            }
             return;
         }
 
         // 最后才走磁盘 IO：异步读取文件。
         // 注意：这里会把 loading_config_path 记录下来，避免索引复用导致错写。
-        self.selection.loading_config = Some(idx);
+        self.selection.loading_config_id = Some(config_id);
         self.selection.loading_config_path = Some(path.clone());
+        if endpoint_family == EndpointFamily::Unknown {
+            self.selection.endpoint_family_loading.insert(config_id);
+        }
         self.selection.loaded_config = None;
         name_input.update(cx, |input, cx| {
             input.set_value(name.clone(), window, cx);
@@ -255,28 +272,32 @@ impl WgApp {
             .spawn(cx, async move |cx| {
                 let path_for_match = path.clone();
                 let path_for_cache = path.clone();
-                let read_task = cx.background_spawn(async move { std::fs::read_to_string(&path) });
+                let read_task = cx.background_spawn(async move {
+                    let text = std::fs::read_to_string(&path)?;
+                    let family = resolve_endpoint_family_from_text(text.clone()).await;
+                    Ok::<_, std::io::Error>((text, family))
+                });
                 let result = read_task.await;
                 view.update_in(cx, |this, window, cx| {
                     // 关键校验：只允许“当前选中 + 路径一致 + 仍是同一加载任务”时写回。
-                    if this.selection.selected != Some(idx) {
+                    if this.selection.selected_id != Some(config_id) {
                         return;
                     }
-                    let Some(config) = this.configs.get(idx) else {
+                    let Some(config) = this.configs.get_by_id(config_id) else {
                         return;
                     };
                     let current_path = &config.storage_path;
                     let loading_path = this.selection.loading_config_path.as_ref();
                     if current_path != &path_for_match
-                        || this.selection.loading_config != Some(idx)
+                        || this.selection.loading_config_id != Some(config_id)
                         || loading_path != Some(&path_for_match)
                     {
                         return;
                     }
-                    this.selection.loading_config = None;
+                    this.selection.loading_config_id = None;
                     this.selection.loading_config_path = None;
                     match result {
-                        Ok(text) => {
+                        Ok((text, family)) => {
                             let text: SharedString = text.into();
                             this.cache_config_text(path_for_cache, text.clone());
                             if let Some(config_input) = this.ui.config_input.as_ref() {
@@ -284,6 +305,10 @@ impl WgApp {
                                     input.set_value(text.clone(), window, cx);
                                 });
                             }
+                            if let Some(config) = this.configs.get_mut_by_id(config_id) {
+                                config.endpoint_family = family;
+                            }
+                            this.selection.endpoint_family_loading.remove(&config_id);
                             let text_hash = text_hash(text.as_ref());
                             this.update_parse_cache(&name, text.as_ref(), text_hash);
                             this.selection.loaded_config =
@@ -291,6 +316,7 @@ impl WgApp {
                             this.set_status("Loaded config");
                         }
                         Err(err) => {
+                            this.selection.endpoint_family_loading.remove(&config_id);
                             this.set_error(format!("Read failed: {err}"));
                         }
                     }
@@ -306,12 +332,12 @@ impl WgApp {
     /// 说明：选中行为既更新模型状态，也触发输入框内容同步。
     pub(crate) fn select_tunnel(
         &mut self,
-        idx: usize,
+        config_id: u64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selection.selected = Some(idx);
-        self.load_config_into_inputs(idx, window, cx);
+        self.selection.selected_id = Some(config_id);
+        self.load_config_into_inputs(config_id, window, cx);
         self.persist_state_async(cx);
         self.set_status("Loaded tunnel");
         cx.notify();
@@ -386,6 +412,7 @@ impl WgApp {
                                     text: Some(text_for_state),
                                     source: ConfigSource::Paste,
                                     storage_path,
+                                    endpoint_family: EndpointFamily::Unknown,
                                 },
                                 window,
                                 cx,
@@ -501,6 +528,7 @@ impl WgApp {
                                     text: Some(text_for_state),
                                     source,
                                     storage_path,
+                                    endpoint_family: EndpointFamily::Unknown,
                                 },
                                 window,
                                 cx,
@@ -538,8 +566,13 @@ impl WgApp {
             return;
         }
 
-        let Some(idx) = self.selection.selected else {
+        let Some(config_id) = self.selection.selected_id else {
             self.set_error("Select a tunnel first");
+            cx.notify();
+            return;
+        };
+        let Some(idx) = self.configs.find_index_by_id(config_id) else {
+            self.set_error("Selected tunnel no longer exists");
             cx.notify();
             return;
         };
@@ -568,7 +601,7 @@ impl WgApp {
             self.runtime.running_name = Some(new_name.to_string());
         }
         self.set_status(format!("Renamed to {new_name}"));
-        self.load_config_into_inputs(idx, window, cx);
+        self.load_config_into_inputs(config_id, window, cx);
         self.persist_state_async(cx);
         cx.notify();
     }
@@ -577,12 +610,11 @@ impl WgApp {
     ///
     /// 说明：运行中的配置禁止删除，避免状态错乱和用户误操作。
     pub(crate) fn handle_delete_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(idx) = self.selection.selected else {
+        let Some(config_id) = self.selection.selected_id else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
         };
-        let config_id = self.configs[idx].id;
         self.delete_configs_blocking_running(&[config_id], window, cx);
     }
 
@@ -673,8 +705,8 @@ impl WgApp {
             return;
         }
 
-        let prev_selected_id = self.selected_config().map(|cfg| cfg.id);
-        let prev_selected_idx = self.selection.selected;
+        let prev_selected_id = self.selection.selected_id;
+        let prev_selected_idx = prev_selected_id.and_then(|id| self.configs.find_index_by_id(id));
 
         for id in &to_delete_ids {
             self.stats.config_traffic_days.remove(id);
@@ -694,35 +726,30 @@ impl WgApp {
             .proxy_selected_ids
             .retain(|id| !to_delete_ids.contains(id));
         self.selection
-            .proxy_endpoint_family
-            .retain(|id, _| !to_delete_ids.contains(id));
-        self.selection
-            .proxy_endpoint_loading
+            .endpoint_family_loading
             .retain(|id| !to_delete_ids.contains(id));
         self.selection.proxy_filter_total = 0;
-        self.selection.proxy_filtered_indices.clear();
-        self.selection.loading_config = None;
+        self.selection.proxy_filtered_ids.clear();
+        self.selection.loading_config_id = None;
         self.selection.loading_config_path = None;
 
         if self.configs.is_empty() {
-            self.selection.selected = None;
+            self.selection.selected_id = None;
             self.clear_inputs(window, cx);
         } else if let Some(prev_id) = prev_selected_id {
-            if let Some(idx) = self.configs.iter().position(|cfg| cfg.id == prev_id) {
-                self.selection.selected = Some(idx);
-                if prev_selected_idx != Some(idx) {
-                    self.load_config_into_inputs(idx, window, cx);
-                }
+            if self.configs.get_by_id(prev_id).is_some() {
+                self.selection.selected_id = Some(prev_id);
             } else if let Some(prev_idx) = prev_selected_idx {
                 let idx = prev_idx.min(self.configs.len() - 1);
-                self.selection.selected = Some(idx);
-                self.load_config_into_inputs(idx, window, cx);
+                let fallback_id = self.configs[idx].id;
+                self.selection.selected_id = Some(fallback_id);
+                self.load_config_into_inputs(fallback_id, window, cx);
             } else {
-                self.selection.selected = None;
+                self.selection.selected_id = None;
                 self.clear_inputs(window, cx);
             }
         } else {
-            self.selection.selected = None;
+            self.selection.selected_id = None;
             self.clear_inputs(window, cx);
         }
 
@@ -763,12 +790,11 @@ impl WgApp {
     /// 说明：该操作不会改变模型，仅提供快速复制能力。
     pub(crate) fn handle_copy_click(&mut self, cx: &mut Context<Self>) {
         // 直接复制配置文本到剪贴板。
-        let Some(idx) = self.selection.selected else {
+        let Some(selected) = self.selected_config().cloned() else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
         };
-        let selected = self.configs[idx].clone();
         // 优先取内存/缓存，避免无谓 IO。
         let cached_text = self.cached_config_text(&selected.storage_path);
         let text = selected.text.clone().or(cached_text);
@@ -788,8 +814,8 @@ impl WgApp {
                 cx.background_spawn(async move { std::fs::read_to_string(&selected.storage_path) });
             let result = read_task.await;
             view.update(cx, |this, cx| {
-                // 注意：复制场景不改变选中项，因此只需检查是否仍选中同一索引。
-                if this.selection.selected != Some(idx) {
+                // 注意：复制场景不改变选中项，因此只需检查是否仍选中同一配置。
+                if this.selection.selected_id != Some(selected.id) {
                     return;
                 }
                 match result {
@@ -815,8 +841,8 @@ impl WgApp {
     /// 说明：统一入口避免到处直接访问 self.configs。
     pub(crate) fn selected_config(&self) -> Option<&TunnelConfig> {
         self.selection
-            .selected
-            .and_then(|idx| self.configs.get(idx))
+            .selected_id
+            .and_then(|id| self.configs.get_by_id(id))
     }
 
     /// 清空输入框内容。
@@ -824,7 +850,7 @@ impl WgApp {
     /// 说明：用于删除最后一个配置等场景，防止残留旧值。
     pub(crate) fn clear_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.selection.loaded_config = None;
-        self.selection.loading_config = None;
+        self.selection.loading_config_id = None;
         self.selection.loading_config_path = None;
         self.selection.parse_cache = None;
         if let Some(name_input) = self.ui.name_input.as_ref() {
@@ -851,12 +877,210 @@ impl WgApp {
         }
         format!("{base}-{}", self.configs.len() + 1)
     }
+
+    pub(crate) fn refresh_all_endpoint_family_metadata(&mut self, cx: &mut Context<Self>) {
+        let jobs = self
+            .configs
+            .iter()
+            .filter(|config| {
+                config.endpoint_family == EndpointFamily::Unknown
+                    && !self.selection.endpoint_family_loading.contains(&config.id)
+            })
+            .map(|config| (config.id, config.storage_path.clone()))
+            .collect::<Vec<_>>();
+        if jobs.is_empty() {
+            return;
+        }
+        for (config_id, _) in &jobs {
+            self.selection.endpoint_family_loading.insert(*config_id);
+        }
+
+        cx.spawn(async move |view, cx| {
+            let refresh_task = cx.background_spawn(async move {
+                let mut results = Vec::with_capacity(jobs.len());
+                for (config_id, path) in jobs {
+                    let family = match std::fs::read_to_string(&path) {
+                        Ok(text) => Some(resolve_endpoint_family_from_text(text).await),
+                        Err(_) => None,
+                    };
+                    results.push((config_id, family));
+                }
+                results
+            });
+            let results = refresh_task.await;
+            view.update(cx, |this, cx| {
+                let mut changed = false;
+                for (config_id, family) in results {
+                    this.selection.endpoint_family_loading.remove(&config_id);
+                    let Some(family) = family else {
+                        continue;
+                    };
+                    let Some(config) = this.configs.get_mut_by_id(config_id) else {
+                        continue;
+                    };
+                    if config.endpoint_family != family {
+                        config.endpoint_family = family;
+                        changed = true;
+                    }
+                }
+                if changed {
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(crate) fn schedule_endpoint_family_refresh(
+        &mut self,
+        config_id: u64,
+        text: Option<SharedString>,
+        storage_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selection.endpoint_family_loading.contains(&config_id) {
+            return;
+        }
+        let Some(config) = self.configs.get_mut_by_id(config_id) else {
+            return;
+        };
+        config.endpoint_family = EndpointFamily::Unknown;
+        self.selection.endpoint_family_loading.insert(config_id);
+
+        cx.spawn(async move |view, cx| {
+            let refresh_task = cx.background_spawn(async move {
+                let text = match text {
+                    Some(text) => Some(text.to_string()),
+                    None => std::fs::read_to_string(&storage_path).ok(),
+                };
+                let Some(text) = text else {
+                    return None;
+                };
+                Some(resolve_endpoint_family_from_text(text).await)
+            });
+            let family = refresh_task.await;
+            view.update(cx, |this, cx| {
+                this.selection.endpoint_family_loading.remove(&config_id);
+                let Some(family) = family else {
+                    return;
+                };
+                let Some(config) = this.configs.get_mut_by_id(config_id) else {
+                    return;
+                };
+                if config.endpoint_family != family {
+                    config.endpoint_family = family;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
 }
 
 fn text_hash(text: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
+}
+
+struct EndpointFamilyHint {
+    base_family: EndpointFamily,
+    pending_hosts: Vec<(String, u16)>,
+}
+
+fn endpoint_family_hint_from_text(text: &str) -> EndpointFamilyHint {
+    let parsed = config::parse_config(text);
+    let Ok(parsed) = parsed else {
+        return EndpointFamilyHint {
+            base_family: EndpointFamily::Unknown,
+            pending_hosts: Vec::new(),
+        };
+    };
+    endpoint_family_hint_from_config(&parsed)
+}
+
+fn endpoint_family_hint_from_config(cfg: &config::WireGuardConfig) -> EndpointFamilyHint {
+    let mut has_v4 = false;
+    let mut has_v6 = false;
+    let mut pending_hosts = Vec::new();
+
+    for peer in &cfg.peers {
+        let Some(endpoint) = &peer.endpoint else {
+            continue;
+        };
+        let host = endpoint.host.trim();
+        if host.is_empty() {
+            continue;
+        }
+        if let Ok(addr) = host.parse::<IpAddr>() {
+            if addr.is_ipv4() {
+                has_v4 = true;
+            } else {
+                has_v6 = true;
+            }
+            continue;
+        }
+        if host.contains(':') {
+            continue;
+        }
+
+        pending_hosts.push((host.to_string(), endpoint.port));
+    }
+
+    let base_family = endpoint_family_from_flags(has_v4, has_v6);
+    if base_family == EndpointFamily::Dual {
+        pending_hosts.clear();
+    }
+
+    EndpointFamilyHint {
+        base_family,
+        pending_hosts,
+    }
+}
+
+pub(crate) async fn resolve_endpoint_family_from_text(text: String) -> EndpointFamily {
+    let hint = endpoint_family_hint_from_text(&text);
+    if hint.pending_hosts.is_empty() {
+        return hint.base_family;
+    }
+    resolve_endpoint_family(hint.base_family, hint.pending_hosts).await
+}
+
+async fn resolve_endpoint_family(
+    base_family: EndpointFamily,
+    pending_hosts: Vec<(String, u16)>,
+) -> EndpointFamily {
+    if base_family == EndpointFamily::Dual {
+        return EndpointFamily::Dual;
+    }
+
+    let mut has_v4 = matches!(base_family, EndpointFamily::V4 | EndpointFamily::Dual);
+    let mut has_v6 = matches!(base_family, EndpointFamily::V6 | EndpointFamily::Dual);
+
+    for (host, port) in pending_hosts {
+        if let Ok(addrs) = tokio::net::lookup_host((host.as_str(), port)).await {
+            for addr in addrs {
+                if addr.ip().is_ipv4() {
+                    has_v4 = true;
+                } else {
+                    has_v6 = true;
+                }
+            }
+        }
+    }
+
+    endpoint_family_from_flags(has_v4, has_v6)
+}
+
+fn endpoint_family_from_flags(has_v4: bool, has_v6: bool) -> EndpointFamily {
+    match (has_v4, has_v6) {
+        (true, true) => EndpointFamily::Dual,
+        (true, false) => EndpointFamily::V4,
+        (false, true) => EndpointFamily::V6,
+        (false, false) => EndpointFamily::Unknown,
+    }
 }
 
 /// 格式化删除后的状态提示文案。

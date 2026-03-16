@@ -89,12 +89,11 @@ impl WgApp {
             return;
         }
 
-        let Some(selected_idx) = self.selection.selected else {
+        let Some(selected) = self.selected_config().cloned() else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
         };
-        let selected = self.configs[selected_idx].clone();
         // 启动前准备配置文本：
         // - 粘贴型配置直接使用内存文本；
         // - 文件型配置优先走缓存，否则异步读取磁盘。
@@ -235,7 +234,7 @@ mod tests {
     use gpui_component::theme::ThemeMode;
 
     use super::*;
-    use crate::ui::state::{ConfigSource, TunnelConfig, RESTART_COOLDOWN};
+    use crate::ui::state::{ConfigSource, EndpointFamily, TunnelConfig, RESTART_COOLDOWN};
 
     fn make_app() -> WgApp {
         WgApp::new(r_wg::backend::wg::Engine::new(), ThemeMode::Dark)
@@ -249,6 +248,7 @@ mod tests {
             text: None,
             source: ConfigSource::Paste,
             storage_path: PathBuf::from(format!("/tmp/{id}.conf")),
+            endpoint_family: EndpointFamily::Unknown,
         }
     }
 
@@ -284,7 +284,7 @@ mod tests {
     fn build_pending_start_prefers_selected_config() {
         let mut app = make_app();
         app.configs.configs = vec![make_config(11, "alpha"), make_config(22, "beta")];
-        app.selection.selected = Some(1);
+        app.selection.selected_id = Some(22);
         app.runtime.running_id = Some(11);
 
         let pending = app

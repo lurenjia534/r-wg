@@ -80,7 +80,7 @@ pub(crate) fn render_configs_editor(
 
 fn config_action_bar(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
     let busy = app.runtime.busy;
-    let has_selection = app.selection.selected.is_some();
+    let has_selection = app.selection.selected_id.is_some();
     let primary_actions = h_flex()
         .gap_2()
         .child(

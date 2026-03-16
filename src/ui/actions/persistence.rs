@@ -8,8 +8,9 @@ use super::super::persistence::{
     PersistedState, PersistedTrafficDayStats, PersistedTrafficHour, StoragePaths, STATE_VERSION,
 };
 use super::super::state::{
-    ConfigSource, ConfigsState, SelectionState, StatsState, TrafficDay, TrafficDayStats,
-    TrafficHour, TunnelConfig, UiPrefsState, WgApp, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
+    ConfigSource, ConfigsState, EndpointFamily, SelectionState, StatsState, TrafficDay,
+    TrafficDayStats, TrafficHour, TunnelConfig, UiPrefsState, WgApp, TRAFFIC_HOURLY_HISTORY,
+    TRAFFIC_ROLLING_DAYS,
 };
 
 impl WgApp {
@@ -54,9 +55,10 @@ impl WgApp {
                                 if let Some(theme_mode) = summary.theme_mode {
                                     Theme::change(theme_mode, Some(window), cx);
                                 }
-                                if let Some(idx) = summary.selected_index {
-                                    this.load_config_into_inputs(idx, window, cx);
+                                if let Some(selected_id) = summary.selected_id {
+                                    this.load_config_into_inputs(selected_id, window, cx);
                                 }
+                                this.refresh_all_endpoint_family_metadata(cx);
                                 if summary.missing_files > 0 {
                                     this.set_status(format!(
                                         "Loaded {} configs, {} missing",
@@ -135,11 +137,7 @@ impl<'a> PersistedStateSnapshot<'a> {
     }
 
     fn build(&self) -> PersistedState {
-        let selected_id = self
-            .selection
-            .selected
-            .and_then(|idx| self.configs.get(idx))
-            .map(|cfg| cfg.id);
+        let selected_id = self.selection.selected_id;
 
         PersistedState {
             version: STATE_VERSION,
@@ -227,7 +225,7 @@ struct PersistedStateRestore {
 
 struct PersistedStateSummary {
     theme_mode: Option<ThemeMode>,
-    selected_index: Option<usize>,
+    selected_id: Option<u64>,
     loaded_count: usize,
     missing_files: usize,
 }
@@ -259,6 +257,7 @@ impl PersistedStateRestore {
                 text: None,
                 source,
                 storage_path,
+                endpoint_family: EndpointFamily::Unknown,
             });
         }
 
@@ -314,7 +313,7 @@ impl PersistedStateRestore {
 
         PersistedStateSummary {
             theme_mode: self.theme_mode,
-            selected_index: selection.selected,
+            selected_id: selection.selected_id,
             loaded_count: configs.len(),
             missing_files: self.missing_files,
         }

@@ -9,7 +9,8 @@ use r_wg::backend::wg::config;
 
 use super::super::format::{name_from_path, sanitize_file_stem};
 use super::super::persistence;
-use super::super::state::{ConfigSource, TunnelConfig, WgApp};
+use super::super::state::{ConfigSource, EndpointFamily, TunnelConfig, WgApp};
+use super::config::resolve_endpoint_family_from_text;
 
 struct ImportJob {
     id: u64,
@@ -23,6 +24,7 @@ enum ImportOutcome {
         name: String,
         origin_path: PathBuf,
         storage_path: PathBuf,
+        endpoint_family: EndpointFamily,
     },
     Err {
         path: PathBuf,
@@ -217,7 +219,7 @@ impl WgApp {
                 let mut tasks = FuturesUnordered::new();
                 for _ in 0..concurrency {
                     if let Some(job) = pending.next() {
-                        tasks.push(cx.background_spawn(async move { read_config(job) }));
+                        tasks.push(cx.background_spawn(async move { read_config(job).await }));
                     }
                 }
 
@@ -229,6 +231,7 @@ impl WgApp {
                             name,
                             origin_path,
                             storage_path,
+                            endpoint_family,
                         } => {
                             let name = unique_name(&mut names_in_use, &name);
                             imported += 1;
@@ -237,6 +240,7 @@ impl WgApp {
                                 name,
                                 origin_path,
                                 storage_path,
+                                endpoint_family,
                             }
                         }
                         ImportOutcome::Err { path, message } => {
@@ -250,7 +254,7 @@ impl WgApp {
                     outcomes_batch.push(outcome);
 
                     if let Some(job) = pending.next() {
-                        tasks.push(cx.background_spawn(async move { read_config(job) }));
+                        tasks.push(cx.background_spawn(async move { read_config(job).await }));
                     }
 
                     // 批量提交：减少 UI 线程频繁更新带来的卡顿。
@@ -263,6 +267,7 @@ impl WgApp {
                                     name,
                                     origin_path,
                                     storage_path,
+                                    endpoint_family,
                                 } = outcome
                                 {
                                     this.configs.push(TunnelConfig {
@@ -274,6 +279,7 @@ impl WgApp {
                                             origin_path: Some(origin_path),
                                         },
                                         storage_path,
+                                        endpoint_family,
                                     });
                                 }
                             }
@@ -288,9 +294,11 @@ impl WgApp {
                 view.update_in(cx, |this, window, cx| {
                     this.runtime.busy = false;
                     if imported > 0 {
-                        let idx = this.configs.len().saturating_sub(1);
-                        this.selection.selected = Some(idx);
-                        this.load_config_into_inputs(idx, window, cx);
+                        let selected_id = this.configs.last().map(|config| config.id);
+                        this.selection.selected_id = selected_id;
+                        if let Some(config_id) = selected_id {
+                            this.load_config_into_inputs(config_id, window, cx);
+                        }
                     }
                     // 导入结束后给出总结提示（成功/失败数）。
                     if imported == 0 && failed > 0 {
@@ -429,7 +437,7 @@ impl WgApp {
     }
 }
 
-fn read_config(job: ImportJob) -> ImportOutcome {
+async fn read_config(job: ImportJob) -> ImportOutcome {
     // 后台线程读取 + 解析，返回结果给 UI 线程消费。
     let name = name_from_path(&job.origin_path);
     match std::fs::read_to_string(&job.origin_path) {
@@ -440,12 +448,14 @@ fn read_config(job: ImportJob) -> ImportOutcome {
                     message: format!("Invalid config: {err}"),
                 }
             } else {
+                let endpoint_family = resolve_endpoint_family_from_text(text.clone()).await;
                 match persistence::write_config_text(&job.storage_path, &text) {
                     Ok(()) => ImportOutcome::Ok {
                         id: job.id,
                         name,
                         origin_path: job.origin_path,
                         storage_path: job.storage_path,
+                        endpoint_family,
                     },
                     Err(message) => ImportOutcome::Err {
                         path: job.origin_path,

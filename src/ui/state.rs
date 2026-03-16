@@ -55,6 +55,8 @@ pub(crate) struct TunnelConfig {
     pub(crate) source: ConfigSource,
     /// 内部存储路径：用于持久化读写。
     pub(crate) storage_path: PathBuf,
+    /// Endpoint 地址族 metadata，供 Proxies 页直接读取，避免渲染时派生。
+    pub(crate) endpoint_family: EndpointFamily,
 }
 
 /// 延迟启动请求（用于 stop -> start 过渡期间）。
@@ -219,7 +221,19 @@ impl ConfigsState {
     }
 
     pub(crate) fn find_by_id(&self, config_id: u64) -> Option<TunnelConfig> {
-        self.iter().find(|config| config.id == config_id).cloned()
+        self.get_by_id(config_id).cloned()
+    }
+
+    pub(crate) fn find_index_by_id(&self, config_id: u64) -> Option<usize> {
+        self.iter().position(|config| config.id == config_id)
+    }
+
+    pub(crate) fn get_by_id(&self, config_id: u64) -> Option<&TunnelConfig> {
+        self.iter().find(|config| config.id == config_id)
+    }
+
+    pub(crate) fn get_mut_by_id(&mut self, config_id: u64) -> Option<&mut TunnelConfig> {
+        self.iter_mut().find(|config| config.id == config_id)
     }
 }
 
@@ -258,9 +272,10 @@ impl<'a> IntoIterator for &'a mut ConfigsState {
 pub(crate) struct SelectionState {
     /// 是否已触发持久化加载，避免重复启动加载任务。
     pub(crate) persistence_loaded: bool,
-    pub(crate) selected: Option<usize>,
-    /// 正在异步加载的配置索引（用于防止 UI 写入旧数据）。
-    pub(crate) loading_config: Option<usize>,
+    /// 当前单选中的配置 ID。
+    pub(crate) selected_id: Option<u64>,
+    /// 正在异步加载的配置 ID（用于防止 UI 写入旧数据）。
+    pub(crate) loading_config_id: Option<u64>,
     /// 正在异步加载的配置路径（用于防止索引复用带来的错写）。
     pub(crate) loading_config_path: Option<PathBuf>,
     /// 解析缓存：只缓存“当前选中”的解析结果，避免每次渲染都解析。
@@ -275,12 +290,10 @@ pub(crate) struct SelectionState {
     pub(crate) proxy_filter_query: String,
     /// 代理/节点过滤：上一次的总条目数（用于检测列表变化）。
     pub(crate) proxy_filter_total: usize,
-    /// 代理/节点过滤：缓存过滤后的索引列表，避免每帧全量扫描。
-    pub(crate) proxy_filtered_indices: Vec<usize>,
-    /// 代理/节点 Endpoint 地址族缓存（按配置 ID）。
-    pub(crate) proxy_endpoint_family: HashMap<u64, EndpointFamily>,
-    /// 代理/节点 Endpoint 地址族计算中（按配置 ID）。
-    pub(crate) proxy_endpoint_loading: HashSet<u64>,
+    /// 代理/节点过滤：缓存过滤后的配置 ID 列表，避免每帧全量扫描。
+    pub(crate) proxy_filtered_ids: Vec<u64>,
+    /// Endpoint metadata 正在后台计算中的配置 ID。
+    pub(crate) endpoint_family_loading: HashSet<u64>,
     /// 代理/节点多选模式开关。
     pub(crate) proxy_select_mode: bool,
     /// 代理/节点多选：选中的配置 ID 列表。
@@ -291,8 +304,8 @@ impl SelectionState {
     fn new() -> Self {
         Self {
             persistence_loaded: false,
-            selected: None,
-            loading_config: None,
+            selected_id: None,
+            loading_config_id: None,
             loading_config_path: None,
             parse_cache: None,
             loaded_config: None,
@@ -300,9 +313,8 @@ impl SelectionState {
             config_text_cache_order: VecDeque::new(),
             proxy_filter_query: String::new(),
             proxy_filter_total: 0,
-            proxy_filtered_indices: Vec::new(),
-            proxy_endpoint_family: HashMap::new(),
-            proxy_endpoint_loading: HashSet::new(),
+            proxy_filtered_ids: Vec::new(),
+            endpoint_family_loading: HashSet::new(),
             proxy_select_mode: false,
             proxy_selected_ids: HashSet::new(),
         }
@@ -321,8 +333,8 @@ impl SelectionState {
         configs: &ConfigsState,
         runtime: &RuntimeState,
     ) -> Option<PendingStart> {
-        if let Some(idx) = self.selected {
-            return configs.get(idx).map(|config| PendingStart {
+        if let Some(config_id) = self.selected_id {
+            return configs.get_by_id(config_id).map(|config| PendingStart {
                 config_id: config.id,
             });
         }
@@ -334,11 +346,11 @@ impl SelectionState {
         selected_id: Option<u64>,
         configs: &ConfigsState,
     ) {
-        self.selected = selected_id.and_then(|id| configs.iter().position(|cfg| cfg.id == id));
+        self.selected_id = selected_id.filter(|id| configs.get_by_id(*id).is_some());
         self.proxy_filter_total = 0;
         self.parse_cache = None;
         self.loaded_config = None;
-        self.loading_config = None;
+        self.loading_config_id = None;
         self.loading_config_path = None;
     }
 }

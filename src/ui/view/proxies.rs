@@ -1,7 +1,6 @@
-use std::net::IpAddr;
-use std::path::PathBuf;
 use std::rc::Rc;
 
+use super::super::state::{EndpointFamily, TunnelConfig, WgApp};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
@@ -14,10 +13,6 @@ use gpui_component::{
     v_virtual_list, ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _,
     StyledExt as _, VirtualListScrollHandle, WindowExt,
 };
-
-use r_wg::backend::wg::config;
-
-use super::super::state::{EndpointFamily, TunnelConfig, WgApp};
 
 // 卡片固定尺寸用于虚拟化行高计算与渲染稳定性。
 const PROXIES_CARD_WIDTH: f32 = 240.0;
@@ -64,14 +59,13 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
         {
             app.selection.proxy_filter_query = query.clone();
             app.selection.proxy_filter_total = total_nodes;
-            app.selection.proxy_filtered_indices = app
+            app.selection.proxy_filtered_ids = app
                 .configs
                 .iter()
-                .enumerate()
-                .filter_map(|(idx, config)| config.name_lower.contains(&query).then_some(idx))
+                .filter_map(|config| config.name_lower.contains(&query).then_some(config.id))
                 .collect();
         }
-        app.selection.proxy_filtered_indices.len()
+        app.selection.proxy_filtered_ids.len()
     } else {
         total_nodes
     };
@@ -134,7 +128,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
             move |this, visible_range, _window, cx| {
                 // 仅渲染当前可见行，显著减少 DOM/布局/绘制成本。
                 let total = if use_filter {
-                    this.selection.proxy_filtered_indices.len()
+                    this.selection.proxy_filtered_ids.len()
                 } else {
                     this.configs.len()
                 };
@@ -143,31 +137,15 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                         let start = row_ix * columns;
                         let end = (start + columns).min(total);
                         let mut row = div().flex().flex_row().gap_2().w_full().h(row_height);
-                        // 从索引映射到真实配置，保证过滤后仍可正确选择。
                         for idx in start..end {
-                            let config_idx = if use_filter {
-                                this.selection.proxy_filtered_indices[idx]
+                            let config_id = if use_filter {
+                                this.selection.proxy_filtered_ids[idx]
                             } else {
-                                idx
+                                this.configs[idx].id
                             };
-                            let endpoint_tag = {
-                                let config = &this.configs[config_idx];
-                                endpoint_family_tag(
-                                    this,
-                                    config.id,
-                                    config.text.clone(),
-                                    config.storage_path.clone(),
-                                    cx,
-                                )
-                            };
-                            let config = &this.configs[config_idx];
-                            row = row.child(config_list_item(
-                                this,
-                                config_idx,
-                                config,
-                                endpoint_tag,
-                                cx,
-                            ));
+                            if let Some(config) = this.configs.get_by_id(config_id) {
+                                row = row.child(config_list_item(this, config, cx));
+                            }
                         }
                         row
                     })
@@ -296,15 +274,14 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                                 .disabled(
                                     app.runtime.busy
                                         || app.selection.proxy_select_mode
-                                        || app.selection.selected.is_none(),
+                                        || app.selection.selected_id.is_none(),
                                 )
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    let Some(idx) = this.selection.selected else {
+                                    let Some(config) = this.selected_config().cloned() else {
                                         this.set_error("Select a tunnel first");
                                         cx.notify();
                                         return;
                                     };
-                                    let config = &this.configs[idx];
                                     let is_running = this.runtime.running_id == Some(config.id)
                                         || this.runtime.running_name.as_deref()
                                             == Some(config.name.as_str());
@@ -346,14 +323,8 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
     panel.child(list_scroll)
 }
 
-fn config_list_item(
-    app: &WgApp,
-    idx: usize,
-    config: &TunnelConfig,
-    endpoint_tag: Option<Tag>,
-    cx: &mut Context<WgApp>,
-) -> Stateful<Div> {
-    let is_selected = app.selection.selected == Some(idx);
+fn config_list_item(app: &WgApp, config: &TunnelConfig, cx: &mut Context<WgApp>) -> Stateful<Div> {
+    let is_selected = app.selection.selected_id == Some(config.id);
     let is_multi_selected =
         app.selection.proxy_select_mode && app.selection.proxy_selected_ids.contains(&config.id);
     let is_running = app.runtime.running_name.as_deref() == Some(config.name.as_str());
@@ -379,7 +350,7 @@ fn config_list_item(
     if is_multi_selected {
         badges = badges.child(Tag::info().small().child("Selected"));
     }
-    if let Some(tag) = endpoint_tag {
+    if let Some(tag) = endpoint_family_tag(config.endpoint_family) {
         badges = badges.child(tag);
     }
     if is_running {
@@ -395,8 +366,6 @@ fn config_list_item(
         .border_1()
         .border_color(border_color)
         .bg(bg)
-        // 阴影改为更轻量的样式，降低 GPU 绘制负担。
-        .shadow_xs()
         .w(px(PROXIES_CARD_WIDTH))
         .h(px(PROXIES_CARD_HEIGHT))
         .child(
@@ -416,7 +385,7 @@ fn config_list_item(
     }
 
     let config_id = config.id;
-    let item = item.id(("config-item", idx));
+    let item = item.id(("config-item", config_id));
     item.on_click(cx.listener(move |this, _event, window, cx| {
         if this.runtime.busy {
             return;
@@ -430,194 +399,17 @@ fn config_list_item(
             cx.notify();
             return;
         }
-        this.select_tunnel(idx, window, cx);
+        this.select_tunnel(config_id, window, cx);
     }))
 }
 
-fn endpoint_family_tag(
-    app: &mut WgApp,
-    config_id: u64,
-    text: Option<SharedString>,
-    storage_path: PathBuf,
-    cx: &mut Context<WgApp>,
-) -> Option<Tag> {
-    let family = endpoint_family_for_config(app, config_id, text, storage_path, cx)?;
-    let tag = match family {
+fn endpoint_family_tag(family: EndpointFamily) -> Option<Tag> {
+    Some(match family {
         EndpointFamily::V4 => Tag::secondary().small().child("IPv4"),
         EndpointFamily::V6 => Tag::info().small().child("IPv6"),
         EndpointFamily::Dual => Tag::warning().small().child("Dual Stack"),
         EndpointFamily::Unknown => return None,
-    };
-    Some(tag)
-}
-
-fn endpoint_family_for_config(
-    app: &mut WgApp,
-    config_id: u64,
-    text: Option<SharedString>,
-    storage_path: PathBuf,
-    cx: &mut Context<WgApp>,
-) -> Option<EndpointFamily> {
-    if let Some(family) = app.selection.proxy_endpoint_family.get(&config_id) {
-        return Some(*family);
-    }
-    if app.selection.proxy_endpoint_loading.contains(&config_id) {
-        return None;
-    }
-
-    let text = text.or_else(|| app.cached_config_text(&storage_path));
-    if let Some(text) = text {
-        let hint = endpoint_family_hint_from_text(text.as_ref());
-        if hint.pending_hosts.is_empty() {
-            app.selection
-                .proxy_endpoint_family
-                .insert(config_id, hint.base_family);
-            return Some(hint.base_family);
-        }
-
-        app.selection.proxy_endpoint_loading.insert(config_id);
-        let id = config_id;
-        let pending_hosts = hint.pending_hosts;
-        let base_family = hint.base_family;
-        cx.spawn(async move |view, cx| {
-            let resolve_task = cx.background_spawn(async move {
-                resolve_endpoint_family(base_family, pending_hosts).await
-            });
-            let family = resolve_task.await;
-            view.update(cx, |this, cx| {
-                this.selection.proxy_endpoint_loading.remove(&id);
-                this.selection.proxy_endpoint_family.insert(id, family);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-
-        return None;
-    }
-
-    app.selection.proxy_endpoint_loading.insert(config_id);
-    let id = config_id;
-    let path = storage_path;
-    cx.spawn(async move |view, cx| {
-        let resolve_task = cx.background_spawn(async move {
-            let text = std::fs::read_to_string(&path).ok()?;
-            let family = resolve_endpoint_family_from_text(text).await;
-            Some(family)
-        });
-        let result = resolve_task.await;
-        view.update(cx, |this, cx| {
-            this.selection.proxy_endpoint_loading.remove(&id);
-            if let Some(family) = result {
-                this.selection.proxy_endpoint_family.insert(id, family);
-                cx.notify();
-            }
-        })
-        .ok();
     })
-    .detach();
-
-    None
-}
-
-struct EndpointFamilyHint {
-    base_family: EndpointFamily,
-    pending_hosts: Vec<(String, u16)>,
-}
-
-fn endpoint_family_hint_from_text(text: &str) -> EndpointFamilyHint {
-    let parsed = config::parse_config(text);
-    let Ok(parsed) = parsed else {
-        return EndpointFamilyHint {
-            base_family: EndpointFamily::Unknown,
-            pending_hosts: Vec::new(),
-        };
-    };
-    endpoint_family_hint_from_config(&parsed)
-}
-
-fn endpoint_family_hint_from_config(cfg: &config::WireGuardConfig) -> EndpointFamilyHint {
-    let mut has_v4 = false;
-    let mut has_v6 = false;
-    let mut pending_hosts = Vec::new();
-
-    for peer in &cfg.peers {
-        let Some(endpoint) = &peer.endpoint else {
-            continue;
-        };
-        let host = endpoint.host.trim();
-        if host.is_empty() {
-            continue;
-        }
-        if let Ok(addr) = host.parse::<IpAddr>() {
-            if addr.is_ipv4() {
-                has_v4 = true;
-            } else {
-                has_v6 = true;
-            }
-            continue;
-        }
-
-        if host.contains(':') {
-            continue;
-        }
-
-        pending_hosts.push((host.to_string(), endpoint.port));
-    }
-
-    let base_family = endpoint_family_from_flags(has_v4, has_v6);
-    if base_family == EndpointFamily::Dual {
-        pending_hosts.clear();
-    }
-
-    EndpointFamilyHint {
-        base_family,
-        pending_hosts,
-    }
-}
-
-async fn resolve_endpoint_family_from_text(text: String) -> EndpointFamily {
-    let hint = endpoint_family_hint_from_text(&text);
-    if hint.pending_hosts.is_empty() {
-        return hint.base_family;
-    }
-    resolve_endpoint_family(hint.base_family, hint.pending_hosts).await
-}
-
-async fn resolve_endpoint_family(
-    base_family: EndpointFamily,
-    pending_hosts: Vec<(String, u16)>,
-) -> EndpointFamily {
-    if base_family == EndpointFamily::Dual {
-        return EndpointFamily::Dual;
-    }
-
-    let mut has_v4 = base_family == EndpointFamily::V4;
-    let mut has_v6 = base_family == EndpointFamily::V6;
-
-    for (host, port) in pending_hosts {
-        let addrs = tokio::net::lookup_host((host.as_str(), port)).await;
-        if let Ok(addrs) = addrs {
-            for addr in addrs {
-                if addr.is_ipv4() {
-                    has_v4 = true;
-                } else {
-                    has_v6 = true;
-                }
-            }
-        }
-    }
-
-    endpoint_family_from_flags(has_v4, has_v6)
-}
-
-fn endpoint_family_from_flags(has_v4: bool, has_v6: bool) -> EndpointFamily {
-    match (has_v4, has_v6) {
-        (true, true) => EndpointFamily::Dual,
-        (true, false) => EndpointFamily::V4,
-        (false, true) => EndpointFamily::V6,
-        _ => EndpointFamily::Unknown,
-    }
 }
 
 fn open_delete_dialog(

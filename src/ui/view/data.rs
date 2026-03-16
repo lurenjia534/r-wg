@@ -161,8 +161,8 @@ impl ViewData {
                 _ => (None, None),
             };
         // 选中项处于“异步加载中”时显示 Loading 状态。
-        let is_loading = app.selection.selected.is_some()
-            && app.selection.loading_config == app.selection.selected;
+        let is_loading = app.selection.selected_id.is_some()
+            && app.selection.loading_config_id == app.selection.selected_id;
 
         // 解析状态的展示逻辑：
         // - Loading：文本尚未读完；
@@ -621,8 +621,8 @@ mod tests {
 
     use super::{build_traffic_summary_at, build_traffic_trend_at};
     use crate::ui::state::{
-        ConfigSource, TrafficDay, TrafficDayStats, TrafficHour, TrafficPeriod, TunnelConfig, WgApp,
-        TRAFFIC_TREND_DAYS,
+        ConfigSource, EndpointFamily, TrafficDay, TrafficDayStats, TrafficHour, TrafficPeriod,
+        TunnelConfig, WgApp, TRAFFIC_TREND_DAYS,
     };
 
     fn make_app() -> WgApp {
@@ -637,6 +637,7 @@ mod tests {
             text: None,
             source: ConfigSource::Paste,
             storage_path: PathBuf::from(format!("/tmp/{id}.conf")),
+            endpoint_family: EndpointFamily::Unknown,
         }
     }
 
