@@ -8,6 +8,7 @@ mod left_panel;
 mod logs;
 mod overview;
 mod proxies;
+mod proxies_grid;
 mod right_panel;
 mod top_bar;
 mod widgets;

@@ -1,7 +1,8 @@
-use std::rc::Rc;
-
 use super::super::state::{EndpointFamily, TunnelConfig, WgApp};
+use super::proxies_grid::{proxy_grid, ProxyGridMetrics};
 use gpui::prelude::FluentBuilder as _;
+use gpui::InteractiveElement as _;
+use gpui::StatefulInteractiveElement as _;
 use gpui::*;
 use gpui_component::{
     button::{Button, ButtonVariant, ButtonVariants},
@@ -10,31 +11,23 @@ use gpui_component::{
     input::Input,
     scroll::Scrollbar,
     tag::Tag,
-    v_virtual_list, ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _,
-    StyledExt as _, VirtualListScrollHandle, WindowExt,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt as _,
+    WindowExt,
 };
 
 // 卡片固定尺寸用于虚拟化行高计算与渲染稳定性。
 const PROXIES_CARD_WIDTH: f32 = 240.0;
 const PROXIES_CARD_HEIGHT: f32 = 72.0;
 const PROXIES_CARD_GAP: f32 = 8.0;
-// 估算内容区宽度：减去左侧导航与主内容内边距。
-const PROXIES_SIDEBAR_WIDTH: f32 = 230.0;
-const PROXIES_HORIZONTAL_PADDING: f32 = 48.0;
 // 复用滚动状态，避免每次重建滚动位置丢失。
 const PROXIES_SCROLL_STATE_ID: &str = "proxies-scroll";
 
-fn proxies_columns(window: &Window) -> usize {
-    let viewport_width = window.viewport_size().width;
-    // 可用宽度的估算值：窗口宽度减去左侧栏与内边距。
-    let available_width = viewport_width - px(PROXIES_SIDEBAR_WIDTH + PROXIES_HORIZONTAL_PADDING);
-    let available_width = available_width.max(px(PROXIES_CARD_WIDTH));
-    let card_width = px(PROXIES_CARD_WIDTH);
-    let gap = px(PROXIES_CARD_GAP);
-    // 根据卡片宽度 + 间距估算列数，至少 1 列。
-    ((available_width + gap) / (card_width + gap))
-        .floor()
-        .max(1.0) as usize
+fn proxy_grid_metrics() -> ProxyGridMetrics {
+    ProxyGridMetrics {
+        card_width: px(PROXIES_CARD_WIDTH),
+        card_height: px(PROXIES_CARD_HEIGHT),
+        gap: px(PROXIES_CARD_GAP),
+    }
 }
 
 /// Proxies 页面：配置列表入口，用于快速选择隧道。
@@ -109,54 +102,31 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
                     .child("No matching nodes"),
             )
     } else {
-        let columns = proxies_columns(window);
-        // 以“行”为虚拟化单位，每行放 columns 张卡片。
-        let row_count = (filtered_nodes + columns - 1) / columns;
-        let row_height = px(PROXIES_CARD_HEIGHT);
-        // 虚拟化列表需要每行的固定高度；宽度由布局自动撑满。
-        let item_sizes = Rc::new(vec![size(px(0.0), row_height); row_count]);
+        let app_entity = cx.entity();
+        let config_ids = if use_filter {
+            app.selection.proxy_filtered_ids.clone()
+        } else {
+            app.configs.iter().map(|config| config.id).collect()
+        };
         let scroll_handle = window
             .use_keyed_state(PROXIES_SCROLL_STATE_ID, cx, |_, _| ScrollHandle::default())
             .read(cx)
             .clone();
-        let scroll_handle = VirtualListScrollHandle::from(scroll_handle);
-
-        let list = v_virtual_list(
-            cx.entity(),
-            "proxy-virtual-list",
-            item_sizes,
-            move |this, visible_range, _window, cx| {
-                // 仅渲染当前可见行，显著减少 DOM/布局/绘制成本。
-                let total = if use_filter {
-                    this.selection.proxy_filtered_ids.len()
-                } else {
-                    this.configs.len()
-                };
-                visible_range
-                    .map(|row_ix| {
-                        let start = row_ix * columns;
-                        let end = (start + columns).min(total);
-                        let mut row = div().flex().flex_row().gap_2().w_full().h(row_height);
-                        for idx in start..end {
-                            let config_id = if use_filter {
-                                this.selection.proxy_filtered_ids[idx]
-                            } else {
-                                this.configs[idx].id
-                            };
-                            if let Some(config) = this.configs.get_by_id(config_id) {
-                                row = row.child(config_list_item(this, config, cx));
-                            }
-                        }
-                        row
-                    })
-                    .collect::<Vec<_>>()
+        let grid = proxy_grid(
+            "proxy-grid",
+            config_ids.len(),
+            proxy_grid_metrics(),
+            scroll_handle.clone(),
+            move |visible_range, _window, cx| {
+                app_entity.update(cx, |this, cx| {
+                    visible_range
+                        .filter_map(|ix| this.configs.get_by_id(config_ids[ix]))
+                        .map(|config| config_list_item(this, config, cx))
+                        .collect::<Vec<_>>()
+                })
             },
         )
-        .gap_2()
-        .w_full()
-        .flex_1()
-        // 绑定滚动句柄，支持滚动条与滚动位置同步。
-        .track_scroll(&scroll_handle);
+        .with_overscan_viewports(1.0);
 
         div()
             .flex()
@@ -165,7 +135,18 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
             .min_h(px(0.0))
             .w_full()
             .relative()
-            .child(list)
+            .child(
+                div()
+                    .id("proxy-grid-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .w_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll_handle)
+                    .child(grid),
+            )
             .child(Scrollbar::vertical(&scroll_handle))
     };
 
