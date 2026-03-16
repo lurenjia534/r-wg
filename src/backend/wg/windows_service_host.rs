@@ -9,14 +9,15 @@ use windows::Win32::Foundation::NO_ERROR;
 use windows::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SetServiceStatus, StartServiceCtrlDispatcherW,
     SERVICE_ACCEPT_PRESHUTDOWN, SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP,
-    SERVICE_CONTROL_PRESHUTDOWN, SERVICE_CONTROL_SHUTDOWN, SERVICE_CONTROL_STOP,
-    SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE,
-    SERVICE_STATUS_HANDLE, SERVICE_STOP_PENDING, SERVICE_STOPPED, SERVICE_TABLE_ENTRYW,
-    SERVICE_WIN32_OWN_PROCESS,
+    SERVICE_CONTROL_PRESHUTDOWN, SERVICE_CONTROL_SHUTDOWN, SERVICE_CONTROL_STOP, SERVICE_RUNNING,
+    SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE,
+    SERVICE_STOPPED, SERVICE_STOP_PENDING, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS,
 };
 
 use super::engine::Engine as LocalEngine;
-use super::ipc::{error_reply, read_json_line, unit_reply, write_json_line, BackendCommand, BackendReply};
+use super::ipc::{
+    error_reply, read_json_line, unit_reply, write_json_line, BackendCommand, BackendReply,
+};
 use super::windows_service::SERVICE_NAME;
 use super::{EngineError, EngineStatus};
 use crate::backend::wg::ipc::IPC_PROTOCOL_VERSION;
@@ -38,8 +39,9 @@ pub fn run_service_dispatcher() -> Result<(), EngineError> {
     ];
 
     unsafe {
-        StartServiceCtrlDispatcherW(table.as_mut_ptr())
-            .map_err(|err| EngineError::Remote(format!("failed to start service dispatcher: {err}")))
+        StartServiceCtrlDispatcherW(table.as_mut_ptr()).map_err(|err| {
+            EngineError::Remote(format!("failed to start service dispatcher: {err}"))
+        })
     }
 }
 
@@ -47,13 +49,7 @@ extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     if let Err(err) = service_main_inner() {
         tracing::error!("windows service failed: {err}");
         if let Some(raw) = SERVICE_STATUS_HANDLE_RAW.get().copied() {
-            let _ = set_service_status(
-                service_status_handle(raw),
-                SERVICE_STOPPED,
-                0,
-                1,
-                0,
-            );
+            let _ = set_service_status(service_status_handle(raw), SERVICE_STOPPED, 0, 1, 0);
         }
     }
 }
@@ -73,7 +69,13 @@ fn service_main_inner() -> Result<(), EngineError> {
 
     let _ = SERVICE_STATUS_HANDLE_RAW.set(status_handle.0 as usize);
 
-    set_service_status(status_handle, SERVICE_START_PENDING, 0, 0, START_WAIT_HINT_MS)?;
+    set_service_status(
+        status_handle,
+        SERVICE_START_PENDING,
+        0,
+        0,
+        START_WAIT_HINT_MS,
+    )?;
 
     crate::platform::windows::attempt_startup_repair()
         .map_err(|err| EngineError::Remote(format!("startup repair failed: {err}")))?;
@@ -202,12 +204,12 @@ fn set_service_status(
     win32_exit_code: u32,
     wait_hint: u32,
 ) -> Result<(), EngineError> {
-    let checkpoint = if current_state == SERVICE_START_PENDING || current_state == SERVICE_STOP_PENDING
-    {
-        1
-    } else {
-        0
-    };
+    let checkpoint =
+        if current_state == SERVICE_START_PENDING || current_state == SERVICE_STOP_PENDING {
+            1
+        } else {
+            0
+        };
     let mut status = SERVICE_STATUS {
         dwServiceType: SERVICE_WIN32_OWN_PROCESS,
         dwCurrentState: current_state,

@@ -67,7 +67,9 @@ enum WindowsEntryCommand {
 pub fn maybe_run_service_mode() -> bool {
     let entry = match parse_windows_entry_command(env::args_os()) {
         Ok(entry) => entry,
-        Err(err) => exit_windows_entry_error("windows privileged backend command parse failed", err),
+        Err(err) => {
+            exit_windows_entry_error("windows privileged backend command parse failed", err)
+        }
     };
     let Some(entry) = entry else {
         return false;
@@ -80,7 +82,9 @@ pub fn maybe_run_service_mode() -> bool {
             let _mtu = gotatun::tun::MtuWatcher::new(1500);
             windows_service_host::run_service_dispatcher()
         }
-        WindowsEntryCommand::Manage(command) => windows_service_manager::run_manage_command(&command),
+        WindowsEntryCommand::Manage(command) => {
+            windows_service_manager::run_manage_command(&command)
+        }
     };
     if let Err(err) = result {
         exit_windows_entry_error("windows privileged backend command failed", err);
@@ -230,12 +234,16 @@ where
 }
 
 fn connect_error(err: io::Error) -> EngineError {
-    EngineError::Remote(format!("failed to connect to Windows privileged backend pipe: {err}"))
+    EngineError::Remote(format!(
+        "failed to connect to Windows privileged backend pipe: {err}"
+    ))
 }
 
 fn is_missing_backend_error(err: &io::Error) -> bool {
-    matches!(err.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused)
-        || matches!(err.raw_os_error(), Some(2 | 231 | 233))
+    matches!(
+        err.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+    ) || matches!(err.raw_os_error(), Some(2 | 231 | 233))
 }
 
 fn is_access_denied_error(err: &io::Error) -> bool {

@@ -355,7 +355,9 @@ pub async fn apply_network_config(
     {
         match apply_nrpt_guard(adapter, &interface.dns_servers) {
             Ok(nrpt_state) => {
-                if let (Some(recovery), Some(nrpt_state)) = (state.recovery.as_mut(), nrpt_state.as_ref()) {
+                if let (Some(recovery), Some(nrpt_state)) =
+                    (state.recovery.as_mut(), nrpt_state.as_ref())
+                {
                     recovery.record_nrpt(nrpt_state)?;
                 }
                 state.nrpt = nrpt_state;

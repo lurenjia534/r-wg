@@ -96,8 +96,7 @@ impl DnsStateSnapshot {
                 guid,
                 touched_nameserver: entry.touched_nameserver,
                 touched_search: entry.touched_search,
-                touched_disable_unconstrained_queries: entry
-                    .touched_disable_unconstrained_queries,
+                touched_disable_unconstrained_queries: entry.touched_disable_unconstrained_queries,
                 original_nameserver: entry.original_nameserver.clone(),
                 original_searchlist: entry.original_searchlist.clone(),
                 original_disable_unconstrained_queries: entry

@@ -19,7 +19,7 @@ use super::windows_service::{
     is_process_elevated, shell_execute_runas, PrivilegedServiceAction, PrivilegedServiceStatus,
     SERVICE_ARG, SERVICE_DISPLAY_NAME, SERVICE_NAME, SERVICE_SUBCOMMAND,
 };
-use super::{EngineError, Engine};
+use super::{Engine, EngineError};
 
 const MANAGER_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const MANAGER_WAIT_TIMEOUT: Duration = Duration::from_secs(12);
@@ -177,7 +177,11 @@ fn install_or_repair(options: InstallOptions, repairing: bool) -> Result<(), Eng
             service
         }
         Ok(None) => create_service(&manager, &options.binary_path)?,
-        Err(err) => return Err(remote_error(format!("failed to open service for update: {err}"))),
+        Err(err) => {
+            return Err(remote_error(format!(
+                "failed to open service for update: {err}"
+            )))
+        }
     };
 
     start_service(&service)?;
@@ -256,7 +260,10 @@ fn install_binary(source: &Path, binary: &Path) -> Result<(), EngineError> {
     Ok(())
 }
 
-fn create_service(manager: &ServiceManager, binary_path: &Path) -> Result<ServiceHandle, EngineError> {
+fn create_service(
+    manager: &ServiceManager,
+    binary_path: &Path,
+) -> Result<ServiceHandle, EngineError> {
     let service_name = encode_wide(SERVICE_NAME);
     let display_name = encode_wide(SERVICE_DISPLAY_NAME);
     let binary = encode_wide(&service_binary_path(binary_path));
@@ -337,11 +344,15 @@ fn wait_for_manager_result(action: PrivilegedServiceAction) -> Result<(), Engine
     let start = Instant::now();
     while start.elapsed() < MANAGER_WAIT_TIMEOUT {
         match (action, probe_privileged_service()) {
-            (PrivilegedServiceAction::Remove, PrivilegedServiceStatus::NotInstalled) => return Ok(()),
+            (PrivilegedServiceAction::Remove, PrivilegedServiceStatus::NotInstalled) => {
+                return Ok(())
+            }
             (PrivilegedServiceAction::Install, PrivilegedServiceStatus::Running)
             | (PrivilegedServiceAction::Install, PrivilegedServiceStatus::Installed)
             | (PrivilegedServiceAction::Repair, PrivilegedServiceStatus::Running)
-            | (PrivilegedServiceAction::Repair, PrivilegedServiceStatus::Installed) => return Ok(()),
+            | (PrivilegedServiceAction::Repair, PrivilegedServiceStatus::Installed) => {
+                return Ok(())
+            }
             (_, PrivilegedServiceStatus::VersionMismatch { expected, actual }) => {
                 return Err(EngineError::VersionMismatch { expected, actual });
             }
@@ -357,10 +368,7 @@ fn wait_for_manager_result(action: PrivilegedServiceAction) -> Result<(), Engine
 }
 
 fn build_manage_args(action: PrivilegedServiceAction, current_exe: &Path) -> Vec<String> {
-    let mut args = vec![
-        SERVICE_SUBCOMMAND.to_string(),
-        action.as_cli().to_string(),
-    ];
+    let mut args = vec![SERVICE_SUBCOMMAND.to_string(), action.as_cli().to_string()];
     if !matches!(action, PrivilegedServiceAction::Remove) {
         args.push("--source".to_string());
         args.push(current_exe.display().to_string());
@@ -376,7 +384,11 @@ fn installed_binary_path() -> PathBuf {
 }
 
 fn service_binary_path(binary_path: &Path) -> String {
-    format!("{} {}", quote_windows_arg(&binary_path.display().to_string()), SERVICE_ARG)
+    format!(
+        "{} {}",
+        quote_windows_arg(&binary_path.display().to_string()),
+        SERVICE_ARG
+    )
 }
 
 fn remote_error(message: String) -> EngineError {

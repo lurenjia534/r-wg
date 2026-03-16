@@ -93,7 +93,10 @@ impl RecoveryGuard {
         Ok(guard)
     }
 
-    pub(super) fn record_address(&mut self, address: &InterfaceAddress) -> Result<(), NetworkError> {
+    pub(super) fn record_address(
+        &mut self,
+        address: &InterfaceAddress,
+    ) -> Result<(), NetworkError> {
         self.journal.addresses.push(AddressSnapshot::from(address));
         self.persist()
     }
@@ -185,8 +188,9 @@ fn repair_journal(journal: &RecoveryJournal) -> Result<(), NetworkError> {
     }
 
     if let Some(dns) = &journal.dns {
-        cleanup_dns(dns.to_state().map_err(NetworkError::Io)?)
-            .map_err(|err| NetworkError::UnsafeRouting(format!("startup DNS repair failed: {err}")))?;
+        cleanup_dns(dns.to_state().map_err(NetworkError::Io)?).map_err(|err| {
+            NetworkError::UnsafeRouting(format!("startup DNS repair failed: {err}"))
+        })?;
     }
     if let Some(nrpt) = &journal.nrpt {
         cleanup_nrpt_guard(nrpt.to_state()).map_err(|err| {

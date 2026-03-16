@@ -9,9 +9,9 @@ use r_wg::backend::wg::Engine;
 use r_wg::backend::wg::EngineError;
 // 关闭流程需要跨异步任务共享状态，因此使用原子布尔标记。
 #[cfg(not(target_os = "windows"))]
-use std::sync::Arc;
-#[cfg(not(target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_os = "windows"))]
+use std::sync::Arc;
 
 use super::persistence;
 use super::state::WgApp;
@@ -113,7 +113,8 @@ pub fn run() {
                                         }
                                     }
                                     // 实际移除窗口，触发关闭。
-                                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                                    let _ =
+                                        handle.update(cx, |_, window, _| window.remove_window());
                                 }
                                 Err(err) => {
                                     // 停止失败：保留窗口，提示错误，允许再次尝试关闭。

@@ -27,8 +27,11 @@ impl WgApp {
     pub(crate) fn refresh_privileged_backend_status(&mut self, cx: &mut Context<Self>) {
         // 探测放到后台线程：systemctl / socket 探测虽然不重，但它们都属于同步系统调用，
         // 不应该阻塞 UI 渲染线程。
-        self.ui
-            .set_backend_status("Checking...", "Probing privileged backend service...", false);
+        self.ui.set_backend_status(
+            "Checking...",
+            "Probing privileged backend service...",
+            false,
+        );
         cx.notify();
 
         cx.spawn(async move |view, cx| {
