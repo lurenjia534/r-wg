@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use gpui_component::theme::ThemeMode;
 use serde::{Deserialize, Serialize};
 
+use super::state::ProxiesViewMode;
 use super::state::{ConfigSource, TrafficDay};
 
 pub(crate) const STATE_VERSION: u32 = 1;
@@ -25,6 +26,8 @@ pub(crate) struct PersistedState {
     // 兼容旧版 state.json，字段可缺省。
     #[serde(default)]
     pub(crate) theme_mode: Option<ThemeMode>,
+    #[serde(default)]
+    pub(crate) proxies_view_mode: Option<ProxiesViewMode>,
     #[serde(default)]
     pub(crate) traffic_days: Vec<PersistedTrafficDay>,
     #[serde(default)]
@@ -214,6 +217,7 @@ mod tests {
             next_id: 42,
             selected_id: Some(7),
             theme_mode: Some(ThemeMode::Dark),
+            proxies_view_mode: Some(ProxiesViewMode::List),
             traffic_days: vec![PersistedTrafficDay {
                 date: "2026-03-01".to_string(),
                 bytes: 1024,
@@ -271,6 +275,7 @@ mod tests {
         assert_eq!(loaded.next_id, state.next_id);
         assert_eq!(loaded.selected_id, state.selected_id);
         assert_eq!(loaded.theme_mode, state.theme_mode);
+        assert_eq!(loaded.proxies_view_mode, state.proxies_view_mode);
         assert_eq!(loaded.traffic_days.len(), 1);
         assert_eq!(loaded.traffic_days[0].date, "2026-03-01");
         assert_eq!(loaded.traffic_days[0].bytes, 1024);

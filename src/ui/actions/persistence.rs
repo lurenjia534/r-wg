@@ -144,6 +144,7 @@ impl<'a> PersistedStateSnapshot<'a> {
             next_id: self.configs.next_config_id,
             selected_id,
             theme_mode: Some(self.ui_prefs.theme_mode),
+            proxies_view_mode: Some(self.ui_prefs.proxies_view_mode),
             traffic_days: self
                 .stats
                 .traffic_days
@@ -212,6 +213,7 @@ impl<'a> PersistedStateSnapshot<'a> {
 
 struct PersistedStateRestore {
     theme_mode: Option<ThemeMode>,
+    proxies_view_mode: Option<super::super::state::ProxiesViewMode>,
     configs: Vec<TunnelConfig>,
     next_config_id: u64,
     selected_id: Option<u64>,
@@ -275,6 +277,7 @@ impl PersistedStateRestore {
 
         Ok(Self {
             theme_mode: state.theme_mode,
+            proxies_view_mode: state.proxies_view_mode,
             next_config_id: state.next_id.max(max_id.saturating_add(1)),
             selected_id: state.selected_id,
             traffic_days,
@@ -296,6 +299,9 @@ impl PersistedStateRestore {
     ) -> PersistedStateSummary {
         if let Some(theme_mode) = self.theme_mode {
             ui_prefs.theme_mode = theme_mode;
+        }
+        if let Some(proxies_view_mode) = self.proxies_view_mode {
+            ui_prefs.proxies_view_mode = proxies_view_mode;
         }
 
         configs.configs = self.configs;

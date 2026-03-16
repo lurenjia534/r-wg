@@ -8,6 +8,7 @@ use gpui_component::theme::ThemeMode;
 use gpui_component::{input::InputState, IconName};
 use r_wg::backend::wg::{config, Engine, PeerStats};
 use r_wg::dns::{DnsMode, DnsPreset};
+use serde::{Deserialize, Serialize};
 
 use super::persistence::{self, StoragePaths};
 
@@ -129,6 +130,20 @@ pub(crate) enum TrafficPeriod {
     Today,
     ThisMonth,
     LastMonth,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProxiesViewMode {
+    List,
+    Gallery,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProxyRunningFilter {
+    All,
+    Running,
+    Idle,
 }
 
 /// 左侧导航栏的选中项。
@@ -286,14 +301,20 @@ pub(crate) struct SelectionState {
     pub(crate) config_text_cache: HashMap<PathBuf, SharedString>,
     /// 文本缓存顺序：用于简易 LRU 淘汰。
     pub(crate) config_text_cache_order: VecDeque<PathBuf>,
-    /// 代理/节点过滤：上一次查询字符串。
-    pub(crate) proxy_filter_query: String,
     /// 代理/节点过滤：上一次的总条目数（用于检测列表变化）。
     pub(crate) proxy_filter_total: usize,
     /// 代理/节点过滤：缓存过滤后的配置 ID 列表，避免每帧全量扫描。
     pub(crate) proxy_filtered_ids: Vec<u64>,
     /// Endpoint metadata 正在后台计算中的配置 ID。
     pub(crate) endpoint_family_loading: HashSet<u64>,
+    /// 代理列表结构化筛选：国家。
+    pub(crate) proxy_country_filter: Option<String>,
+    /// 代理列表结构化筛选：城市。
+    pub(crate) proxy_city_filter: Option<String>,
+    /// 代理列表结构化筛选：协议类型。
+    pub(crate) proxy_protocol_filter: Option<String>,
+    /// 代理列表结构化筛选：运行状态。
+    pub(crate) proxy_running_filter: ProxyRunningFilter,
     /// 代理/节点多选模式开关。
     pub(crate) proxy_select_mode: bool,
     /// 代理/节点多选：选中的配置 ID 列表。
@@ -311,10 +332,13 @@ impl SelectionState {
             loaded_config: None,
             config_text_cache: HashMap::new(),
             config_text_cache_order: VecDeque::new(),
-            proxy_filter_query: String::new(),
             proxy_filter_total: 0,
             proxy_filtered_ids: Vec::new(),
             endpoint_family_loading: HashSet::new(),
+            proxy_country_filter: None,
+            proxy_city_filter: None,
+            proxy_protocol_filter: None,
+            proxy_running_filter: ProxyRunningFilter::All,
             proxy_select_mode: false,
             proxy_selected_ids: HashSet::new(),
         }
@@ -536,6 +560,7 @@ pub(crate) struct UiPrefsState {
     pub(crate) log_auto_follow: bool,
     pub(crate) right_tab: RightTab,
     pub(crate) traffic_period: TrafficPeriod,
+    pub(crate) proxies_view_mode: ProxiesViewMode,
     pub(crate) theme_mode: ThemeMode,
     pub(crate) dns_mode: DnsMode,
     pub(crate) dns_preset: DnsPreset,
@@ -548,6 +573,7 @@ impl UiPrefsState {
             log_auto_follow: true,
             right_tab: RightTab::Status,
             traffic_period: TrafficPeriod::Today,
+            proxies_view_mode: ProxiesViewMode::List,
             theme_mode,
             dns_mode: DnsMode::FollowConfig,
             dns_preset: DnsPreset::CloudflareStandard,
