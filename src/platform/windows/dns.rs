@@ -8,6 +8,7 @@
 
 use std::net::IpAddr;
 
+use serde::{Deserialize, Serialize};
 use windows::core::{GUID, PWSTR};
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, NO_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
@@ -16,7 +17,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
     DNS_SETTING_DISABLE_UNCONSTRAINED_QUERIES, DNS_SETTING_NAMESERVER, DNS_SETTING_SEARCHLIST,
 };
 
-use super::adapter::AdapterInfo;
+use super::adapter::{guid_to_string, AdapterInfo};
 use super::{pwstr_to_string, NetworkError};
 use crate::log::events::dns as log_dns;
 
@@ -44,6 +45,67 @@ struct DnsStateEntry {
 pub(super) struct DnsState {
     /// 可能包含 1~2 个 GUID 的写入记录；回滚按逆序执行。
     entries: Vec<DnsStateEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct DnsStateSnapshot {
+    entries: Vec<DnsStateEntrySnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DnsStateEntrySnapshot {
+    guid: String,
+    touched_nameserver: bool,
+    touched_search: bool,
+    touched_disable_unconstrained_queries: bool,
+    original_nameserver: Option<String>,
+    original_searchlist: Option<String>,
+    original_disable_unconstrained_queries: u32,
+}
+
+impl DnsState {
+    pub(super) fn snapshot(&self) -> DnsStateSnapshot {
+        DnsStateSnapshot {
+            entries: self
+                .entries
+                .iter()
+                .map(|entry| DnsStateEntrySnapshot {
+                    guid: guid_to_string(entry.guid),
+                    touched_nameserver: entry.touched_nameserver,
+                    touched_search: entry.touched_search,
+                    touched_disable_unconstrained_queries: entry
+                        .touched_disable_unconstrained_queries,
+                    original_nameserver: entry.original_nameserver.clone(),
+                    original_searchlist: entry.original_searchlist.clone(),
+                    original_disable_unconstrained_queries: entry
+                        .original_disable_unconstrained_queries,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl DnsStateSnapshot {
+    pub(super) fn to_state(&self) -> Result<DnsState, std::io::Error> {
+        let mut entries = Vec::with_capacity(self.entries.len());
+        for entry in &self.entries {
+            let guid = GUID::try_from(entry.guid.as_str()).map_err(|err| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string())
+            })?;
+            entries.push(DnsStateEntry {
+                guid,
+                touched_nameserver: entry.touched_nameserver,
+                touched_search: entry.touched_search,
+                touched_disable_unconstrained_queries: entry
+                    .touched_disable_unconstrained_queries,
+                original_nameserver: entry.original_nameserver.clone(),
+                original_searchlist: entry.original_searchlist.clone(),
+                original_disable_unconstrained_queries: entry
+                    .original_disable_unconstrained_queries,
+            });
+        }
+        Ok(DnsState { entries })
+    }
 }
 
 /// 应用 DNS 到 Windows 接口。

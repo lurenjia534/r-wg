@@ -7,6 +7,8 @@ use std::net::IpAddr;
 use std::os::windows::process::CommandExt;
 use std::process::Command;
 
+use serde::{Deserialize, Serialize};
+
 use super::adapter::AdapterInfo;
 use super::NetworkError;
 use crate::log::events::net as log_net;
@@ -22,6 +24,30 @@ pub(super) struct NrptState {
     rule_names: Vec<String>,
     /// 本客户端规则标签（用于批量兜底清理）。
     tag: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct NrptStateSnapshot {
+    rule_names: Vec<String>,
+    tag: String,
+}
+
+impl NrptState {
+    pub(super) fn snapshot(&self) -> NrptStateSnapshot {
+        NrptStateSnapshot {
+            rule_names: self.rule_names.clone(),
+            tag: self.tag.clone(),
+        }
+    }
+}
+
+impl NrptStateSnapshot {
+    pub(super) fn to_state(&self) -> NrptState {
+        NrptState {
+            rule_names: self.rule_names.clone(),
+            tag: self.tag.clone(),
+        }
+    }
 }
 
 /// 应用 NRPT 规则。
@@ -99,6 +125,13 @@ pub(super) fn cleanup_nrpt_guard(state: NrptState) -> Result<(), NetworkError> {
     } else {
         Ok(())
     }
+}
+
+pub(super) fn cleanup_stale_nrpt_rules() -> Result<(), NetworkError> {
+    let script = "$ErrorActionPreference='SilentlyContinue'; \
+         Get-DnsClientNrptRule | Where-Object { $_.Comment -like 'r-wg-nrpt-*' } | \
+         ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }";
+    run_powershell(script).map(|_| ())
 }
 
 /// 按规则 Name 删除 NRPT 规则。

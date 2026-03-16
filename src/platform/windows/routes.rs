@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use serde::{Deserialize, Serialize};
 use tokio::net::lookup_host;
 use windows::Win32::Foundation::{ERROR_NOT_FOUND, NO_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
@@ -36,6 +37,41 @@ pub(super) struct RouteEntry {
     pub(super) if_index: u32,
     /// 绑定接口 LUID。
     pub(super) luid: NET_LUID_LH,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct RouteSnapshot {
+    pub(super) dest: IpAddr,
+    pub(super) prefix: u8,
+    pub(super) next_hop: Option<IpAddr>,
+    pub(super) if_index: u32,
+    pub(super) luid_value: u64,
+}
+
+impl From<&RouteEntry> for RouteSnapshot {
+    fn from(entry: &RouteEntry) -> Self {
+        Self {
+            dest: entry.dest,
+            prefix: entry.prefix,
+            next_hop: entry.next_hop,
+            if_index: entry.if_index,
+            luid_value: unsafe { entry.luid.Value },
+        }
+    }
+}
+
+impl RouteSnapshot {
+    pub(super) fn to_route_entry(&self) -> RouteEntry {
+        RouteEntry {
+            dest: self.dest,
+            prefix: self.prefix,
+            next_hop: self.next_hop,
+            if_index: self.if_index,
+            luid: NET_LUID_LH {
+                Value: self.luid_value,
+            },
+        }
+    }
 }
 
 /// 添加路由；如果已存在，按成功处理。

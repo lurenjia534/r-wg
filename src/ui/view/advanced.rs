@@ -1,7 +1,7 @@
 use gpui::{div, px, Context, Div, Entity, ParentElement, SharedString, Styled};
 use gpui_component::setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings};
 use gpui_component::theme::{Theme, ThemeMode};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use gpui_component::{
     button::{Button, ButtonVariants},
     group_box::{GroupBox, GroupBoxVariants},
@@ -9,7 +9,7 @@ use gpui_component::{
     tag::Tag,
     v_flex, ActiveTheme as _, Sizable as _,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use r_wg::backend::wg::PrivilegedServiceAction;
 use r_wg::dns::{DnsMode, DnsPreset};
 
@@ -71,7 +71,7 @@ pub(crate) fn render_advanced(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         .min_h(px(0.0))
         .child(settings);
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let content = content.child(render_privileged_backend_card(app, cx));
 
     content
@@ -215,7 +215,7 @@ fn shared(value: &'static str) -> SharedString {
     SharedString::new_static(value)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn render_privileged_backend_card(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
     let (status, detail, available) = (
         app.ui.backend_status.clone(),

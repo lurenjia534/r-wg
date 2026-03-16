@@ -11,6 +11,7 @@ use std::net::IpAddr;
 use std::os::windows::process::CommandExt;
 use std::process::Command;
 
+use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, NO_ERROR, WIN32_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
     GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
@@ -32,6 +33,27 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub(super) struct DnsGuardState {
     /// 创建过的规则名，断开隧道时按此删除。
     rule_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct DnsGuardStateSnapshot {
+    rule_names: Vec<String>,
+}
+
+impl DnsGuardState {
+    pub(super) fn snapshot(&self) -> DnsGuardStateSnapshot {
+        DnsGuardStateSnapshot {
+            rule_names: self.rule_names.clone(),
+        }
+    }
+}
+
+impl DnsGuardStateSnapshot {
+    pub(super) fn to_state(&self) -> DnsGuardState {
+        DnsGuardState {
+            rule_names: self.rule_names.clone(),
+        }
+    }
 }
 
 /// 应用 DNS Guard。
@@ -94,6 +116,10 @@ pub(super) fn cleanup_dns_guard(state: DnsGuardState) -> Result<(), NetworkError
     } else {
         Ok(())
     }
+}
+
+pub(super) fn cleanup_stale_dns_guard_rules() -> Result<(), NetworkError> {
+    Ok(())
 }
 
 /// 收集“非隧道网卡上的 DNS 服务器”并过滤出需要阻断的地址。

@@ -12,6 +12,7 @@ mod dns;
 mod firewall;
 mod metrics;
 mod nrpt;
+mod recovery;
 mod routes;
 mod sockaddr;
 
@@ -30,6 +31,7 @@ use dns::{apply_dns, cleanup_dns, DnsState};
 use firewall::{apply_dns_guard, cleanup_dns_guard, DnsGuardState};
 use metrics::{restore_interface_metric, set_interface_metric, InterfaceMetricState};
 use nrpt::{apply_nrpt_guard, cleanup_nrpt_guard, NrptState};
+use recovery::RecoveryGuard;
 use routes::{
     add_route, best_route_to, collect_allowed_routes, delete_route, detect_full_tunnel,
     resolve_endpoint_ips, RouteEntry,
@@ -58,6 +60,8 @@ pub struct AppliedNetworkState {
     nrpt: Option<NrptState>,
     /// DNS Guard 状态（用于回滚）。
     dns_guard: Option<DnsGuardState>,
+    /// 持久化恢复日志。
+    recovery: Option<RecoveryGuard>,
 }
 
 #[derive(Debug)]
@@ -138,6 +142,7 @@ pub async fn apply_network_config(
         dns: None,
         nrpt: None,
         dns_guard: None,
+        recovery: Some(RecoveryGuard::begin(tun_name, adapter)?),
     };
 
     // 3) 先清理旧地址，避免历史残留影响路由决策。
@@ -151,6 +156,9 @@ pub async fn apply_network_config(
             return Err(err);
         }
         state.addresses.push(address.clone());
+        if let Some(recovery) = state.recovery.as_mut() {
+            recovery.record_address(address)?;
+        }
     }
 
     // 5) 汇总路由并判断是否为全隧道。
@@ -165,6 +173,9 @@ pub async fn apply_network_config(
                 Ok(metric_state) => {
                     log_net::interface_metric_set_v4(TUNNEL_METRIC);
                     state.iface_metrics.push(metric_state);
+                    if let Some(recovery) = state.recovery.as_mut() {
+                        recovery.record_metric(metric_state)?;
+                    }
                 }
                 Err(err) => {
                     log_net::interface_metric_set_failed_v4(&err);
@@ -180,6 +191,9 @@ pub async fn apply_network_config(
                 Ok(metric_state) => {
                     log_net::interface_metric_set_v6(TUNNEL_METRIC);
                     state.iface_metrics.push(metric_state);
+                    if let Some(recovery) = state.recovery.as_mut() {
+                        recovery.record_metric(metric_state)?;
+                    }
                 }
                 Err(err) => {
                     log_net::interface_metric_set_failed_v6(&err);
@@ -257,6 +271,9 @@ pub async fn apply_network_config(
                 let _ = cleanup_network_config(state).await;
                 return Err(err);
             }
+            if let Some(recovery) = state.recovery.as_mut() {
+                recovery.record_bypass_route(&entry)?;
+            }
             state.bypass_routes.push(entry);
         }
 
@@ -278,6 +295,9 @@ pub async fn apply_network_config(
             if let Err(err) = add_route(&entry) {
                 let _ = cleanup_network_config(state).await;
                 return Err(err);
+            }
+            if let Some(recovery) = state.recovery.as_mut() {
+                recovery.record_route(&entry)?;
             }
             state.routes.push(entry);
         }
@@ -303,6 +323,9 @@ pub async fn apply_network_config(
                 let _ = cleanup_network_config(state).await;
                 return Err(err);
             }
+            if let Some(recovery) = state.recovery.as_mut() {
+                recovery.record_route(&entry)?;
+            }
             state.routes.push(entry);
         }
     }
@@ -311,7 +334,12 @@ pub async fn apply_network_config(
     if !interface.dns_servers.is_empty() || !interface.dns_search.is_empty() {
         log_dns::apply_summary(interface.dns_servers.len(), interface.dns_search.len());
         match apply_dns(adapter, &interface.dns_servers, &interface.dns_search) {
-            Ok(dns_state) => state.dns = Some(dns_state),
+            Ok(dns_state) => {
+                if let Some(recovery) = state.recovery.as_mut() {
+                    recovery.record_dns(&dns_state)?;
+                }
+                state.dns = Some(dns_state);
+            }
             Err(err) => {
                 log_dns::apply_failed(&err);
                 let _ = cleanup_network_config(state).await;
@@ -326,7 +354,12 @@ pub async fn apply_network_config(
         && (full_v4 || full_v6)
     {
         match apply_nrpt_guard(adapter, &interface.dns_servers) {
-            Ok(nrpt_state) => state.nrpt = nrpt_state,
+            Ok(nrpt_state) => {
+                if let (Some(recovery), Some(nrpt_state)) = (state.recovery.as_mut(), nrpt_state.as_ref()) {
+                    recovery.record_nrpt(nrpt_state)?;
+                }
+                state.nrpt = nrpt_state;
+            }
             Err(err) => {
                 let _ = cleanup_network_config(state).await;
                 return Err(err);
@@ -334,12 +367,23 @@ pub async fn apply_network_config(
         }
 
         match apply_dns_guard(adapter, full_v4, full_v6, &interface.dns_servers) {
-            Ok(guard_state) => state.dns_guard = guard_state,
+            Ok(guard_state) => {
+                if let (Some(recovery), Some(guard_state)) =
+                    (state.recovery.as_mut(), guard_state.as_ref())
+                {
+                    recovery.record_dns_guard(guard_state)?;
+                }
+                state.dns_guard = guard_state;
+            }
             Err(err) => {
                 let _ = cleanup_network_config(state).await;
                 return Err(err);
             }
         }
+    }
+
+    if let Some(recovery) = state.recovery.as_mut() {
+        recovery.mark_running()?;
     }
 
     Ok(state)
@@ -349,57 +393,85 @@ pub async fn apply_network_config(
 ///
 /// 顺序：bypass route -> 普通 route -> 地址 -> metric -> DNS/NRPT/guard。
 pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), NetworkError> {
+    let AppliedNetworkState {
+        tun_name,
+        adapter,
+        addresses,
+        routes,
+        bypass_routes,
+        iface_metrics,
+        dns,
+        nrpt,
+        dns_guard,
+        mut recovery,
+    } = state;
+
+    if let Some(guard) = recovery.as_mut() {
+        let _ = guard.mark_stopping();
+    }
+
     log_net::cleanup_windows(
-        &state.tun_name,
-        state.addresses.len(),
-        state.routes.len(),
-        state.bypass_routes.len(),
+        &tun_name,
+        addresses.len(),
+        routes.len(),
+        bypass_routes.len(),
     );
 
-    for entry in state.bypass_routes.iter().rev() {
+    for entry in bypass_routes.iter().rev() {
         if let Err(err) = delete_route(entry) {
             log_net::bypass_route_del_failed(&err);
         }
     }
 
-    for entry in state.routes.iter().rev() {
+    for entry in routes.iter().rev() {
         if let Err(err) = delete_route(entry) {
             log_net::route_del_failed(&err);
         }
     }
 
-    for address in &state.addresses {
-        if let Err(err) = delete_unicast_address(state.adapter, address) {
+    for address in &addresses {
+        if let Err(err) = delete_unicast_address(adapter, address) {
             log_net::address_del_failed(&err);
         }
     }
 
-    for iface in state.iface_metrics.iter().rev() {
-        if let Err(err) = restore_interface_metric(state.adapter, *iface) {
+    for iface in iface_metrics.iter().rev() {
+        if let Err(err) = restore_interface_metric(adapter, *iface) {
             log_net::interface_metric_restore_failed(&err);
         }
     }
 
-    if let Some(dns) = state.dns {
+    if let Some(dns) = dns {
         log_dns::revert_start();
         if let Err(err) = cleanup_dns(dns) {
             log_dns::revert_failed(&err);
         }
     }
 
-    if let Some(nrpt) = state.nrpt {
+    if let Some(nrpt) = nrpt {
         if let Err(err) = cleanup_nrpt_guard(nrpt) {
             log_net::nrpt_cleanup_failed(&err);
         }
     }
 
-    if let Some(guard) = state.dns_guard {
+    if let Some(guard) = dns_guard {
         if let Err(err) = cleanup_dns_guard(guard) {
             log_net::dns_guard_cleanup_failed(&err);
         }
     }
 
+    if let Some(guard) = recovery {
+        guard.clear()?;
+    }
+
     Ok(())
+}
+
+/// Windows service 启动期修复占位。
+///
+/// Phase 1 先切换 owner/transport，后续阶段在这里接入 durable journal。
+pub fn attempt_startup_repair() -> Result<(), NetworkError> {
+    recovery::attempt_startup_repair()
 }
 
 /// 将 Windows 宽字符串指针转换为 Rust String。

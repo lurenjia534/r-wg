@@ -3,6 +3,7 @@
 //! 在全隧道模式下，通常需要降低隧道网卡的 metric，
 //! 以提升其默认路由优先级，减少系统走物理网卡造成的泄露风险。
 
+use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::NO_ERROR;
 use windows::Win32::NetworkManagement::IpHelper::{
     GetIpInterfaceEntry, InitializeIpInterfaceEntry, SetIpInterfaceEntry, MIB_IPINTERFACE_ROW,
@@ -21,6 +22,33 @@ pub(super) struct InterfaceMetricState {
     use_auto: bool,
     /// 原始 metric 值。
     metric: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct InterfaceMetricSnapshot {
+    family: u16,
+    use_auto: bool,
+    metric: u32,
+}
+
+impl From<InterfaceMetricState> for InterfaceMetricSnapshot {
+    fn from(state: InterfaceMetricState) -> Self {
+        Self {
+            family: state.family.0,
+            use_auto: state.use_auto,
+            metric: state.metric,
+        }
+    }
+}
+
+impl InterfaceMetricSnapshot {
+    pub(super) fn to_state(&self) -> InterfaceMetricState {
+        InterfaceMetricState {
+            family: ADDRESS_FAMILY(self.family),
+            use_auto: self.use_auto,
+            metric: self.metric,
+        }
+    }
 }
 
 /// 设置指定地址族的接口 metric，并返回“设置前”的状态快照。

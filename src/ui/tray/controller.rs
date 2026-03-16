@@ -1,5 +1,7 @@
 use gpui::{AnyWindowHandle, App, Global, UpdateGlobal};
-use r_wg::backend::wg::{Engine, EngineError};
+use r_wg::backend::wg::Engine;
+#[cfg(not(target_os = "windows"))]
+use r_wg::backend::wg::EngineError;
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::ui::state::WgApp;
@@ -112,43 +114,55 @@ fn focus_main_window(window_handle: AnyWindowHandle, cx: &mut gpui::AsyncApp) {
 /// - 对“已经停止/通道已关闭”视为可退出；
 /// - 停止失败时保留应用并在 UI 显示错误。
 async fn request_quit(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut gpui::AsyncApp) {
-    let mut was_running = false;
-    let _ = view.update(cx, |this, cx| {
-        was_running = this.runtime.running;
-        if this.runtime.running {
-            this.runtime.busy = true;
-            this.set_status("Stopping...");
-            cx.notify();
-        }
-    });
-
-    let result = cx
-        .background_executor()
-        .spawn(async move { engine.stop() })
-        .await;
-    let should_quit = matches!(
-        &result,
-        Ok(()) | Err(EngineError::NotRunning) | Err(EngineError::ChannelClosed)
-    );
-
-    let _ = view.update(cx, |this, cx| {
-        if should_quit {
-            if was_running {
-                this.runtime.finish_stop_success();
-                this.stats.clear_runtime_metrics();
-                this.set_status("Stopped");
-            }
-        } else if let Err(err) = result {
-            if was_running {
-                this.runtime.busy = false;
-            }
-            this.set_error(format!("Stop failed: {err}"));
-        }
-        cx.notify();
-    });
-
-    if should_quit {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = view;
+        let _ = engine;
         platform::shutdown_tray();
         let _ = cx.update(|app| app.quit());
+        return;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut was_running = false;
+        let _ = view.update(cx, |this, cx| {
+            was_running = this.runtime.running;
+            if this.runtime.running {
+                this.runtime.busy = true;
+                this.set_status("Stopping...");
+                cx.notify();
+            }
+        });
+
+        let result = cx
+            .background_executor()
+            .spawn(async move { engine.stop() })
+            .await;
+        let should_quit = matches!(
+            &result,
+            Ok(()) | Err(EngineError::NotRunning) | Err(EngineError::ChannelClosed)
+        );
+
+        let _ = view.update(cx, |this, cx| {
+            if should_quit {
+                if was_running {
+                    this.runtime.finish_stop_success();
+                    this.stats.clear_runtime_metrics();
+                    this.set_status("Stopped");
+                }
+            } else if let Err(err) = result {
+                if was_running {
+                    this.runtime.busy = false;
+                }
+                this.set_error(format!("Stop failed: {err}"));
+            }
+            cx.notify();
+        });
+
+        if should_quit {
+            platform::shutdown_tray();
+            let _ = cx.update(|app| app.quit());
+        }
     }
 }

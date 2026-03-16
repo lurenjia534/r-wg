@@ -5,8 +5,10 @@
 //! - NetworkGuid 并不总是等同于 AdapterName GUID，因此需要解析并保留回退值。
 
 use std::ffi::CStr;
+use std::io;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 use windows::core::{GUID, PSTR};
 use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, NO_ERROR, WIN32_ERROR};
@@ -33,6 +35,65 @@ pub(super) struct AdapterInfo {
     pub(super) guid: GUID,
     /// DNS 接口回退 GUID（必要时使用 NetworkGuid）。
     pub(super) dns_guid_fallback: Option<GUID>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct AdapterSnapshot {
+    pub(super) if_index: u32,
+    pub(super) luid_value: u64,
+    pub(super) guid: String,
+    pub(super) dns_guid_fallback: Option<String>,
+}
+
+impl From<AdapterInfo> for AdapterSnapshot {
+    fn from(adapter: AdapterInfo) -> Self {
+        Self {
+            if_index: adapter.if_index,
+            luid_value: unsafe { adapter.luid.Value },
+            guid: guid_to_string(adapter.guid),
+            dns_guid_fallback: adapter.dns_guid_fallback.map(guid_to_string),
+        }
+    }
+}
+
+impl AdapterSnapshot {
+    pub(super) fn to_adapter_info(&self) -> io::Result<AdapterInfo> {
+        let guid = GUID::try_from(self.guid.as_str())
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        let dns_guid_fallback = self
+            .dns_guid_fallback
+            .as_deref()
+            .map(|value| {
+                GUID::try_from(value)
+                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+            })
+            .transpose()?;
+        Ok(AdapterInfo {
+            if_index: self.if_index,
+            luid: windows::Win32::NetworkManagement::Ndis::NET_LUID_LH {
+                Value: self.luid_value,
+            },
+            guid,
+            dns_guid_fallback,
+        })
+    }
+}
+
+pub(super) fn guid_to_string(guid: GUID) -> String {
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        guid.data1,
+        guid.data2,
+        guid.data3,
+        guid.data4[0],
+        guid.data4[1],
+        guid.data4[2],
+        guid.data4[3],
+        guid.data4[4],
+        guid.data4[5],
+        guid.data4[6],
+        guid.data4[7]
+    )
 }
 
 pub(super) async fn find_adapter_with_retry(name: &str) -> Result<AdapterInfo, NetworkError> {

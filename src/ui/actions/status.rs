@@ -1,6 +1,6 @@
 use gpui::{AppContext, Context, SharedString};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use r_wg::backend::wg::{
     manage_privileged_service, probe_privileged_service, PrivilegedServiceAction,
     PrivilegedServiceStatus,
@@ -23,12 +23,12 @@ impl WgApp {
         self.ui.set_error(message);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub(crate) fn refresh_privileged_backend_status(&mut self, cx: &mut Context<Self>) {
         // 探测放到后台线程：systemctl / socket 探测虽然不重，但它们都属于同步系统调用，
         // 不应该阻塞 UI 渲染线程。
         self.ui
-            .set_backend_status("Checking...", "Probing Linux privileged backend...", false);
+            .set_backend_status("Checking...", "Probing privileged backend service...", false);
         cx.notify();
 
         cx.spawn(async move |view, cx| {
@@ -37,12 +37,12 @@ impl WgApp {
                 match status {
                     PrivilegedServiceStatus::Running => this.ui.set_backend_status(
                         "Running",
-                        "Linux privileged backend is currently running. It will be started on demand and can exit again after becoming idle.",
+                        "The privileged backend service is running and ready to handle tunnel control.",
                         true,
                     ),
                     PrivilegedServiceStatus::Installed => this.ui.set_backend_status(
                         "Installed",
-                        "The privileged backend is installed and socket-activated. It will start automatically when you connect a tunnel.",
+                        "The privileged backend service is installed but not currently reporting a live control channel.",
                         false,
                     ),
                     PrivilegedServiceStatus::NotInstalled => this.ui.set_backend_status(
@@ -52,7 +52,7 @@ impl WgApp {
                     ),
                     PrivilegedServiceStatus::AccessDenied => this.ui.set_backend_status(
                         "Access denied",
-                        "The backend socket is reachable, but this user cannot access it. Check /run/r-wg/control.sock ownership and backend access group membership.",
+                        "The backend service exists, but this user cannot access its control channel.",
                         false,
                     ),
                     PrivilegedServiceStatus::VersionMismatch { expected, actual } => {
@@ -75,7 +75,7 @@ impl WgApp {
         .detach();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub(crate) fn run_privileged_backend_action(
         &mut self,
         action: PrivilegedServiceAction,
@@ -89,7 +89,7 @@ impl WgApp {
         self.set_status(format!("{verb} privileged backend..."));
         self.ui.set_backend_status(
             "Working...",
-            format!("{verb} the Linux privileged backend via pkexec..."),
+            format!("{verb} the privileged backend service..."),
             false,
         );
         // 安装/修复/移除都可能触发授权弹窗与 systemd 操作，必须异步执行；
@@ -118,9 +118,9 @@ impl WgApp {
         .detach();
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     pub(crate) fn refresh_privileged_backend_status(&mut self, _cx: &mut Context<Self>) {}
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     pub(crate) fn run_privileged_backend_action(&mut self, _action: (), _cx: &mut Context<Self>) {}
 }
