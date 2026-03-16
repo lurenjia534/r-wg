@@ -279,48 +279,62 @@ impl WgApp {
                 });
                 let result = read_task.await;
                 view.update_in(cx, |this, window, cx| {
-                    // 关键校验：只允许“当前选中 + 路径一致 + 仍是同一加载任务”时写回。
-                    if this.selection.selected_id != Some(config_id) {
-                        return;
-                    }
                     let Some(config) = this.configs.get_by_id(config_id) else {
+                        this.selection.endpoint_family_loading.remove(&config_id);
+                        if this.selection.loading_config_id == Some(config_id) {
+                            this.selection.loading_config_id = None;
+                            this.selection.loading_config_path = None;
+                        }
                         return;
                     };
-                    let current_path = &config.storage_path;
-                    let loading_path = this.selection.loading_config_path.as_ref();
-                    if current_path != &path_for_match
-                        || this.selection.loading_config_id != Some(config_id)
-                        || loading_path != Some(&path_for_match)
-                    {
+                    if config.storage_path != path_for_match {
+                        this.selection.endpoint_family_loading.remove(&config_id);
+                        if this.selection.loading_config_id == Some(config_id)
+                            && this.selection.loading_config_path.as_ref() == Some(&path_for_match)
+                        {
+                            this.selection.loading_config_id = None;
+                            this.selection.loading_config_path = None;
+                        }
                         return;
                     }
-                    this.selection.loading_config_id = None;
-                    this.selection.loading_config_path = None;
+                    let should_write_ui = this.selection.selected_id == Some(config_id)
+                        && this.selection.loading_config_id == Some(config_id)
+                        && this.selection.loading_config_path.as_ref() == Some(&path_for_match);
+
                     match result {
                         Ok((text, family)) => {
                             let text: SharedString = text.into();
                             this.cache_config_text(path_for_cache, text.clone());
-                            if let Some(config_input) = this.ui.config_input.as_ref() {
-                                config_input.update(cx, |input, cx| {
-                                    input.set_value(text.clone(), window, cx);
-                                });
-                            }
                             if let Some(config) = this.configs.get_mut_by_id(config_id) {
                                 config.endpoint_family = family;
                             }
                             this.selection.endpoint_family_loading.remove(&config_id);
-                            let text_hash = text_hash(text.as_ref());
-                            this.update_parse_cache(&name, text.as_ref(), text_hash);
-                            this.selection.loaded_config =
-                                Some(LoadedConfigState { name, text_hash });
-                            this.set_status("Loaded config");
+                            if should_write_ui {
+                                this.selection.loading_config_id = None;
+                                this.selection.loading_config_path = None;
+                                if let Some(config_input) = this.ui.config_input.as_ref() {
+                                    config_input.update(cx, |input, cx| {
+                                        input.set_value(text.clone(), window, cx);
+                                    });
+                                }
+                                let text_hash = text_hash(text.as_ref());
+                                this.update_parse_cache(&name, text.as_ref(), text_hash);
+                                this.selection.loaded_config =
+                                    Some(LoadedConfigState { name, text_hash });
+                                this.set_status("Loaded config");
+                            }
+                            cx.notify();
                         }
                         Err(err) => {
                             this.selection.endpoint_family_loading.remove(&config_id);
-                            this.set_error(format!("Read failed: {err}"));
+                            if should_write_ui {
+                                this.selection.loading_config_id = None;
+                                this.selection.loading_config_path = None;
+                                this.set_error(format!("Read failed: {err}"));
+                                cx.notify();
+                            }
                         }
                     }
-                    cx.notify();
                 })
                 .ok();
             })
@@ -590,7 +604,6 @@ impl WgApp {
 
         self.configs[idx].name = new_name.to_string();
         self.configs[idx].name_lower = new_name.to_lowercase();
-        self.selection.proxy_filter_total = 0;
         self.update_parse_cache_name(&old_name, new_name);
         if let Some(loaded) = &mut self.selection.loaded_config {
             if loaded.name == old_name {
@@ -728,8 +741,6 @@ impl WgApp {
         self.selection
             .endpoint_family_loading
             .retain(|id| !to_delete_ids.contains(id));
-        self.selection.proxy_filter_total = 0;
-        self.selection.proxy_filtered_ids.clear();
         self.selection.loading_config_id = None;
         self.selection.loading_config_path = None;
 

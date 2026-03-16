@@ -41,6 +41,7 @@ struct ProxyNameParts {
 struct ProxyRowData {
     id: u64,
     name: String,
+    name_lower: String,
     country: Option<String>,
     city: Option<String>,
     protocol: Option<String>,
@@ -126,14 +127,8 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
         format!("{filtered_nodes}/{total_nodes} nodes")
     };
 
-    let toolbar = render_proxies_toolbar(
-        app,
-        &search_input,
-        &model,
-        nodes_text,
-        selected_count,
-        cx,
-    );
+    let toolbar =
+        render_proxies_toolbar(app, &search_input, &model, nodes_text, selected_count, cx);
     let filters = render_proxy_filters(app, &search_input, &model, app_handle.clone(), cx);
     let bulk_bar = render_proxy_bulk_bar(app, visible_ids, selected_count, cx);
 
@@ -180,9 +175,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
     } else {
         let browser = match app.ui_prefs.proxies_view_mode {
             ProxiesViewMode::List => render_proxy_list_view(&model.filtered_rows, window, cx),
-            ProxiesViewMode::Gallery => {
-                render_proxy_gallery_view(&model.filtered_rows, window, cx)
-            }
+            ProxiesViewMode::Gallery => render_proxy_gallery_view(&model.filtered_rows, window, cx),
         };
         let detail = render_proxy_detail_pane(app, &model, cx);
         if compact_layout {
@@ -1124,7 +1117,7 @@ fn build_proxies_view_model(app: &WgApp, query: &str) -> ProxiesViewModel {
     let filtered_rows = rows
         .iter()
         .filter(|row| {
-            (query.is_empty() || row.name.to_lowercase().contains(query))
+            (query.is_empty() || row.name_lower.contains(query))
                 && app
                     .selection
                     .proxy_country_filter
@@ -1173,6 +1166,7 @@ fn proxy_row_data(config: &TunnelConfig, is_running: bool) -> ProxyRowData {
     ProxyRowData {
         id: config.id,
         name: config.name.clone(),
+        name_lower: config.name_lower.clone(),
         country: parts.country,
         city: parts.city,
         protocol: parts.protocol,

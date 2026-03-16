@@ -301,10 +301,6 @@ pub(crate) struct SelectionState {
     pub(crate) config_text_cache: HashMap<PathBuf, SharedString>,
     /// 文本缓存顺序：用于简易 LRU 淘汰。
     pub(crate) config_text_cache_order: VecDeque<PathBuf>,
-    /// 代理/节点过滤：上一次的总条目数（用于检测列表变化）。
-    pub(crate) proxy_filter_total: usize,
-    /// 代理/节点过滤：缓存过滤后的配置 ID 列表，避免每帧全量扫描。
-    pub(crate) proxy_filtered_ids: Vec<u64>,
     /// Endpoint metadata 正在后台计算中的配置 ID。
     pub(crate) endpoint_family_loading: HashSet<u64>,
     /// 代理列表结构化筛选：国家。
@@ -332,8 +328,6 @@ impl SelectionState {
             loaded_config: None,
             config_text_cache: HashMap::new(),
             config_text_cache_order: VecDeque::new(),
-            proxy_filter_total: 0,
-            proxy_filtered_ids: Vec::new(),
             endpoint_family_loading: HashSet::new(),
             proxy_country_filter: None,
             proxy_city_filter: None,
@@ -371,7 +365,6 @@ impl SelectionState {
         configs: &ConfigsState,
     ) {
         self.selected_id = selected_id.filter(|id| configs.get_by_id(*id).is_some());
-        self.proxy_filter_total = 0;
         self.parse_cache = None;
         self.loaded_config = None;
         self.loading_config_id = None;
