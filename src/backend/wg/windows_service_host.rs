@@ -2,6 +2,7 @@ use std::ffi::c_void;
 use std::io::{self, BufReader};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::thread;
 
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::NO_ERROR;
@@ -127,15 +128,23 @@ fn run_pipe_loop(engine: &LocalEngine) -> Result<(), EngineError> {
             return Ok(());
         }
 
-        if let Err(err) = handle_pipe_client(stream, engine) {
-            tracing::debug!("named pipe client handling failed: {err}");
+        let engine = engine.clone();
+        if let Err(err) = thread::Builder::new()
+            .name("wg-pipe-client".to_string())
+            .spawn(move || {
+                if let Err(err) = handle_pipe_client(stream, engine) {
+                    tracing::debug!("named pipe client handling failed: {err}");
+                }
+            })
+        {
+            tracing::warn!("failed to spawn named pipe client worker: {err}");
         }
     }
 }
 
 fn handle_pipe_client(
     mut stream: super::windows_pipe::PipeStream,
-    engine: &LocalEngine,
+    engine: LocalEngine,
 ) -> io::Result<()> {
     let command: BackendCommand = {
         let mut reader = BufReader::new(&mut stream);

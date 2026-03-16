@@ -32,6 +32,10 @@ pub struct PipeStream {
     handle: HANDLE,
 }
 
+// PipeStream 独占持有一个已连接的 named-pipe HANDLE。
+// Windows HANDLE 可以在线程间转移所有权，这里不实现 Sync，只允许 move 到 worker 线程。
+unsafe impl Send for PipeStream {}
+
 impl PipeStream {
     pub fn connect() -> io::Result<Self> {
         let name = encode_wide(PIPE_NAME);

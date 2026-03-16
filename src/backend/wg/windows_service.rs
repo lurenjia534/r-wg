@@ -146,7 +146,6 @@ impl RemoteEngine {
     }
 
     fn stop(&self) -> Result<(), EngineError> {
-        self.check_protocol()?;
         match self.send_command_raw(BackendCommand::Stop) {
             Ok(reply) => self.expect_unit(reply),
             Err(err) if is_missing_backend_error(&err) => Err(EngineError::NotRunning),
@@ -156,18 +155,6 @@ impl RemoteEngine {
     }
 
     fn status(&self) -> Result<EngineStatus, EngineError> {
-        match self.check_protocol() {
-            Ok(()) => {}
-            Err(EngineError::VersionMismatch { expected, actual }) => {
-                return Err(EngineError::VersionMismatch { expected, actual });
-            }
-            Err(err) if matches!(err, EngineError::AccessDenied) => return Err(err),
-            Err(err) if matches!(err, EngineError::ChannelClosed) => {
-                return Ok(EngineStatus::Stopped);
-            }
-            Err(err) => return Err(err),
-        }
-
         match self.send_command_raw(BackendCommand::Status) {
             Ok(BackendReply::Status { status }) => Ok(status),
             Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
@@ -179,7 +166,6 @@ impl RemoteEngine {
     }
 
     fn stats(&self) -> Result<EngineStats, EngineError> {
-        self.check_protocol()?;
         match self.send_command_raw(BackendCommand::Stats) {
             Ok(BackendReply::Stats { stats }) => Ok(stats),
             Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),

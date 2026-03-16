@@ -40,6 +40,8 @@ impl WgApp {
         if self.runtime.running {
             // 已运行：进入停止流程，并标记 busy，避免重复触发。
             self.runtime.begin_stop();
+            // 停止前先终止当前 stats 轮询，避免它继续占用短连接并与 Stop 抢后端 pipe。
+            self.stats.stats_generation = self.stats.stats_generation.wrapping_add(1);
             self.set_status("Stopping...");
             cx.notify();
 
