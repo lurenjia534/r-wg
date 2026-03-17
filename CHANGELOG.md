@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.7 - 2026-03-17
+
+- Added a socket-activated privileged backend on Linux, along with lifecycle hardening, startup repair recovery, socket permission fixes, and PATH-independent DNS tool resolution.
+- Moved the Windows privileged backend to an SCM-managed service, fixed tunnel-control pipe starvation, and shifted the full-tunnel DNS guard to WFP dynamic filters.
+- Added desktop notification improvements across the tray flows, including Linux freedesktop notifications and Windows tray notification copy support.
+- Redesigned the proxies management experience with a fixed gallery/grid layout, tighter metadata presentation, and more stable selection/filter behavior.
+- Refined the About page into a viewport-aware release/status panel with clearer hierarchy, stronger icon contrast, and cleaner system diagnostics.
+- Clarified the privileged backend install flow in the README and added Linux DNS resolution regression coverage.
+
 ## 0.2.6 - 2026-03-10
 
 - Downgraded `gotatun` to `0.3.1` to keep Linux tunnels usable while the `0.4.0` full-tunnel regression remains unresolved.
