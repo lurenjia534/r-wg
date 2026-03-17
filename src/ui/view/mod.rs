@@ -54,7 +54,7 @@ impl Render for WgApp {
                 // 左侧：隧道列表 + 操作按钮
                 .child(left_panel::render_left_panel(self, &data, cx))
                 .child({
-                    let main_body = match self.ui_prefs.sidebar_active {
+                    let main_body = match self.ui_session.sidebar_active {
                         SidebarItem::Overview => {
                             let overview_data = data::OverviewData::new(self, &data);
                             overview::render_overview(&overview_data, cx).into_any_element()
@@ -104,7 +104,7 @@ impl Render for WgApp {
                                 .flex_1()
                                 .min_h(px(0.0))
                                 .child(main_body);
-                            let body = if self.ui_prefs.sidebar_active == SidebarItem::Overview {
+                            let body = if self.ui_session.sidebar_active == SidebarItem::Overview {
                                 body.overflow_y_scrollbar().into_any_element()
                             } else {
                                 body.into_any_element()

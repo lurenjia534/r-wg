@@ -102,7 +102,7 @@ pub(crate) fn render_logs(
             let log_input = log_input.clone();
             move |checked: &bool, window, cx| {
                 let _ = app_handle.update(cx, |app, cx| {
-                    app.ui_prefs.log_auto_follow = *checked;
+                    app.set_log_auto_follow_pref(*checked, cx);
                     if *checked {
                         let latest_lines = log::snapshot();
                         let latest_text = if latest_lines.is_empty() {
@@ -121,7 +121,6 @@ pub(crate) fn render_logs(
                             }
                         });
                     }
-                    cx.notify();
                 });
             }
         });

@@ -140,10 +140,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
     let settings_button = Button::new("settings")
         .ghost()
         .icon(Icon::new(IconName::Settings).size_5())
-        .tooltip("Open settings")
+        .tooltip("Open preferences")
         .on_click(cx.listener(|this, _, _, cx| {
-            this.ui_prefs.sidebar_active = SidebarItem::Advanced;
-            cx.notify();
+            this.set_sidebar_active(SidebarItem::Advanced, cx);
         }));
 
     let tools = h_flex()

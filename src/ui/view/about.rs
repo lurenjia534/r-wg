@@ -13,6 +13,7 @@ use gpui_component::{
 };
 
 use super::super::state::WgApp;
+use super::widgets::backend_status_badge;
 
 const BRAND_FONT: &str = "Plus Jakarta Sans";
 const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
@@ -191,7 +192,7 @@ fn render_about_hero(
                                         .flex_wrap()
                                         .gap_2()
                                         .child(runtime_status_badge(app).into_any_element())
-                                        .child(backend_status_badge(app).into_any_element())
+                                        .child(backend_status_badge(&app.ui.backend).into_any_element())
                                 ),
                         ),
                 )
@@ -594,7 +595,7 @@ fn render_system_card(app: &WgApp, theme_text: &str, cx: &mut Context<WgApp>) ->
                     )
                     .item(
                         "Backend",
-                        inline_tag(backend_status_badge(app)).into_any_element(),
+                        inline_tag(backend_status_badge(&app.ui.backend)).into_any_element(),
                         1,
                     )
                     .item("Theme", theme_text.to_string(), 1),
@@ -630,7 +631,7 @@ fn render_system_card(app: &WgApp, theme_text: &str, cx: &mut Context<WgApp>) ->
                                             .compact()
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    this.ui.backend_detail.to_string(),
+                                                    this.ui.backend.detail.to_string(),
                                                 ));
                                             })),
                                     ),
@@ -639,7 +640,7 @@ fn render_system_card(app: &WgApp, theme_text: &str, cx: &mut Context<WgApp>) ->
                                 div()
                                     .text_sm()
                                     .text_color(cx.theme().foreground)
-                                    .child(app.ui.backend_detail.clone()),
+                                    .child(app.ui.backend.detail.clone()),
                             ),
                     ),
             ),
@@ -685,25 +686,6 @@ fn profile_badge(profile_text: &str) -> Tag {
             .small()
             .rounded_full()
             .child(profile_text.to_string())
-    }
-}
-
-fn backend_status_badge(app: &WgApp) -> Tag {
-    match app.ui.backend_status.as_ref() {
-        "Running" => Tag::success().small().rounded_full().child("Backend ready"),
-        "Checking..." => Tag::info().small().rounded_full().child("Checking backend"),
-        "Installed" => Tag::warning().small().rounded_full().child("Installed"),
-        "Not installed" => Tag::warning().small().rounded_full().child("Not installed"),
-        "Access denied" => Tag::danger().small().rounded_full().child("Access denied"),
-        "Version mismatch" => Tag::danger()
-            .small()
-            .rounded_full()
-            .child("Version mismatch"),
-        "Unreachable" => Tag::danger().small().rounded_full().child("Unreachable"),
-        other => Tag::secondary()
-            .small()
-            .rounded_full()
-            .child(other.to_string()),
     }
 }
 

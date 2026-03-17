@@ -24,8 +24,7 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                 .selected(app.ui_prefs.dns_mode == DnsMode::FollowConfig)
                 .tooltip("Use DNS only from the config file")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.ui_prefs.dns_mode = DnsMode::FollowConfig;
-                    cx.notify();
+                    this.set_dns_mode_pref(DnsMode::FollowConfig, cx);
                 })),
         )
         .child(
@@ -34,8 +33,7 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                 .selected(app.ui_prefs.dns_mode == DnsMode::UseSystemDns)
                 .tooltip("Use DNS from the system resolver")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.ui_prefs.dns_mode = DnsMode::UseSystemDns;
-                    cx.notify();
+                    this.set_dns_mode_pref(DnsMode::UseSystemDns, cx);
                 })),
         )
         .child(
@@ -44,8 +42,7 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                 .selected(app.ui_prefs.dns_mode == DnsMode::AutoFillMissingFamilies)
                 .tooltip("Only fill missing IPv4/IPv6 DNS families")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.ui_prefs.dns_mode = DnsMode::AutoFillMissingFamilies;
-                    cx.notify();
+                    this.set_dns_mode_pref(DnsMode::AutoFillMissingFamilies, cx);
                 })),
         )
         .child(
@@ -54,8 +51,7 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                 .selected(app.ui_prefs.dns_mode == DnsMode::OverrideAll)
                 .tooltip("Ignore config DNS and force selected provider")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.ui_prefs.dns_mode = DnsMode::OverrideAll;
-                    cx.notify();
+                    this.set_dns_mode_pref(DnsMode::OverrideAll, cx);
                 })),
         );
 
@@ -243,8 +239,7 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stat
     }
 
     card.on_click(cx.listener(move |this, _, _, cx| {
-        this.ui_prefs.dns_preset = preset;
-        cx.notify();
+        this.set_dns_preset_pref(preset, cx);
     }))
 }
 

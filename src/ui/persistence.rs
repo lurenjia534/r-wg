@@ -2,10 +2,10 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use gpui_component::theme::ThemeMode;
+use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
-use super::state::ProxiesViewMode;
-use super::state::{ConfigSource, TrafficDay};
+use super::state::{ConfigSource, ProxiesViewMode, RightTab, TrafficDay, TrafficPeriod};
 
 pub(crate) const STATE_VERSION: u32 = 1;
 const STATE_FILE_NAME: &str = "state.json";
@@ -27,7 +27,17 @@ pub(crate) struct PersistedState {
     #[serde(default)]
     pub(crate) theme_mode: Option<ThemeMode>,
     #[serde(default)]
+    pub(crate) log_auto_follow: Option<bool>,
+    #[serde(default)]
+    pub(crate) preferred_right_tab: Option<RightTab>,
+    #[serde(default)]
+    pub(crate) preferred_traffic_period: Option<TrafficPeriod>,
+    #[serde(default)]
     pub(crate) proxies_view_mode: Option<ProxiesViewMode>,
+    #[serde(default)]
+    pub(crate) dns_mode: Option<DnsMode>,
+    #[serde(default)]
+    pub(crate) dns_preset: Option<DnsPreset>,
     #[serde(default)]
     pub(crate) traffic_days: Vec<PersistedTrafficDay>,
     #[serde(default)]
@@ -217,7 +227,12 @@ mod tests {
             next_id: 42,
             selected_id: Some(7),
             theme_mode: Some(ThemeMode::Dark),
+            log_auto_follow: Some(true),
+            preferred_right_tab: Some(RightTab::Status),
+            preferred_traffic_period: Some(TrafficPeriod::Today),
             proxies_view_mode: Some(ProxiesViewMode::List),
+            dns_mode: Some(DnsMode::FollowConfig),
+            dns_preset: Some(DnsPreset::CloudflareStandard),
             traffic_days: vec![PersistedTrafficDay {
                 date: "2026-03-01".to_string(),
                 bytes: 1024,
@@ -275,7 +290,15 @@ mod tests {
         assert_eq!(loaded.next_id, state.next_id);
         assert_eq!(loaded.selected_id, state.selected_id);
         assert_eq!(loaded.theme_mode, state.theme_mode);
+        assert_eq!(loaded.log_auto_follow, state.log_auto_follow);
+        assert_eq!(loaded.preferred_right_tab, state.preferred_right_tab);
+        assert_eq!(
+            loaded.preferred_traffic_period,
+            state.preferred_traffic_period
+        );
         assert_eq!(loaded.proxies_view_mode, state.proxies_view_mode);
+        assert_eq!(loaded.dns_mode, state.dns_mode);
+        assert_eq!(loaded.dns_preset, state.dns_preset);
         assert_eq!(loaded.traffic_days.len(), 1);
         assert_eq!(loaded.traffic_days[0].date, "2026-03-01");
         assert_eq!(loaded.traffic_days[0].bytes, 1024);

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use gpui::{AppContext, Context, Window};
 use gpui_component::theme::{Theme, ThemeMode};
+use r_wg::dns::{DnsMode, DnsPreset};
 
 use super::super::persistence::{
     self, PersistedConfig, PersistedConfigTrafficDay, PersistedConfigTrafficHour, PersistedSource,
@@ -52,6 +53,7 @@ impl WgApp {
                                     &mut this.stats,
                                     &mut this.ui_prefs,
                                 );
+                                this.ui_session.sync_from_prefs(&this.ui_prefs);
                                 if let Some(theme_mode) = summary.theme_mode {
                                     Theme::change(theme_mode, Some(window), cx);
                                 }
@@ -144,7 +146,12 @@ impl<'a> PersistedStateSnapshot<'a> {
             next_id: self.configs.next_config_id,
             selected_id,
             theme_mode: Some(self.ui_prefs.theme_mode),
+            log_auto_follow: Some(self.ui_prefs.log_auto_follow),
+            preferred_right_tab: Some(self.ui_prefs.preferred_right_tab),
+            preferred_traffic_period: Some(self.ui_prefs.preferred_traffic_period),
             proxies_view_mode: Some(self.ui_prefs.proxies_view_mode),
+            dns_mode: Some(self.ui_prefs.dns_mode),
+            dns_preset: Some(self.ui_prefs.dns_preset),
             traffic_days: self
                 .stats
                 .traffic_days
@@ -213,7 +220,12 @@ impl<'a> PersistedStateSnapshot<'a> {
 
 struct PersistedStateRestore {
     theme_mode: Option<ThemeMode>,
+    log_auto_follow: Option<bool>,
+    preferred_right_tab: Option<super::super::state::RightTab>,
+    preferred_traffic_period: Option<super::super::state::TrafficPeriod>,
     proxies_view_mode: Option<super::super::state::ProxiesViewMode>,
+    dns_mode: Option<DnsMode>,
+    dns_preset: Option<DnsPreset>,
     configs: Vec<TunnelConfig>,
     next_config_id: u64,
     selected_id: Option<u64>,
@@ -277,7 +289,12 @@ impl PersistedStateRestore {
 
         Ok(Self {
             theme_mode: state.theme_mode,
+            log_auto_follow: state.log_auto_follow,
+            preferred_right_tab: state.preferred_right_tab,
+            preferred_traffic_period: state.preferred_traffic_period,
             proxies_view_mode: state.proxies_view_mode,
+            dns_mode: state.dns_mode,
+            dns_preset: state.dns_preset,
             next_config_id: state.next_id.max(max_id.saturating_add(1)),
             selected_id: state.selected_id,
             traffic_days,
@@ -300,8 +317,23 @@ impl PersistedStateRestore {
         if let Some(theme_mode) = self.theme_mode {
             ui_prefs.theme_mode = theme_mode;
         }
+        if let Some(log_auto_follow) = self.log_auto_follow {
+            ui_prefs.log_auto_follow = log_auto_follow;
+        }
+        if let Some(preferred_right_tab) = self.preferred_right_tab {
+            ui_prefs.preferred_right_tab = preferred_right_tab;
+        }
+        if let Some(preferred_traffic_period) = self.preferred_traffic_period {
+            ui_prefs.preferred_traffic_period = preferred_traffic_period;
+        }
         if let Some(proxies_view_mode) = self.proxies_view_mode {
             ui_prefs.proxies_view_mode = proxies_view_mode;
+        }
+        if let Some(dns_mode) = self.dns_mode {
+            ui_prefs.dns_mode = dns_mode;
+        }
+        if let Some(dns_preset) = self.dns_preset {
+            ui_prefs.dns_preset = dns_preset;
         }
 
         configs.configs = self.configs;

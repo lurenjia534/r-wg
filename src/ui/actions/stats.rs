@@ -36,7 +36,7 @@ impl WgApp {
                         if !this.runtime.running || this.stats.stats_generation != generation {
                             return (false, false);
                         }
-                        (true, this.ui_prefs.sidebar_active == SidebarItem::Proxies)
+                        (true, this.ui_session.sidebar_active == SidebarItem::Proxies)
                     })
                     .unwrap_or((false, false));
                 if !should_continue {

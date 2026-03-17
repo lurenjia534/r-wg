@@ -248,7 +248,7 @@ impl OverviewData {
                 .map(|cfg| format_route_table(cfg.interface.table))
                 .unwrap_or_else(|| "-".to_string()),
             is_running: app.runtime.running,
-            traffic_period: app.ui_prefs.traffic_period,
+            traffic_period: app.ui_session.traffic_period,
             traffic_trend: build_traffic_trend(app),
             traffic_summary: build_traffic_summary(app),
         }
@@ -283,7 +283,7 @@ fn build_traffic_summary_at(
     // 2. 再按配置分别求同周期总量，用于排行。
     //
     // 排行里会跳过零流量项，避免“空配置”挤占榜单空间。
-    let (total_rx, total_tx, ranked) = match app.ui_prefs.traffic_period {
+    let (total_rx, total_tx, ranked) = match app.ui_session.traffic_period {
         TrafficPeriod::Today => {
             // Today 采用滚动 24 小时窗口，而不是“从当天 00:00 到现在”。
             let min_hour = current_hour.saturating_sub(23);
@@ -645,7 +645,7 @@ mod tests {
     fn traffic_summary_today_uses_last_24_hours_and_sorts_rankings() {
         let mut app = make_app();
         let current_hour = 1_000;
-        app.ui_prefs.traffic_period = TrafficPeriod::Today;
+        app.ui_session.traffic_period = TrafficPeriod::Today;
         app.configs.configs = vec![make_config(1, "alpha"), make_config(2, "beta")];
         app.stats.traffic_hours = vec![
             TrafficHour {
@@ -747,13 +747,13 @@ mod tests {
             ],
         );
 
-        app.ui_prefs.traffic_period = TrafficPeriod::ThisMonth;
+        app.ui_session.traffic_period = TrafficPeriod::ThisMonth;
         let this_month = build_traffic_summary_at(&app, today, 0, 7);
         assert_eq!(this_month.total_rx, 40);
         assert_eq!(this_month.total_tx, 60);
         assert_eq!(this_month.ranked[0].total_bytes(), 100);
 
-        app.ui_prefs.traffic_period = TrafficPeriod::LastMonth;
+        app.ui_session.traffic_period = TrafficPeriod::LastMonth;
         let last_month = build_traffic_summary_at(&app, today, 0, 7);
         assert_eq!(last_month.total_rx, 500);
         assert_eq!(last_month.total_tx, 600);

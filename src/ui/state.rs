@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{Entity, SharedString};
 use gpui_component::theme::ThemeMode;
 use gpui_component::{input::InputState, IconName};
-use r_wg::backend::wg::{config, Engine, PeerStats};
+use r_wg::backend::wg::{
+    config, Engine, PeerStats, PrivilegedServiceAction, PrivilegedServiceStatus,
+};
 use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
@@ -119,17 +121,225 @@ pub(crate) struct TrafficHour {
     pub(crate) tx_bytes: u64,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum RightTab {
     Status,
     Logs,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum TrafficPeriod {
     Today,
     ThisMonth,
     LastMonth,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BackendHealth {
+    Unknown,
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    Unsupported,
+    Checking,
+    Running,
+    Installed,
+    NotInstalled,
+    AccessDenied,
+    VersionMismatch {
+        expected: u32,
+        actual: u32,
+    },
+    Unreachable,
+    Working {
+        action: PrivilegedServiceAction,
+    },
+}
+
+impl BackendHealth {
+    pub(crate) fn summary(&self) -> &'static str {
+        match self {
+            Self::Unknown => "Unknown",
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            Self::Unsupported => "Unsupported",
+            Self::Checking => "Checking",
+            Self::Running => "Running",
+            Self::Installed => "Installed",
+            Self::NotInstalled => "Not installed",
+            Self::AccessDenied => "Access denied",
+            Self::VersionMismatch { .. } => "Version mismatch",
+            Self::Unreachable => "Unreachable",
+            Self::Working { action } => match action {
+                PrivilegedServiceAction::Install => "Installing",
+                PrivilegedServiceAction::Repair => "Repairing",
+                PrivilegedServiceAction::Remove => "Removing",
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BackendDiagnostic {
+    pub(crate) health: BackendHealth,
+    pub(crate) detail: SharedString,
+    pub(crate) checked_at: Option<SystemTime>,
+}
+
+impl BackendDiagnostic {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    pub(crate) fn default_for_platform() -> Self {
+        Self {
+            health: BackendHealth::Unknown,
+            detail: "Refresh to probe the privileged backend service.".into(),
+            checked_at: None,
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    pub(crate) fn default_for_platform() -> Self {
+        Self::unsupported()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    pub(crate) fn unsupported() -> Self {
+        Self {
+            health: BackendHealth::Unsupported,
+            detail: "Privileged backend management is not supported on this platform.".into(),
+            checked_at: None,
+        }
+    }
+
+    pub(crate) fn checking() -> Self {
+        Self {
+            health: BackendHealth::Checking,
+            detail: "Probing privileged backend service...".into(),
+            checked_at: None,
+        }
+    }
+
+    pub(crate) fn working(action: PrivilegedServiceAction) -> Self {
+        let detail = match action {
+            PrivilegedServiceAction::Install => "Installing the privileged backend service...",
+            PrivilegedServiceAction::Repair => "Repairing the privileged backend service...",
+            PrivilegedServiceAction::Remove => "Removing the privileged backend service...",
+        };
+
+        Self {
+            health: BackendHealth::Working { action },
+            detail: detail.into(),
+            checked_at: None,
+        }
+    }
+
+    pub(crate) fn from_probe_status(status: PrivilegedServiceStatus) -> Self {
+        match status {
+            PrivilegedServiceStatus::Running => Self {
+                health: BackendHealth::Running,
+                detail:
+                    "The privileged backend service is running and ready to handle tunnel control."
+                        .into(),
+                checked_at: None,
+            },
+            PrivilegedServiceStatus::Installed => Self {
+                health: BackendHealth::Installed,
+                detail:
+                    "The privileged backend service is installed but not currently reporting a live control channel."
+                        .into(),
+                checked_at: None,
+            },
+            PrivilegedServiceStatus::NotInstalled => Self {
+                health: BackendHealth::NotInstalled,
+                detail:
+                    "Install the privileged backend to enable tunnel control from the unprivileged UI."
+                        .into(),
+                checked_at: None,
+            },
+            PrivilegedServiceStatus::AccessDenied => Self {
+                health: BackendHealth::AccessDenied,
+                detail:
+                    "The backend service exists, but this user cannot access its control channel."
+                        .into(),
+                checked_at: None,
+            },
+            PrivilegedServiceStatus::VersionMismatch { expected, actual } => Self {
+                health: BackendHealth::VersionMismatch { expected, actual },
+                detail: format!(
+                    "GUI expects protocol v{expected}, but the running service reports v{actual}. Repair the backend installation."
+                )
+                .into(),
+                checked_at: None,
+            },
+            PrivilegedServiceStatus::Unreachable(message) => Self {
+                health: BackendHealth::Unreachable,
+                detail: message.into(),
+                checked_at: None,
+            },
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            PrivilegedServiceStatus::Unsupported => Self::unsupported(),
+        }
+        .checked_now()
+    }
+
+    pub(crate) fn summary(&self) -> &'static str {
+        self.health.summary()
+    }
+
+    pub(crate) fn badge_label(&self) -> &'static str {
+        match self.health {
+            BackendHealth::Running => "Backend ready",
+            BackendHealth::Checking => "Checking backend",
+            BackendHealth::Working { action } => match action {
+                PrivilegedServiceAction::Install => "Installing",
+                PrivilegedServiceAction::Repair => "Repairing",
+                PrivilegedServiceAction::Remove => "Removing",
+            },
+            _ => self.summary(),
+        }
+    }
+
+    pub(crate) fn is_busy(&self) -> bool {
+        matches!(
+            self.health,
+            BackendHealth::Checking | BackendHealth::Working { .. }
+        )
+    }
+
+    pub(crate) fn allows_action(&self, action: PrivilegedServiceAction) -> bool {
+        match action {
+            PrivilegedServiceAction::Install => {
+                matches!(self.health, BackendHealth::NotInstalled)
+            }
+            PrivilegedServiceAction::Repair => matches!(
+                self.health,
+                BackendHealth::Installed
+                    | BackendHealth::Running
+                    | BackendHealth::AccessDenied
+                    | BackendHealth::VersionMismatch { .. }
+                    | BackendHealth::Unreachable
+            ),
+            PrivilegedServiceAction::Remove => matches!(
+                self.health,
+                BackendHealth::Installed
+                    | BackendHealth::Running
+                    | BackendHealth::AccessDenied
+                    | BackendHealth::VersionMismatch { .. }
+            ),
+        }
+    }
+
+    pub(crate) fn is_working_action(&self, action: PrivilegedServiceAction) -> bool {
+        matches!(self.health, BackendHealth::Working { action: current } if current == action)
+    }
+
+    pub(crate) fn with_checked_at(mut self, checked_at: Option<SystemTime>) -> Self {
+        self.checked_at = checked_at;
+        self
+    }
+
+    fn checked_now(mut self) -> Self {
+        self.checked_at = Some(SystemTime::now());
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,7 +386,7 @@ impl SidebarItem {
             Self::Dns => "DNS",
             Self::Providers => "Providers",
             Self::Configs => "Configs",
-            Self::Advanced => "Advanced",
+            Self::Advanced => "Preferences",
             Self::Topology => "Topology",
             Self::RouteMap => "Route Map",
             Self::About => "About",
@@ -551,27 +761,46 @@ impl StatsState {
 
 pub(crate) struct UiPrefsState {
     pub(crate) log_auto_follow: bool,
-    pub(crate) right_tab: RightTab,
-    pub(crate) traffic_period: TrafficPeriod,
+    pub(crate) preferred_right_tab: RightTab,
+    pub(crate) preferred_traffic_period: TrafficPeriod,
     pub(crate) proxies_view_mode: ProxiesViewMode,
     pub(crate) theme_mode: ThemeMode,
     pub(crate) dns_mode: DnsMode,
     pub(crate) dns_preset: DnsPreset,
-    pub(crate) sidebar_active: SidebarItem,
 }
 
 impl UiPrefsState {
     fn new(theme_mode: ThemeMode) -> Self {
         Self {
             log_auto_follow: true,
-            right_tab: RightTab::Status,
-            traffic_period: TrafficPeriod::Today,
+            preferred_right_tab: RightTab::Status,
+            preferred_traffic_period: TrafficPeriod::Today,
             proxies_view_mode: ProxiesViewMode::List,
             theme_mode,
             dns_mode: DnsMode::FollowConfig,
             dns_preset: DnsPreset::CloudflareStandard,
+        }
+    }
+}
+
+pub(crate) struct UiSessionState {
+    pub(crate) right_tab: RightTab,
+    pub(crate) traffic_period: TrafficPeriod,
+    pub(crate) sidebar_active: SidebarItem,
+}
+
+impl UiSessionState {
+    fn from_prefs(prefs: &UiPrefsState) -> Self {
+        Self {
+            right_tab: prefs.preferred_right_tab,
+            traffic_period: prefs.preferred_traffic_period,
             sidebar_active: SidebarItem::Overview,
         }
+    }
+
+    pub(crate) fn sync_from_prefs(&mut self, prefs: &UiPrefsState) {
+        self.right_tab = prefs.preferred_right_tab;
+        self.traffic_period = prefs.preferred_traffic_period;
     }
 }
 
@@ -584,9 +813,7 @@ pub(crate) struct UiState {
     // 日志状态与提示。
     pub(crate) status: SharedString,
     pub(crate) last_error: Option<SharedString>,
-    pub(crate) backend_status: SharedString,
-    pub(crate) backend_detail: SharedString,
-    pub(crate) backend_available: bool,
+    pub(crate) backend: BackendDiagnostic,
 }
 
 impl UiState {
@@ -598,9 +825,7 @@ impl UiState {
             proxy_search_input: None,
             status: "Ready".into(),
             last_error: None,
-            backend_status: "Unknown".into(),
-            backend_detail: "Refresh to probe the Linux privileged backend.".into(),
-            backend_available: false,
+            backend: BackendDiagnostic::default_for_platform(),
         }
     }
 
@@ -614,15 +839,8 @@ impl UiState {
         self.last_error = Some(message);
     }
 
-    pub(crate) fn set_backend_status(
-        &mut self,
-        status: impl Into<SharedString>,
-        detail: impl Into<SharedString>,
-        available: bool,
-    ) {
-        self.backend_status = status.into();
-        self.backend_detail = detail.into();
-        self.backend_available = available;
+    pub(crate) fn set_backend_diagnostic(&mut self, diagnostic: BackendDiagnostic) {
+        self.backend = diagnostic;
     }
 }
 
@@ -633,19 +851,90 @@ pub(crate) struct WgApp {
     pub(crate) runtime: RuntimeState,
     pub(crate) stats: StatsState,
     pub(crate) ui_prefs: UiPrefsState,
+    pub(crate) ui_session: UiSessionState,
     pub(crate) ui: UiState,
 }
 
 impl WgApp {
     pub(crate) fn new(engine: Engine, theme_mode: ThemeMode) -> Self {
+        let ui_prefs = UiPrefsState::new(theme_mode);
         Self {
             engine,
             configs: ConfigsState::new(),
             selection: SelectionState::new(),
             runtime: RuntimeState::new(),
             stats: StatsState::new(),
-            ui_prefs: UiPrefsState::new(theme_mode),
+            ui_session: UiSessionState::from_prefs(&ui_prefs),
+            ui_prefs,
             ui: UiState::new(),
+        }
+    }
+
+    pub(crate) fn set_log_auto_follow_pref(&mut self, value: bool, cx: &mut gpui::Context<Self>) {
+        if self.ui_prefs.log_auto_follow != value {
+            self.ui_prefs.log_auto_follow = value;
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_dns_mode_pref(&mut self, value: DnsMode, cx: &mut gpui::Context<Self>) {
+        if self.ui_prefs.dns_mode != value {
+            self.ui_prefs.dns_mode = value;
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_dns_preset_pref(&mut self, value: DnsPreset, cx: &mut gpui::Context<Self>) {
+        if self.ui_prefs.dns_preset != value {
+            self.ui_prefs.dns_preset = value;
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_preferred_right_tab(
+        &mut self,
+        value: RightTab,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.preferred_right_tab != value {
+            self.ui_prefs.preferred_right_tab = value;
+            self.persist_state_async(cx);
+        }
+        self.ui_session.right_tab = value;
+        cx.notify();
+    }
+
+    pub(crate) fn set_preferred_traffic_period(
+        &mut self,
+        value: TrafficPeriod,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.preferred_traffic_period != value {
+            self.ui_prefs.preferred_traffic_period = value;
+            self.persist_state_async(cx);
+        }
+        self.ui_session.traffic_period = value;
+        cx.notify();
+    }
+
+    pub(crate) fn set_session_traffic_period(
+        &mut self,
+        value: TrafficPeriod,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_session.traffic_period != value {
+            self.ui_session.traffic_period = value;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_sidebar_active(&mut self, value: SidebarItem, cx: &mut gpui::Context<Self>) {
+        if self.ui_session.sidebar_active != value {
+            self.ui_session.sidebar_active = value;
+            cx.notify();
         }
     }
 }

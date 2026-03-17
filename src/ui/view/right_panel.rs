@@ -31,15 +31,15 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
         .gap_2()
         .child(tab_button(
             "Status",
-            app.ui_prefs.right_tab == RightTab::Status,
+            app.ui_session.right_tab == RightTab::Status,
             cx,
-            |this| this.ui_prefs.right_tab = RightTab::Status,
+            |this| this.ui_session.right_tab = RightTab::Status,
         ))
         .child(tab_button(
             "Logs",
-            app.ui_prefs.right_tab == RightTab::Logs,
+            app.ui_session.right_tab == RightTab::Logs,
             cx,
-            |this| this.ui_prefs.right_tab = RightTab::Logs,
+            |this| this.ui_session.right_tab = RightTab::Logs,
         ));
 
     // 网络信息卡片：展示当前配置解析出的地址、DNS、路由表和 Allowed IPs。
@@ -214,7 +214,7 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
     };
 
     // 根据当前页签切换右侧主体内容。
-    let right_body = match app.ui_prefs.right_tab {
+    let right_body = match app.ui_session.right_tab {
         RightTab::Status => div()
             .flex()
             .flex_col()

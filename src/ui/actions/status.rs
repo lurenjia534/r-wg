@@ -1,12 +1,10 @@
 use gpui::{AppContext, Context, SharedString};
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 use r_wg::backend::wg::{
     manage_privileged_service, probe_privileged_service, PrivilegedServiceAction,
-    PrivilegedServiceStatus,
 };
 
-use super::super::state::WgApp;
+use super::super::state::{BackendDiagnostic, WgApp};
 
 impl WgApp {
     /// 更新状态栏提示。
@@ -27,51 +25,18 @@ impl WgApp {
     pub(crate) fn refresh_privileged_backend_status(&mut self, cx: &mut Context<Self>) {
         // 探测放到后台线程：systemctl / socket 探测虽然不重，但它们都属于同步系统调用，
         // 不应该阻塞 UI 渲染线程。
-        self.ui.set_backend_status(
-            "Checking...",
-            "Probing privileged backend service...",
-            false,
-        );
+        let last_checked = self.ui.backend.checked_at;
+        self.ui
+            .set_backend_diagnostic(BackendDiagnostic::checking().with_checked_at(last_checked));
         cx.notify();
 
         cx.spawn(async move |view, cx| {
-            let status = cx.background_spawn(async move { probe_privileged_service() }).await;
+            let status = cx
+                .background_spawn(async move { probe_privileged_service() })
+                .await;
             let _ = view.update(cx, |this, cx| {
-                match status {
-                    PrivilegedServiceStatus::Running => this.ui.set_backend_status(
-                        "Running",
-                        "The privileged backend service is running and ready to handle tunnel control.",
-                        true,
-                    ),
-                    PrivilegedServiceStatus::Installed => this.ui.set_backend_status(
-                        "Installed",
-                        "The privileged backend service is installed but not currently reporting a live control channel.",
-                        false,
-                    ),
-                    PrivilegedServiceStatus::NotInstalled => this.ui.set_backend_status(
-                        "Not installed",
-                        "Install the privileged backend to enable tunnel control from the unprivileged UI.",
-                        false,
-                    ),
-                    PrivilegedServiceStatus::AccessDenied => this.ui.set_backend_status(
-                        "Access denied",
-                        "The backend service exists, but this user cannot access its control channel.",
-                        false,
-                    ),
-                    PrivilegedServiceStatus::VersionMismatch { expected, actual } => {
-                        this.ui.set_backend_status(
-                            "Version mismatch",
-                            format!(
-                                "GUI expects protocol v{expected}, but the running service reports v{actual}. Repair the backend installation."
-                            ),
-                            false,
-                        )
-                    }
-                    PrivilegedServiceStatus::Unreachable(message) => {
-                        this.ui
-                            .set_backend_status("Unreachable", message, false)
-                    }
-                }
+                this.ui
+                    .set_backend_diagnostic(BackendDiagnostic::from_probe_status(status));
                 cx.notify();
             });
         })
@@ -89,11 +54,10 @@ impl WgApp {
             PrivilegedServiceAction::Repair => "Repairing",
             PrivilegedServiceAction::Remove => "Removing",
         };
+        let last_checked = self.ui.backend.checked_at;
         self.set_status(format!("{verb} privileged backend..."));
-        self.ui.set_backend_status(
-            "Working...",
-            format!("{verb} the privileged backend service..."),
-            false,
+        self.ui.set_backend_diagnostic(
+            BackendDiagnostic::working(action).with_checked_at(last_checked),
         );
         // 安装/修复/移除都可能触发授权弹窗与 systemd 操作，必须异步执行；
         // 这里先把设置页状态切到 Working，避免用户误以为按钮没有响应。
@@ -122,8 +86,20 @@ impl WgApp {
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    pub(crate) fn refresh_privileged_backend_status(&mut self, _cx: &mut Context<Self>) {}
+    pub(crate) fn refresh_privileged_backend_status(&mut self, cx: &mut Context<Self>) {
+        self.ui
+            .set_backend_diagnostic(BackendDiagnostic::unsupported());
+        cx.notify();
+    }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    pub(crate) fn run_privileged_backend_action(&mut self, _action: (), _cx: &mut Context<Self>) {}
+    pub(crate) fn run_privileged_backend_action(
+        &mut self,
+        _action: PrivilegedServiceAction,
+        cx: &mut Context<Self>,
+    ) {
+        self.ui
+            .set_backend_diagnostic(BackendDiagnostic::unsupported());
+        cx.notify();
+    }
 }

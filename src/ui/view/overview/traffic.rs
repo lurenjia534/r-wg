@@ -102,8 +102,7 @@ pub(super) fn traffic_summary_card(overview: &OverviewData, cx: &mut Context<WgA
                 .selected(overview.traffic_period == TrafficPeriod::Today)
                 .tooltip("Last 24 hours")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.ui_prefs.traffic_period = TrafficPeriod::Today;
-                    cx.notify();
+                    this.set_session_traffic_period(TrafficPeriod::Today, cx);
                 })),
         )
         .child(
@@ -112,8 +111,7 @@ pub(super) fn traffic_summary_card(overview: &OverviewData, cx: &mut Context<WgA
                 .selected(overview.traffic_period == TrafficPeriod::ThisMonth)
                 .tooltip("Last 30 days")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.ui_prefs.traffic_period = TrafficPeriod::ThisMonth;
-                    cx.notify();
+                    this.set_session_traffic_period(TrafficPeriod::ThisMonth, cx);
                 })),
         )
         .child(
@@ -122,8 +120,7 @@ pub(super) fn traffic_summary_card(overview: &OverviewData, cx: &mut Context<WgA
                 .selected(overview.traffic_period == TrafficPeriod::LastMonth)
                 .tooltip("Previous 30 days")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.ui_prefs.traffic_period = TrafficPeriod::LastMonth;
-                    cx.notify();
+                    this.set_session_traffic_period(TrafficPeriod::LastMonth, cx);
                 })),
         );
 
