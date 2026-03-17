@@ -94,8 +94,16 @@ pub(super) fn apply_dns_guard(
 
     let mut filter_ids = Vec::with_capacity(blocked_dns_servers.len() * 2);
     for ip in &blocked_dns_servers {
-        filter_ids.push(add_dns_block_filter(session.handle(), *ip, IPPROTO_UDP.0 as u8)?);
-        filter_ids.push(add_dns_block_filter(session.handle(), *ip, IPPROTO_TCP.0 as u8)?);
+        filter_ids.push(add_dns_block_filter(
+            session.handle(),
+            *ip,
+            IPPROTO_UDP.0 as u8,
+        )?);
+        filter_ids.push(add_dns_block_filter(
+            session.handle(),
+            *ip,
+            IPPROTO_TCP.0 as u8,
+        )?);
     }
 
     transaction.commit()?;
@@ -228,7 +236,11 @@ fn ensure_dns_guard_sublayer(handle: HANDLE) -> Result<(), NetworkError> {
     }
 }
 
-fn add_dns_block_filter(handle: HANDLE, remote_ip: IpAddr, protocol: u8) -> Result<u64, NetworkError> {
+fn add_dns_block_filter(
+    handle: HANDLE,
+    remote_ip: IpAddr,
+    protocol: u8,
+) -> Result<u64, NetworkError> {
     let layer = match remote_ip {
         IpAddr::V4(_) => FWPM_LAYER_ALE_AUTH_CONNECT_V4,
         IpAddr::V6(_) => FWPM_LAYER_ALE_AUTH_CONNECT_V6,
@@ -277,11 +289,7 @@ fn add_dns_block_filter(handle: HANDLE, remote_ip: IpAddr, protocol: u8) -> Resu
                     },
                 },
             };
-            let mut conditions = [
-                protocol_condition,
-                port_condition,
-                address_condition,
-            ];
+            let mut conditions = [protocol_condition, port_condition, address_condition];
             let filter = FWPM_FILTER0 {
                 displayData: FWPM_DISPLAY_DATA0 {
                     name: PWSTR(filter_name.as_mut_ptr()),
@@ -322,11 +330,7 @@ fn add_dns_block_filter(handle: HANDLE, remote_ip: IpAddr, protocol: u8) -> Resu
                     },
                 },
             };
-            let mut conditions = [
-                protocol_condition,
-                port_condition,
-                address_condition,
-            ];
+            let mut conditions = [protocol_condition, port_condition, address_condition];
             let filter = FWPM_FILTER0 {
                 displayData: FWPM_DISPLAY_DATA0 {
                     name: PWSTR(filter_name.as_mut_ptr()),
@@ -361,7 +365,10 @@ fn delete_filters(handle: HANDLE, filter_ids: &[u64]) -> Result<(), NetworkError
     let mut first_error = None;
     for &filter_id in filter_ids.iter().rev() {
         let status = unsafe { FwpmFilterDeleteById0(handle, filter_id) };
-        if status != NO_ERROR.0 && status != FWP_E_FILTER_NOT_FOUND.0 as u32 && first_error.is_none() {
+        if status != NO_ERROR.0
+            && status != FWP_E_FILTER_NOT_FOUND.0 as u32
+            && first_error.is_none()
+        {
             first_error = Some(wfp_error("failed to delete WFP DNS guard filter", status));
         }
     }
@@ -414,7 +421,11 @@ impl WfpSession {
                 name: PWSTR(name.as_mut_ptr()),
                 description: PWSTR(description.as_mut_ptr()),
             },
-            flags: if dynamic { FWPM_SESSION_FLAG_DYNAMIC } else { 0 },
+            flags: if dynamic {
+                FWPM_SESSION_FLAG_DYNAMIC
+            } else {
+                0
+            },
             ..Default::default()
         };
 

@@ -72,8 +72,10 @@ impl WgApp {
                             }
                             Err(err) => {
                                 #[cfg(target_os = "windows")]
-                                if matches!(err, EngineError::NotRunning | EngineError::ChannelClosed)
-                                {
+                                if matches!(
+                                    err,
+                                    EngineError::NotRunning | EngineError::ChannelClosed
+                                ) {
                                     this.runtime.finish_stop_success();
                                     this.stats.clear_runtime_metrics();
                                     this.set_status("Stopped");
