@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Local;
 use gpui::{AppContext, Context};
-use r_wg::backend::wg::EngineStats;
+use r_wg::backend::wg::{EngineError, EngineStats};
 use r_wg::log::events::stats as log_stats;
 
 use super::super::state::{
@@ -71,6 +71,15 @@ impl WgApp {
                                 persist_due = this.apply_stats(stats);
                             }
                             Err(err) => {
+                                #[cfg(target_os = "windows")]
+                                if matches!(err, EngineError::NotRunning | EngineError::ChannelClosed)
+                                {
+                                    this.runtime.finish_stop_success();
+                                    this.stats.clear_runtime_metrics();
+                                    this.set_status("Stopped");
+                                    cx.notify();
+                                    return false;
+                                }
                                 this.stats.set_stats_error(format!("Stats failed: {err}"));
                             }
                         }

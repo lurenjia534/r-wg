@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use gpui::{AppContext, Context, SharedString, Window};
+#[cfg(target_os = "windows")]
+use r_wg::backend::wg::EngineError;
 use r_wg::backend::wg::StartRequest;
 use r_wg::dns::DnsSelection;
 
@@ -52,6 +54,28 @@ impl WgApp {
                 let result = stop_task.await;
                 view.update(cx, |this, cx| {
                     match result {
+                        #[cfg(target_os = "windows")]
+                        Ok(()) | Err(EngineError::NotRunning) | Err(EngineError::ChannelClosed) => {
+                            this.runtime.finish_stop_success();
+                            this.set_status("Stopped");
+                            // 停止成功后发送系统通知，让最小化到托盘时也能感知状态变更。
+                            tray::notify_system("r-wg", "Tunnel disconnected", false);
+                            this.stats.clear_runtime_metrics();
+
+                            // 如果 stop 期间有人点击 start，则现在补发启动。
+                            if let Some(pending) = this.runtime.pending_start.take() {
+                                if let Some(selected) = this.configs.find_by_id(pending.config_id) {
+                                    let cached_text =
+                                        this.cached_config_text(&selected.storage_path);
+                                    let initial_text = selected.text.clone().or(cached_text);
+                                    let delay = this.runtime.restart_delay();
+                                    this.start_with_config(selected, initial_text, delay, cx);
+                                } else {
+                                    this.set_error("Pending start config not found".to_string());
+                                }
+                            }
+                        }
+                        #[cfg(not(target_os = "windows"))]
                         Ok(()) => {
                             this.runtime.finish_stop_success();
                             this.set_status("Stopped");

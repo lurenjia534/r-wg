@@ -8,7 +8,7 @@ build = "build.rs"
 gpui = "0.2.2"
 gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
 gpui-component-assets = "0.5.1"
-gotatun = { version = "0.4.1", features = ["device", "tun"] }
+gotatun = { version = "0.3.1", features = ["device", "tun"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process"] }
 base64 = "0.22.1"
 chrono = "0.4.43"
@@ -32,6 +32,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_Ndis",
     "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_WindowsFilteringPlatform",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -44,6 +45,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Ole",
     "Win32_System_Pipes",
     "Win32_System_ProcessStatus",
+    "Win32_System_Rpc",
     "Win32_System_Services",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
