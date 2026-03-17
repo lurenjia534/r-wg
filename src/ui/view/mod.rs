@@ -79,7 +79,9 @@ impl Render for WgApp {
                         }
                         SidebarItem::Logs => logs::render_logs(self, window, cx).into_any_element(),
                         SidebarItem::Dns => dns::render_dns(self, cx).into_any_element(),
-                        SidebarItem::About => about::render_about(self, cx).into_any_element(),
+                        SidebarItem::About => {
+                            about::render_about(self, window, cx).into_any_element()
+                        }
                         SidebarItem::Advanced => {
                             advanced::render_advanced(self, cx).into_any_element()
                         }
