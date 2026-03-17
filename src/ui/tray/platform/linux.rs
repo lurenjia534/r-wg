@@ -24,6 +24,12 @@ const WATCHER_SERVICE: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 /// 托盘 watcher 接口名。
 const WATCHER_INTERFACE: &str = "org.kde.StatusNotifierWatcher";
+/// freedesktop 通知服务名。
+const NOTIFICATIONS_SERVICE: &str = "org.freedesktop.Notifications";
+/// freedesktop 通知对象路径。
+const NOTIFICATIONS_PATH: &str = "/org/freedesktop/Notifications";
+/// freedesktop 通知接口名。
+const NOTIFICATIONS_INTERFACE: &str = "org.freedesktop.Notifications";
 
 /// SNI 项对象路径。
 const ITEM_PATH: &str = "/StatusNotifierItem";
@@ -40,6 +46,10 @@ const MENU_OPEN: i32 = 1;
 const MENU_CLOSE: i32 = 2;
 /// 菜单项 ID：Quit。
 const MENU_QUIT: i32 = 3;
+/// 正常通知默认展示时长。
+const INFO_TIMEOUT_MS: i32 = 5_000;
+/// 错误通知默认展示时长。
+const ERROR_TIMEOUT_MS: i32 = 10_000;
 
 /// dbusmenu 属性字典类型。
 type MenuProps = HashMap<String, OwnedValue>;
@@ -287,8 +297,54 @@ pub(super) fn show_window(window: &mut gpui::Window) {
     window.activate_window();
 }
 
-/// Linux 目前不走系统通知能力，保持 no-op。
-pub(super) fn notify_system(_title: &str, _message: &str, _is_error: bool) {}
+/// Linux 下通过 freedesktop 通知规范发送桌面通知。
+///
+/// 兼容性说明：
+/// - GNOME / KDE / Xfce / Cinnamon 等主流桌面通常都实现了该规范；
+/// - 若当前会话没有通知服务，则静默降级，不影响隧道控制流程。
+pub(super) fn notify_system(title: &str, message: &str, is_error: bool) {
+    let connection = match Connection::session() {
+        Ok(connection) => connection,
+        Err(err) => {
+            tracing::debug!("linux notification skipped: session bus unavailable: {err}");
+            return;
+        }
+    };
+
+    let icon = if is_error {
+        "dialog-error"
+    } else {
+        "network-vpn"
+    };
+    let expire_timeout = if is_error {
+        ERROR_TIMEOUT_MS
+    } else {
+        INFO_TIMEOUT_MS
+    };
+    let mut hints: HashMap<&str, OwnedValue> = HashMap::new();
+    hints.insert("desktop-entry", owned_str("r-wg"));
+    hints.insert("urgency", owned_u8(if is_error { 2 } else { 1 }));
+
+    let result = connection.call_method(
+        Some(NOTIFICATIONS_SERVICE),
+        NOTIFICATIONS_PATH,
+        Some(NOTIFICATIONS_INTERFACE),
+        "Notify",
+        &(
+            "r-wg",
+            0u32,
+            icon,
+            title,
+            message,
+            Vec::<String>::new(),
+            hints,
+            expire_timeout,
+        ),
+    );
+    if let Err(err) = result {
+        tracing::debug!("linux notification skipped: notify call failed: {err}");
+    }
+}
 
 /// Linux 目前无需显式关闭托盘线程，保持 no-op。
 pub(super) fn shutdown_tray() {}
@@ -432,4 +488,9 @@ fn action_props(label: &str) -> MenuProps {
 /// 将字符串包装为 D-Bus `OwnedValue`。
 fn owned_str(value: &str) -> OwnedValue {
     OwnedValue::try_from(Value::from(value)).expect("dbus string must convert to value")
+}
+
+/// 将 `u8` 包装为 D-Bus `OwnedValue`。
+fn owned_u8(value: u8) -> OwnedValue {
+    OwnedValue::try_from(Value::from(value)).expect("dbus u8 must convert to value")
 }
