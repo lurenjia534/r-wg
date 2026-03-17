@@ -745,7 +745,7 @@ fn parse_service_mode_args(
     args: impl IntoIterator<Item = OsString>,
 ) -> Result<ServiceOptions, EngineError> {
     let mut socket_path = control_socket_path();
-    let mut socket_group = Some(DEFAULT_SOCKET_GROUP.to_string());
+    let mut socket_group = None;
     let mut allowed_uid = None;
 
     let mut pending = None::<String>;
@@ -1445,7 +1445,7 @@ mod tests {
             panic!("expected service mode");
         };
         assert_eq!(socket_path, PathBuf::from("/run/r-wg/control.sock"));
-        assert_eq!(socket_group.as_deref(), Some(DEFAULT_SOCKET_GROUP));
+        assert_eq!(socket_group, None);
         assert_eq!(allowed_uid, None);
     }
 
