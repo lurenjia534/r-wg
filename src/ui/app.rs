@@ -30,116 +30,123 @@ pub fn run() {
             Theme::change(theme_mode, None, cx);
 
             let engine = engine.clone();
-            cx.open_window(WindowOptions::default(), move |window, cx| {
-                // 创建应用状态并挂到窗口根视图。
-                let view = cx.new(|_cx| WgApp::new(engine.clone(), theme_mode));
-                let _ = view.update(cx, |this, cx| {
-                    this.refresh_privileged_backend_status(cx);
-                });
-                // 弱引用：窗口关闭后不会阻止资源释放。
-                let view_handle = view.downgrade();
-                // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。
-                #[cfg(target_os = "windows")]
-                sync_engine_status(view_handle.clone(), engine.clone(), cx);
-                // 初始化系统托盘并启动命令监听。
-                tray::init(
-                    window.window_handle(),
-                    view_handle.clone(),
-                    engine.clone(),
-                    cx,
-                );
-                // 防止重复触发关闭逻辑（多次点击关闭按钮）。
-                #[cfg(not(target_os = "windows"))]
-                let closing = Arc::new(AtomicBool::new(false));
-                #[cfg(not(target_os = "windows"))]
-                let close_engine = engine.clone();
-                #[cfg(not(target_os = "windows"))]
-                let close_flag = Arc::clone(&closing);
-
-                // 拦截窗口关闭：托盘启用时仅隐藏窗口，否则停隧道并关闭窗口。
-                window.on_window_should_close(cx, move |window, cx| {
-                    if tray::should_minimize_on_close(cx) {
-                        tray::hide_window(window);
-                        return false;
-                    }
-
+            cx.open_window(
+                WindowOptions {
+                    app_id: Some("r-wg".to_string()),
+                    ..WindowOptions::default()
+                },
+                move |window, cx| {
+                    // 创建应用状态并挂到窗口根视图。
+                    let view = cx.new(|_cx| WgApp::new(engine.clone(), theme_mode));
+                    let _ = view.update(cx, |this, cx| {
+                        this.refresh_privileged_backend_status(cx);
+                    });
+                    // 弱引用：窗口关闭后不会阻止资源释放。
+                    let view_handle = view.downgrade();
+                    // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。
                     #[cfg(target_os = "windows")]
-                    {
-                        return true;
-                    }
-
+                    sync_engine_status(view_handle.clone(), engine.clone(), cx);
+                    // 初始化系统托盘并启动命令监听。
+                    tray::init(
+                        window.window_handle(),
+                        view_handle.clone(),
+                        engine.clone(),
+                        cx,
+                    );
+                    // 防止重复触发关闭逻辑（多次点击关闭按钮）。
                     #[cfg(not(target_os = "windows"))]
-                    {
-                        // 已经进入关闭流程则直接拒绝本次关闭请求。
-                        if close_flag.swap(true, Ordering::SeqCst) {
+                    let closing = Arc::new(AtomicBool::new(false));
+                    #[cfg(not(target_os = "windows"))]
+                    let close_engine = engine.clone();
+                    #[cfg(not(target_os = "windows"))]
+                    let close_flag = Arc::clone(&closing);
+
+                    // 拦截窗口关闭：托盘启用时仅隐藏窗口，否则停隧道并关闭窗口。
+                    window.on_window_should_close(cx, move |window, cx| {
+                        if tray::should_minimize_on_close(cx) {
+                            tray::hide_window(window);
                             return false;
                         }
 
-                        // 记录是否正在运行，并同步 UI 提示为“正在停止”。
-                        let mut was_running = false;
-                        if let Some(view) = view_handle.upgrade() {
-                            view.update(cx, |this, cx| {
-                                was_running = this.runtime.running;
-                                if this.runtime.running {
-                                    this.runtime.busy = true;
-                                    this.set_status("Stopping...");
-                                    cx.notify();
-                                }
-                            });
+                        #[cfg(target_os = "windows")]
+                        {
+                            return true;
                         }
 
-                        // 保存窗口句柄，供异步停止完成后关闭窗口。
-                        let handle = window.window_handle();
-                        // 克隆需要跨异步任务使用的引用/标记。
-                        let view_handle = view_handle.clone();
-                        let close_flag = Arc::clone(&close_flag);
-                        let engine = close_engine.clone();
-                        // 在 UI 线程启动异步任务，后台线程执行 engine.stop()。
-                        cx.spawn(async move |cx| {
-                            let result = cx.background_spawn(async move { engine.stop() }).await;
-                            match result {
-                                Ok(())
-                                | Err(EngineError::NotRunning)
-                                | Err(EngineError::ChannelClosed) => {
-                                    // 停止成功（或已停止/通道关闭）：更新 UI 并关闭窗口。
-                                    if was_running {
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            // 已经进入关闭流程则直接拒绝本次关闭请求。
+                            if close_flag.swap(true, Ordering::SeqCst) {
+                                return false;
+                            }
+
+                            // 记录是否正在运行，并同步 UI 提示为“正在停止”。
+                            let mut was_running = false;
+                            if let Some(view) = view_handle.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    was_running = this.runtime.running;
+                                    if this.runtime.running {
+                                        this.runtime.busy = true;
+                                        this.set_status("Stopping...");
+                                        cx.notify();
+                                    }
+                                });
+                            }
+
+                            // 保存窗口句柄，供异步停止完成后关闭窗口。
+                            let handle = window.window_handle();
+                            // 克隆需要跨异步任务使用的引用/标记。
+                            let view_handle = view_handle.clone();
+                            let close_flag = Arc::clone(&close_flag);
+                            let engine = close_engine.clone();
+                            // 在 UI 线程启动异步任务，后台线程执行 engine.stop()。
+                            cx.spawn(async move |cx| {
+                                let result =
+                                    cx.background_spawn(async move { engine.stop() }).await;
+                                match result {
+                                    Ok(())
+                                    | Err(EngineError::NotRunning)
+                                    | Err(EngineError::ChannelClosed) => {
+                                        // 停止成功（或已停止/通道关闭）：更新 UI 并关闭窗口。
+                                        if was_running {
+                                            if let Some(view) = view_handle.upgrade() {
+                                                let _ = view.update(cx, |this, cx| {
+                                                    this.runtime.finish_stop_success();
+                                                    this.stats.clear_runtime_metrics();
+                                                    this.set_status("Stopped");
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }
+                                        // 实际移除窗口，触发关闭。
+                                        let _ = handle
+                                            .update(cx, |_, window, _| window.remove_window());
+                                    }
+                                    Err(err) => {
+                                        // 停止失败：保留窗口，提示错误，允许再次尝试关闭。
                                         if let Some(view) = view_handle.upgrade() {
                                             let _ = view.update(cx, |this, cx| {
-                                                this.runtime.finish_stop_success();
-                                                this.stats.clear_runtime_metrics();
-                                                this.set_status("Stopped");
+                                                if was_running {
+                                                    this.runtime.busy = false;
+                                                }
+                                                this.set_error(format!("Stop failed: {err}"));
                                                 cx.notify();
                                             });
                                         }
+                                        close_flag.store(false, Ordering::SeqCst);
                                     }
-                                    // 实际移除窗口，触发关闭。
-                                    let _ =
-                                        handle.update(cx, |_, window, _| window.remove_window());
                                 }
-                                Err(err) => {
-                                    // 停止失败：保留窗口，提示错误，允许再次尝试关闭。
-                                    if let Some(view) = view_handle.upgrade() {
-                                        let _ = view.update(cx, |this, cx| {
-                                            if was_running {
-                                                this.runtime.busy = false;
-                                            }
-                                            this.set_error(format!("Stop failed: {err}"));
-                                            cx.notify();
-                                        });
-                                    }
-                                    close_flag.store(false, Ordering::SeqCst);
-                                }
-                            }
-                        })
-                        .detach();
+                            })
+                            .detach();
 
-                        // 返回 false 阻止立即关闭，等待异步 stop 完成后手动关闭窗口。
-                        return false;
-                    }
-                });
+                            // 返回 false 阻止立即关闭，等待异步 stop 完成后手动关闭窗口。
+                            return false;
+                        }
+                    });
 
-                cx.new(|cx| Root::new(view, window, cx))
-            })
+                    cx.new(|cx| Root::new(view, window, cx))
+                },
+            )
             .unwrap();
         });
 }

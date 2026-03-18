@@ -6,6 +6,14 @@ fn main() {
     // 读取 Cargo 的目标三元组，用它判断是否为 Windows 构建。
     // 注意：这里依据的是 TARGET，而不是当前运行 build.rs 的系统。
     let target = env::var("TARGET").unwrap_or_default();
+    if target.contains("windows") {
+        println!("cargo:rerun-if-changed=resources/windows/r-wg.ico");
+        println!("cargo:rerun-if-changed=resources/windows/r-wg.rc");
+        embed_resource::compile("resources/windows/r-wg.rc", embed_resource::NONE)
+            .manifest_optional()
+            .expect("failed to compile Windows icon resources");
+    }
+
     if !target.contains("windows") {
         return;
     }

@@ -7,6 +7,7 @@
 //! 本模块负责 D-Bus 协议适配与平台行为，把点击动作转换成 `TrayCommand` 回传上层。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -111,7 +112,22 @@ impl StatusNotifierItem {
     /// 托盘图标名称（走主题图标解析）。
     #[zbus(property)]
     fn icon_name(&self) -> &str {
-        "network-vpn"
+        "r-wg"
+    }
+
+    /// 自定义图标主题路径。
+    ///
+    /// 开发态直接指向仓库内的图标目录，安装态则可回退到系统主题数据库。
+    #[zbus(property)]
+    fn icon_theme_path(&self) -> Vec<String> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("icons");
+        if path.is_dir() {
+            vec![path.to_string_lossy().into_owned()]
+        } else {
+            Vec::new()
+        }
     }
 
     /// 是否把 item 自身当作菜单（false 表示使用单独 menu 对象）。
@@ -311,11 +327,7 @@ pub(super) fn notify_system(title: &str, message: &str, is_error: bool) {
         }
     };
 
-    let icon = if is_error {
-        "dialog-error"
-    } else {
-        "network-vpn"
-    };
+    let icon = if is_error { "dialog-error" } else { "r-wg" };
     let expire_timeout = if is_error {
         ERROR_TIMEOUT_MS
     } else {

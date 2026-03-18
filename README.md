@@ -40,6 +40,9 @@ cargo build
 sudo install -Dm755 target/debug/r-wg /usr/local/libexec/r-wg/r-wg
 sudo groupadd --system r-wg 2>/dev/null || true
 sudo usermod -aG r-wg "$USER"
+sudo install -Dm644 resources/linux/r-wg.desktop /usr/share/applications/r-wg.desktop
+sudo install -Dm644 resources/icons/r-wg.svg /usr/share/icons/hicolor/scalable/apps/r-wg.svg
+sudo install -Dm644 resources/icons/hicolor/256x256/apps/r-wg.png /usr/share/icons/hicolor/256x256/apps/r-wg.png
 sudo install -Dm644 resources/linux/r-wg.service /etc/systemd/system/r-wg.service
 sudo install -Dm644 resources/linux/r-wg.socket /etc/systemd/system/r-wg.socket
 sudo install -Dm644 resources/linux/r-wg-repair.service /etc/systemd/system/r-wg-repair.service
@@ -80,6 +83,9 @@ cargo build --release
 sudo install -Dm755 target/release/r-wg /usr/local/libexec/r-wg/r-wg
 sudo groupadd --system r-wg 2>/dev/null || true
 sudo usermod -aG r-wg "$USER"
+sudo install -Dm644 resources/linux/r-wg.desktop /usr/share/applications/r-wg.desktop
+sudo install -Dm644 resources/icons/r-wg.svg /usr/share/icons/hicolor/scalable/apps/r-wg.svg
+sudo install -Dm644 resources/icons/hicolor/256x256/apps/r-wg.png /usr/share/icons/hicolor/256x256/apps/r-wg.png
 sudo install -Dm644 resources/linux/r-wg.service /etc/systemd/system/r-wg.service
 sudo install -Dm644 resources/linux/r-wg.socket /etc/systemd/system/r-wg.socket
 sudo install -Dm644 resources/linux/r-wg-repair.service /etc/systemd/system/r-wg-repair.service

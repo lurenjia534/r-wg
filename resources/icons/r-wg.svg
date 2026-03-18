@@ -1,0 +1,44 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="white-base" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F1F5F9"/>
+    </linearGradient>
+
+    <linearGradient id="text-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#334155"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+
+    <filter id="app-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#0F172A" flood-opacity="0.08"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#0F172A" flood-opacity="0.04"/>
+    </filter>
+
+    <filter id="text-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#app-shadow)">
+    <rect x="24" y="24" width="208" height="208" rx="56" fill="url(#white-base)"/>
+    <rect x="25" y="25" width="206" height="206" rx="55" stroke="#FFFFFF" stroke-width="2"/>
+    <rect x="24" y="24" width="208" height="208" rx="56" stroke="#E2E8F0" stroke-width="1"/>
+  </g>
+
+  <text
+    x="110"
+    y="168"
+    fill="url(#text-grad)"
+    text-anchor="middle"
+    filter="url(#text-shadow)"
+    style="font-family:'Playfair Display',serif; font-weight:700; font-size:110px; letter-spacing:-0.05em;"
+  >
+    R
+  </text>
+
+  <g filter="url(#text-shadow)">
+    <rect x="155" y="116" width="36" height="8" rx="4" fill="#E11D48"/>
+    <rect x="155" y="116" width="36" height="3" rx="1.5" fill="#FFFFFF" fill-opacity="0.3"/>
+  </g>
+</svg>

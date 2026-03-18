@@ -58,3 +58,6 @@ rtnetlink = "0.20.0"
 netlink-packet-route = "0.28.0"
 libc = "0.2.180"
 zbus = "5.13.2"
+
+[build-dependencies]
+embed-resource = "3.0.6"

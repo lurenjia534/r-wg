@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=r-wg
+Comment=WireGuard desktop client
+Exec=/usr/local/libexec/r-wg/r-wg
+Icon=r-wg
+Terminal=false
+Categories=Network;Utility;
+Keywords=WireGuard;VPN;Tunnel;
+StartupNotify=true
+StartupWMClass=r-wg

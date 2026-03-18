@@ -33,6 +33,9 @@ const DEFAULT_INSTALLED_BINARY: &str = "/usr/local/libexec/r-wg/r-wg";
 const DEFAULT_UNIT_PATH: &str = "/etc/systemd/system/r-wg.service";
 const DEFAULT_SOCKET_UNIT_PATH: &str = "/etc/systemd/system/r-wg.socket";
 const DEFAULT_STARTUP_REPAIR_UNIT_PATH: &str = "/etc/systemd/system/r-wg-repair.service";
+const DEFAULT_DESKTOP_ENTRY_PATH: &str = "/usr/share/applications/r-wg.desktop";
+const DEFAULT_ICON_SVG_PATH: &str = "/usr/share/icons/hicolor/scalable/apps/r-wg.svg";
+const DEFAULT_ICON_PNG_PATH: &str = "/usr/share/icons/hicolor/256x256/apps/r-wg.png";
 const SERVICE_UNIT_NAME: &str = "r-wg.service";
 const SOCKET_UNIT_NAME: &str = "r-wg.socket";
 const STARTUP_REPAIR_UNIT_NAME: &str = "r-wg-repair.service";
@@ -40,6 +43,10 @@ const SERVICE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const SERVICE_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const SERVICE_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 static SERVICE_TERMINATE_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+const DESKTOP_ICON_SVG: &[u8] = include_bytes!("../../../resources/icons/r-wg.svg");
+const DESKTOP_ICON_PNG: &[u8] =
+    include_bytes!("../../../resources/icons/hicolor/256x256/apps/r-wg.png");
 
 /// Linux 特权 backend 的当前探测状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -483,6 +490,7 @@ fn install_or_repair(mut options: InstallOptions, repairing: bool) -> Result<(),
     }
 
     install_binary(&options.source_path, &options.binary_path)?;
+    install_desktop_integration(&options.binary_path)?;
     write_service_unit(
         &options.unit_path,
         render_service_unit(
@@ -527,6 +535,7 @@ fn remove_installation(options: RemoveOptions) -> Result<(), EngineError> {
     let _ = run_command("systemctl", ["disable", "--now", SOCKET_UNIT_NAME]);
     let _ = run_command("systemctl", ["stop", SERVICE_UNIT_NAME]);
     let _ = cleanup_runtime_socket_dir(Path::new(DEFAULT_SOCKET_PATH));
+    let _ = remove_desktop_integration();
 
     if options.unit_path.exists() {
         fs::remove_file(&options.unit_path).map_err(|err| {
@@ -1042,27 +1051,90 @@ fn install_binary(source_path: &Path, binary_path: &Path) -> Result<(), EngineEr
 }
 
 fn write_service_unit(unit_path: &Path, contents: String) -> Result<(), EngineError> {
-    let parent = unit_path
+    write_root_owned_file(unit_path, contents.as_bytes(), 0o644, "service unit")
+}
+
+fn write_root_owned_file(
+    path: &Path,
+    contents: &[u8],
+    mode: u32,
+    label: &str,
+) -> Result<(), EngineError> {
+    let parent = path
         .parent()
-        .ok_or_else(|| remote_error("service unit path has no parent".to_string()))?;
+        .ok_or_else(|| remote_error(format!("{label} path has no parent")))?;
     fs::create_dir_all(parent).map_err(|err| {
         remote_error(format!(
-            "failed to create service unit dir {}: {err}",
+            "failed to create {label} dir {}: {err}",
             parent.display()
         ))
     })?;
 
-    let temp_path = parent.join(".r-wg.service.tmp");
+    let temp_path = parent.join(".r-wg.install.tmp");
     fs::write(&temp_path, contents)
-        .map_err(|err| remote_error(format!("failed to write temp service unit: {err}")))?;
-    fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o644))
-        .map_err(|err| remote_error(format!("failed to chmod service unit: {err}")))?;
-    fs::rename(&temp_path, unit_path).map_err(|err| {
-        remote_error(format!(
-            "failed to place service unit {}: {err}",
-            unit_path.display()
-        ))
-    })
+        .map_err(|err| remote_error(format!("failed to write temp {label}: {err}")))?;
+    fs::set_permissions(&temp_path, fs::Permissions::from_mode(mode))
+        .map_err(|err| remote_error(format!("failed to chmod {label}: {err}")))?;
+    fs::rename(&temp_path, path)
+        .map_err(|err| remote_error(format!("failed to place {label} {}: {err}", path.display())))
+}
+
+fn remove_file_if_exists(path: &Path, label: &str) -> Result<(), EngineError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(remote_error(format!(
+            "failed to remove {label} {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
+fn install_desktop_integration(binary_path: &Path) -> Result<(), EngineError> {
+    write_root_owned_file(
+        Path::new(DEFAULT_DESKTOP_ENTRY_PATH),
+        render_desktop_entry(binary_path).as_bytes(),
+        0o644,
+        "desktop entry",
+    )?;
+    write_root_owned_file(
+        Path::new(DEFAULT_ICON_SVG_PATH),
+        DESKTOP_ICON_SVG,
+        0o644,
+        "icon",
+    )?;
+    write_root_owned_file(
+        Path::new(DEFAULT_ICON_PNG_PATH),
+        DESKTOP_ICON_PNG,
+        0o644,
+        "icon",
+    )?;
+    refresh_desktop_caches();
+    Ok(())
+}
+
+fn remove_desktop_integration() -> Result<(), EngineError> {
+    remove_file_if_exists(Path::new(DEFAULT_DESKTOP_ENTRY_PATH), "desktop entry")?;
+    remove_file_if_exists(Path::new(DEFAULT_ICON_SVG_PATH), "icon")?;
+    remove_file_if_exists(Path::new(DEFAULT_ICON_PNG_PATH), "icon")?;
+    refresh_desktop_caches();
+    Ok(())
+}
+
+fn refresh_desktop_caches() {
+    let _ = Command::new("update-desktop-database")
+        .arg("/usr/share/applications")
+        .status();
+    let _ = Command::new("gtk-update-icon-cache")
+        .args(["-q", "-t", "/usr/share/icons/hicolor"])
+        .status();
+}
+
+fn render_desktop_entry(binary_path: &Path) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=r-wg\nComment=WireGuard desktop client\nExec={}\nIcon=r-wg\nTerminal=false\nCategories=Network;Utility;\nKeywords=WireGuard;VPN;Tunnel;\nStartupNotify=true\nStartupWMClass=r-wg\n",
+        binary_path.display()
+    )
 }
 
 fn load_existing_install_auth_mode(
@@ -1421,7 +1493,7 @@ mod tests {
 
     use super::{
         cleanup_runtime_socket_dir, is_peer_allowed, load_existing_install_auth_mode,
-        parse_linux_entry_command, render_service_unit, render_socket_unit,
+        parse_linux_entry_command, render_desktop_entry, render_service_unit, render_socket_unit,
         render_startup_repair_unit, InstallAuthMode, InstallOptions, LinuxEntryCommand,
         ManageCommand, PeerCredentials, RemoveOptions, ServiceOptions, DEFAULT_INSTALLED_BINARY,
         DEFAULT_SOCKET_GROUP, DEFAULT_SOCKET_UNIT_PATH, DEFAULT_STARTUP_REPAIR_UNIT_PATH,
@@ -1648,5 +1720,13 @@ mod tests {
         assert!(unit.contains("ExecStart=/opt/r-wg/r-wg service startup-repair"));
         assert!(unit.contains("ConditionPathExists=/var/lib/r-wg/recovery.json"));
         assert!(unit.contains("StateDirectory=r-wg"));
+    }
+
+    #[test]
+    fn render_desktop_entry_targets_installed_binary() {
+        let entry = render_desktop_entry(Path::new("/usr/local/libexec/r-wg/r-wg"));
+        assert!(entry.contains("Exec=/usr/local/libexec/r-wg/r-wg"));
+        assert!(entry.contains("Icon=r-wg"));
+        assert!(entry.contains("StartupWMClass=r-wg"));
     }
 }

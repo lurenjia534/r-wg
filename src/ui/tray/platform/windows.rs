@@ -47,12 +47,12 @@ use windows::Win32::{
     UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
         DispatchMessageW, GetCursorPos, GetMessageW, GetWindowLongPtrW, LoadCursorW, LoadIconW,
-        PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW,
-        ShowWindow, TrackPopupMenu, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON, HMENU,
-        IDC_ARROW, IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_SHOW,
-        TPM_BOTTOMALIGN, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY,
-        WM_LBUTTONUP, WM_NCCREATE, WM_NULL, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_NOACTIVATE,
-        WS_OVERLAPPED,
+        LoadImageW, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
+        SetWindowLongPtrW, ShowWindow, TrackPopupMenu, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA,
+        HICON, HMENU, IDC_ARROW, IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
+        MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_SHOW, TPM_BOTTOMALIGN, TPM_RIGHTALIGN,
+        TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_NCCREATE,
+        WM_NULL, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_NOACTIVATE, WS_OVERLAPPED,
     },
 };
 
@@ -200,6 +200,24 @@ fn with_hwnd(window: &gpui::Window, f: impl FnOnce(HWND)) {
     }
 }
 
+/// 读取 EXE 内嵌的应用图标，和主窗口/任务栏保持一致。
+fn load_tray_icon() -> HICON {
+    let module = unsafe { GetModuleHandleW(None) }.unwrap_or_default();
+    let handle = unsafe {
+        LoadImageW(
+            Some(module.into()),
+            PCWSTR(1 as _),
+            IMAGE_ICON,
+            0,
+            0,
+            LR_DEFAULTSIZE | LR_SHARED,
+        )
+    };
+    handle
+        .map(|icon| HICON(icon.0))
+        .unwrap_or_else(|_| LoadIconW(None, IDI_APPLICATION).unwrap_or_default())
+}
+
 /// 托盘线程主函数。
 ///
 /// 流程如下：
@@ -236,7 +254,7 @@ unsafe fn run_tray(sender: Sender<TrayCommand>) {
     icon_data.uID = TRAY_UID;
     icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     icon_data.uCallbackMessage = WM_TRAYICON;
-    icon_data.hIcon = LoadIconW(None, IDI_APPLICATION).unwrap_or(HICON::default());
+    icon_data.hIcon = load_tray_icon();
     set_tip(&mut icon_data, "r-wg");
 
     let context = Box::new(TrayContext {
