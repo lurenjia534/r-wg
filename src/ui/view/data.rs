@@ -6,7 +6,10 @@ use r_wg::backend::wg::config;
 use super::super::format::{
     format_bytes, format_duration, format_route_table, summarize_peers, PeerSummary,
 };
-use super::super::state::{TrafficDayStats, TrafficHour, TrafficPeriod, WgApp, TRAFFIC_TREND_DAYS};
+use super::super::state::{
+    DraftValidationState, TrafficDayStats, TrafficHour, TrafficPeriod, WgApp,
+    TRAFFIC_TREND_DAYS,
+};
 
 /// `ConfigStatus` 是配置编辑页和顶部工具栏共享的“解析结果快照”。
 ///
@@ -16,7 +19,14 @@ use super::super::state::{TrafficDayStats, TrafficHour, TrafficPeriod, WgApp, TR
 /// 配置解析状态，用于显示“Valid/Invalid”徽标。
 pub(crate) struct ConfigStatus {
     pub(crate) label: &'static str,
-    pub(crate) color: u32,
+    pub(crate) tone: ConfigStatusTone,
+}
+
+pub(crate) enum ConfigStatusTone {
+    Success,
+    Danger,
+    Warning,
+    Secondary,
 }
 
 /// `ViewData` 是“跨页面复用”的基础派生数据。
@@ -36,6 +46,12 @@ pub(crate) struct ViewData {
     pub(crate) parse_error: Option<String>,
     /// 状态徽标（有效/无效）。
     pub(crate) config_status: Option<ConfigStatus>,
+    /// 当前 draft 是否有未保存改动。
+    pub(crate) draft_dirty: bool,
+    /// 当前 draft 是否对应已保存配置。
+    pub(crate) has_saved_source: bool,
+    /// 当前 draft 是否需要重启运行中的隧道。
+    pub(crate) needs_restart: bool,
     /// 统计摘要（总流量/握手时间等）。
     pub(crate) peer_summary: PeerSummary,
     /// 最近握手时间的可读文本。
@@ -149,48 +165,52 @@ impl TrafficRankItem {
 impl ViewData {
     /// 从应用状态构造渲染数据。
     pub(crate) fn new(app: &WgApp) -> Self {
-        let selected_config = app.selected_config();
-        // 优先从解析缓存取结果：
-        // - 缓存只针对当前选中配置；
-        // - 避免在每次渲染时重复 parse_config。
-        let (parsed_config, parse_error) =
-            match (selected_config, app.selection.parse_cache.as_ref()) {
-                (Some(config), Some(cache)) if cache.name == config.name => {
-                    (cache.parsed.clone(), cache.error.clone())
-                }
-                _ => (None, None),
-            };
-        // 选中项处于“异步加载中”时显示 Loading 状态。
-        let is_loading = app.selection.selected_id.is_some()
-            && app.selection.loading_config_id == app.selection.selected_id;
-
-        // 解析状态的展示逻辑：
-        // - Loading：文本尚未读完；
-        // - Invalid：解析失败；
-        // - Valid：解析成功；
-        // - Unknown：已选中但暂未解析（例如文本还未加载）。
-        let config_status = if is_loading {
-            Some(ConfigStatus {
-                label: "Loading",
-                color: 0x64748b,
-            })
-        } else if parse_error.is_some() {
-            Some(ConfigStatus {
-                label: "Invalid",
-                color: 0xb14f4a,
-            })
-        } else if selected_config.is_some() && parsed_config.is_some() {
-            Some(ConfigStatus {
-                label: "Valid",
-                color: 0x3aa380,
-            })
-        } else if selected_config.is_some() {
-            Some(ConfigStatus {
-                label: "Unknown",
-                color: 0x94a3b8,
-            })
+        let is_loading = matches!(app.editor.operation, Some(super::super::state::EditorOperation::LoadingConfig));
+        let (parsed_config, parse_error, config_status) = if is_loading {
+            (
+                None,
+                None,
+                Some(ConfigStatus {
+                    label: "Loading",
+                    tone: ConfigStatusTone::Secondary,
+                }),
+            )
         } else {
-            None
+            match &app.editor.draft.validation {
+                DraftValidationState::Idle => {
+                    if app.editor.draft.name.is_empty() && app.editor.draft.text.is_empty() {
+                        (None, None, None)
+                    } else {
+                        (
+                            None,
+                            None,
+                            Some(ConfigStatus {
+                                label: "Draft",
+                                tone: ConfigStatusTone::Warning,
+                            }),
+                        )
+                    }
+                }
+                DraftValidationState::Valid { parsed, .. } => (
+                    Some(parsed.clone()),
+                    None,
+                    Some(ConfigStatus {
+                        label: "Valid",
+                        tone: ConfigStatusTone::Success,
+                    }),
+                ),
+                DraftValidationState::Invalid { line, message, .. } => (
+                    None,
+                    Some(match line {
+                        Some(line) => format!("line {line}: {message}"),
+                        None => message.to_string(),
+                    }),
+                    Some(ConfigStatus {
+                        label: "Invalid",
+                        tone: ConfigStatusTone::Danger,
+                    }),
+                ),
+            }
         };
 
         let peer_summary = summarize_peers(&app.stats.peer_stats);
@@ -203,6 +223,9 @@ impl ViewData {
             parsed_config,
             parse_error,
             config_status,
+            draft_dirty: app.editor.draft.is_dirty(),
+            has_saved_source: app.editor.draft.source_id.is_some(),
+            needs_restart: app.editor.draft.needs_restart,
             peer_summary,
             last_handshake,
         }

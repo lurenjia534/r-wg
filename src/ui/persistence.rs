@@ -5,7 +5,7 @@ use gpui_component::theme::ThemeMode;
 use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
-use super::state::{ConfigSource, ProxiesViewMode, RightTab, TrafficDay, TrafficPeriod};
+use super::state::{ConfigInspectorTab, ConfigSource, ProxiesViewMode, TrafficDay, TrafficPeriod};
 
 pub(crate) const STATE_VERSION: u32 = 1;
 const STATE_FILE_NAME: &str = "state.json";
@@ -28,8 +28,8 @@ pub(crate) struct PersistedState {
     pub(crate) theme_mode: Option<ThemeMode>,
     #[serde(default)]
     pub(crate) log_auto_follow: Option<bool>,
-    #[serde(default)]
-    pub(crate) preferred_right_tab: Option<RightTab>,
+    #[serde(default, alias = "preferred_right_tab")]
+    pub(crate) preferred_inspector_tab: Option<ConfigInspectorTab>,
     #[serde(default)]
     pub(crate) preferred_traffic_period: Option<TrafficPeriod>,
     #[serde(default)]
@@ -228,7 +228,7 @@ mod tests {
             selected_id: Some(7),
             theme_mode: Some(ThemeMode::Dark),
             log_auto_follow: Some(true),
-            preferred_right_tab: Some(RightTab::Status),
+            preferred_inspector_tab: Some(ConfigInspectorTab::Preview),
             preferred_traffic_period: Some(TrafficPeriod::Today),
             proxies_view_mode: Some(ProxiesViewMode::List),
             dns_mode: Some(DnsMode::FollowConfig),
@@ -291,7 +291,7 @@ mod tests {
         assert_eq!(loaded.selected_id, state.selected_id);
         assert_eq!(loaded.theme_mode, state.theme_mode);
         assert_eq!(loaded.log_auto_follow, state.log_auto_follow);
-        assert_eq!(loaded.preferred_right_tab, state.preferred_right_tab);
+        assert_eq!(loaded.preferred_inspector_tab, state.preferred_inspector_tab);
         assert_eq!(
             loaded.preferred_traffic_period,
             state.preferred_traffic_period

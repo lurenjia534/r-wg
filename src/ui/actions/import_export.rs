@@ -9,7 +9,9 @@ use r_wg::backend::wg::config;
 
 use super::super::format::{name_from_path, sanitize_file_stem};
 use super::super::persistence;
-use super::super::state::{ConfigSource, EndpointFamily, TunnelConfig, WgApp};
+use super::super::state::{
+    ConfigSource, EditorOperation, EndpointFamily, PendingDraftAction, TunnelConfig, WgApp,
+};
 use super::config::resolve_endpoint_family_from_text;
 
 struct ImportJob {
@@ -40,6 +42,19 @@ impl WgApp {
     ///
     /// 说明：先弹文件选择对话框，再在后台读取文件与解析，UI 线程只做状态更新。
     pub(crate) fn handle_import_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.is_busy() {
+            return;
+        }
+        if self.editor.draft.is_dirty() {
+            self.confirm_discard_or_save(
+                PendingDraftAction::Import,
+                window,
+                cx,
+                "Import configs?",
+                "Importing will replace the current unsaved draft context.",
+            );
+            return;
+        }
         // 弹出文件选择并交给后台读取。
         self.set_status("Opening file dialog...");
         cx.notify();
@@ -58,7 +73,7 @@ impl WgApp {
                     Ok(Ok(Some(paths))) => paths,
                     Ok(Ok(None)) => {
                         view.update(cx, |this, cx| {
-                            this.runtime.busy = false;
+                            this.editor.operation = None;
                             this.set_status("Import canceled");
                             cx.notify();
                         })
@@ -189,7 +204,10 @@ impl WgApp {
 
         // 记录总数，用于状态提示与批量导入节奏控制。
         let total = jobs.len();
-        self.runtime.busy = true;
+        self.editor.operation = Some(EditorOperation::Importing {
+            processed: 0,
+            total,
+        });
         self.set_status(format!("Loading {total} files..."));
         cx.notify();
 
@@ -284,6 +302,10 @@ impl WgApp {
                                 }
                             }
                             // 使用状态文本作为轻量“进度提示”。
+                            this.editor.operation = Some(EditorOperation::Importing {
+                                processed,
+                                total,
+                            });
                             this.set_status(format!("Importing {processed}/{total}..."));
                             cx.notify();
                         })
@@ -292,7 +314,7 @@ impl WgApp {
                 }
 
                 view.update_in(cx, |this, window, cx| {
-                    this.runtime.busy = false;
+                    this.editor.operation = None;
                     if imported > 0 {
                         let selected_id = this.configs.last().map(|config| config.id);
                         this.selection.selected_id = selected_id;
@@ -322,6 +344,9 @@ impl WgApp {
     ///
     /// 说明：写文件放在后台执行，UI 线程只负责提示与状态更新。
     pub(crate) fn handle_export_click(&mut self, cx: &mut Context<Self>) {
+        if self.editor.is_busy() {
+            return;
+        }
         // 选择导出目录后写入 *.conf。
         let Some(selected) = self.selected_config().cloned() else {
             self.set_error("Select a tunnel first");
@@ -331,6 +356,7 @@ impl WgApp {
         let cached_text = self.cached_config_text(&selected.storage_path);
         let initial_text = selected.text.clone().or(cached_text);
 
+        self.editor.operation = Some(EditorOperation::Exporting);
         self.set_status("Choose export folder...");
         cx.notify();
 
@@ -346,6 +372,7 @@ impl WgApp {
                 Ok(Ok(Some(paths))) => paths,
                 Ok(Ok(None)) => {
                     view.update(cx, |this, cx| {
+                        this.editor.operation = None;
                         this.set_status("Export canceled");
                         cx.notify();
                     })
@@ -354,6 +381,7 @@ impl WgApp {
                 }
                 Ok(Err(err)) => {
                     view.update(cx, |this, cx| {
+                        this.editor.operation = None;
                         this.set_error(format!("Export dialog failed: {err}"));
                         cx.notify();
                     })
@@ -362,6 +390,7 @@ impl WgApp {
                 }
                 Err(err) => {
                     view.update(cx, |this, cx| {
+                        this.editor.operation = None;
                         this.set_error(format!("Export dialog closed: {err}"));
                         cx.notify();
                     })
@@ -372,6 +401,7 @@ impl WgApp {
 
             let Some(dir) = paths.into_iter().next() else {
                 view.update(cx, |this, cx| {
+                    this.editor.operation = None;
                     this.set_error("No folder selected");
                     cx.notify();
                 })
@@ -406,6 +436,7 @@ impl WgApp {
                 Ok(text) => text,
                 Err(message) => {
                     view.update(cx, |this, cx| {
+                        this.editor.operation = None;
                         this.set_error(message);
                         cx.notify();
                     })
@@ -421,6 +452,7 @@ impl WgApp {
 
             let result = write_task.await;
             view.update(cx, |this, cx| {
+                this.editor.operation = None;
                 match result {
                     Ok(path) => {
                         this.set_status(format!("Exported to {}", path.display()));

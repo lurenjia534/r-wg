@@ -61,7 +61,6 @@ impl WgApp {
                                 if let Some(selected_id) = summary.selected_id {
                                     this.load_config_into_inputs(selected_id, window, cx);
                                 }
-                                this.refresh_all_endpoint_family_metadata(cx);
                                 if summary.missing_files > 0 {
                                     this.set_status(format!(
                                         "Loaded {} configs, {} missing",
@@ -189,7 +188,7 @@ impl<'a> PersistedStateSnapshot<'a> {
             selected_id,
             theme_mode: Some(self.ui_prefs.theme_mode),
             log_auto_follow: Some(self.ui_prefs.log_auto_follow),
-            preferred_right_tab: Some(self.ui_prefs.preferred_right_tab),
+            preferred_inspector_tab: Some(self.ui_prefs.preferred_inspector_tab),
             preferred_traffic_period: Some(self.ui_prefs.preferred_traffic_period),
             proxies_view_mode: Some(self.ui_prefs.proxies_view_mode),
             dns_mode: Some(self.ui_prefs.dns_mode),
@@ -263,7 +262,7 @@ impl<'a> PersistedStateSnapshot<'a> {
 struct PersistedStateRestore {
     theme_mode: Option<ThemeMode>,
     log_auto_follow: Option<bool>,
-    preferred_right_tab: Option<super::super::state::RightTab>,
+    preferred_inspector_tab: Option<super::super::state::ConfigInspectorTab>,
     preferred_traffic_period: Option<super::super::state::TrafficPeriod>,
     proxies_view_mode: Option<super::super::state::ProxiesViewMode>,
     dns_mode: Option<DnsMode>,
@@ -332,7 +331,7 @@ impl PersistedStateRestore {
         Ok(Self {
             theme_mode: state.theme_mode,
             log_auto_follow: state.log_auto_follow,
-            preferred_right_tab: state.preferred_right_tab,
+            preferred_inspector_tab: state.preferred_inspector_tab,
             preferred_traffic_period: state.preferred_traffic_period,
             proxies_view_mode: state.proxies_view_mode,
             dns_mode: state.dns_mode,
@@ -362,8 +361,8 @@ impl PersistedStateRestore {
         if let Some(log_auto_follow) = self.log_auto_follow {
             ui_prefs.log_auto_follow = log_auto_follow;
         }
-        if let Some(preferred_right_tab) = self.preferred_right_tab {
-            ui_prefs.preferred_right_tab = preferred_right_tab;
+        if let Some(preferred_inspector_tab) = self.preferred_inspector_tab {
+            ui_prefs.preferred_inspector_tab = preferred_inspector_tab;
         }
         if let Some(preferred_traffic_period) = self.preferred_traffic_period {
             ui_prefs.preferred_traffic_period = preferred_traffic_period;

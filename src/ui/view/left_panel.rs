@@ -54,8 +54,8 @@ pub(crate) fn render_left_panel(
         .selected(app.ui_session.sidebar_active == SidebarItem::About)
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(|this, _event, _window, cx| {
-                this.set_sidebar_active(SidebarItem::About, cx);
+            cx.listener(|this, _event, window, cx| {
+                this.request_sidebar_active(SidebarItem::About, window, cx);
             }),
         );
 
@@ -115,8 +115,8 @@ fn sidebar_group(
             .when(active, |this| {
                 this.suffix(div().size(px(6.0)).rounded_full().bg(cx.theme().accent))
             })
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                this.set_sidebar_active(item, cx);
+            .on_click(cx.listener(move |this, _event, window, cx| {
+                this.request_sidebar_active(item, window, cx);
             }))
     })))
 }

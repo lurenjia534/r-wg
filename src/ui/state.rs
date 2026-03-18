@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
-use gpui::{Entity, SharedString, Window};
+use gpui::{Entity, SharedString, Subscription, Window};
 use gpui_component::theme::{Theme, ThemeMode};
 use gpui_component::{input::InputState, notification::Notification, IconName, WindowExt};
 use r_wg::backend::wg::{
@@ -98,6 +98,105 @@ pub(crate) struct LoadedConfigState {
     pub(crate) text_hash: u64,
 }
 
+#[derive(Clone)]
+pub(crate) enum DraftValidationState {
+    Idle,
+    Valid {
+        text_hash: u64,
+        parsed: config::WireGuardConfig,
+        endpoint_family: EndpointFamily,
+    },
+    Invalid {
+        text_hash: u64,
+        line: Option<usize>,
+        message: SharedString,
+    },
+}
+
+#[derive(Clone)]
+pub(crate) struct ConfigDraftState {
+    /// 这份 draft 对应的已保存配置 ID；None 表示尚未保存的新 draft。
+    pub(crate) source_id: Option<u64>,
+    pub(crate) name: SharedString,
+    pub(crate) text: SharedString,
+    pub(crate) base_name: SharedString,
+    pub(crate) base_text_hash: u64,
+    pub(crate) dirty_name: bool,
+    pub(crate) dirty_text: bool,
+    pub(crate) validation: DraftValidationState,
+    pub(crate) needs_restart: bool,
+}
+
+impl ConfigDraftState {
+    pub(crate) fn new() -> Self {
+        Self {
+            source_id: None,
+            name: SharedString::new_static(""),
+            text: SharedString::new_static(""),
+            base_name: SharedString::new_static(""),
+            base_text_hash: 0,
+            dirty_name: false,
+            dirty_text: false,
+            validation: DraftValidationState::Idle,
+            needs_restart: false,
+        }
+    }
+
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.dirty_name || self.dirty_text
+    }
+
+    pub(crate) fn text_hash(&self) -> u64 {
+        match &self.validation {
+            DraftValidationState::Valid { text_hash, .. }
+            | DraftValidationState::Invalid { text_hash, .. } => *text_hash,
+            DraftValidationState::Idle => 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EditorOperation {
+    LoadingConfig,
+    Saving,
+    Importing {
+        processed: usize,
+        total: usize,
+    },
+    Exporting,
+    Deleting,
+}
+
+pub(crate) struct EditorState {
+    pub(crate) draft: ConfigDraftState,
+    pub(crate) operation: Option<EditorOperation>,
+    pub(crate) pending_action: Option<PendingDraftAction>,
+}
+
+impl EditorState {
+    fn new() -> Self {
+        Self {
+            draft: ConfigDraftState::new(),
+            operation: None,
+            pending_action: None,
+        }
+    }
+
+    pub(crate) fn is_busy(&self) -> bool {
+        self.operation.is_some()
+    }
+}
+
+pub(crate) struct ConfigsWorkspace {
+    pub(crate) app: Entity<WgApp>,
+}
+
+impl ConfigsWorkspace {
+    pub(crate) fn new(app: Entity<WgApp>) -> Self {
+        Self { app }
+    }
+}
+
 /// 日流量统计（按本地日期汇总）。
 #[derive(Clone)]
 pub(crate) struct TrafficDay {
@@ -123,9 +222,12 @@ pub(crate) struct TrafficHour {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum RightTab {
-    Status,
-    Logs,
+pub(crate) enum ConfigInspectorTab {
+    #[serde(alias = "status")]
+    Preview,
+    #[serde(alias = "logs")]
+    Activity,
+    Diagnostics,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -357,7 +459,7 @@ pub(crate) enum ProxyRunningFilter {
 }
 
 /// 左侧导航栏的选中项。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SidebarItem {
     Overview,
     TrafficStats,
@@ -410,6 +512,16 @@ impl SidebarItem {
             Self::About => IconName::Info,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PendingDraftAction {
+    SelectConfig(u64),
+    ActivateSidebar(SidebarItem),
+    NewDraft,
+    Import,
+    Paste,
+    DeleteCurrent,
 }
 
 pub(crate) struct ConfigsState {
@@ -754,14 +866,19 @@ impl StatsState {
         self.stats_note = "Fetching peer stats...".into();
     }
 
-    pub(crate) fn set_stats_error(&mut self, message: impl Into<SharedString>) {
-        self.stats_note = message.into();
+    pub(crate) fn set_stats_error(&mut self, message: impl Into<SharedString>) -> bool {
+        let message = message.into();
+        if self.stats_note == message {
+            return false;
+        }
+        self.stats_note = message;
+        true
     }
 }
 
 pub(crate) struct UiPrefsState {
     pub(crate) log_auto_follow: bool,
-    pub(crate) preferred_right_tab: RightTab,
+    pub(crate) preferred_inspector_tab: ConfigInspectorTab,
     pub(crate) preferred_traffic_period: TrafficPeriod,
     pub(crate) proxies_view_mode: ProxiesViewMode,
     pub(crate) theme_mode: ThemeMode,
@@ -773,7 +890,7 @@ impl UiPrefsState {
     fn new(theme_mode: ThemeMode) -> Self {
         Self {
             log_auto_follow: true,
-            preferred_right_tab: RightTab::Status,
+            preferred_inspector_tab: ConfigInspectorTab::Preview,
             preferred_traffic_period: TrafficPeriod::Today,
             proxies_view_mode: ProxiesViewMode::List,
             theme_mode,
@@ -784,7 +901,7 @@ impl UiPrefsState {
 }
 
 pub(crate) struct UiSessionState {
-    pub(crate) right_tab: RightTab,
+    pub(crate) inspector_tab: ConfigInspectorTab,
     pub(crate) traffic_period: TrafficPeriod,
     pub(crate) sidebar_active: SidebarItem,
 }
@@ -792,14 +909,14 @@ pub(crate) struct UiSessionState {
 impl UiSessionState {
     fn from_prefs(prefs: &UiPrefsState) -> Self {
         Self {
-            right_tab: prefs.preferred_right_tab,
+            inspector_tab: prefs.preferred_inspector_tab,
             traffic_period: prefs.preferred_traffic_period,
             sidebar_active: SidebarItem::Overview,
         }
     }
 
     pub(crate) fn sync_from_prefs(&mut self, prefs: &UiPrefsState) {
-        self.right_tab = prefs.preferred_right_tab;
+        self.inspector_tab = prefs.preferred_inspector_tab;
         self.traffic_period = prefs.preferred_traffic_period;
     }
 }
@@ -840,6 +957,9 @@ pub(crate) struct UiState {
     pub(crate) config_input: Option<Entity<InputState>>,
     pub(crate) log_input: Option<Entity<InputState>>,
     pub(crate) proxy_search_input: Option<Entity<InputState>>,
+    pub(crate) configs_workspace: Option<Entity<ConfigsWorkspace>>,
+    pub(crate) name_input_subscription: Option<Subscription>,
+    pub(crate) config_input_subscription: Option<Subscription>,
     // 日志状态与提示。
     pub(crate) status: SharedString,
     pub(crate) last_error: Option<SharedString>,
@@ -854,6 +974,9 @@ impl UiState {
             config_input: None,
             log_input: None,
             proxy_search_input: None,
+            configs_workspace: None,
+            name_input_subscription: None,
+            config_input_subscription: None,
             status: "Ready".into(),
             last_error: None,
             backend: BackendDiagnostic::default_for_platform(),
@@ -861,14 +984,21 @@ impl UiState {
         }
     }
 
-    pub(crate) fn set_status(&mut self, message: impl Into<SharedString>) {
-        self.status = message.into();
+    pub(crate) fn set_status(&mut self, message: impl Into<SharedString>) -> bool {
+        let message = message.into();
+        if self.status == message {
+            return false;
+        }
+        self.status = message;
+        true
     }
 
-    pub(crate) fn set_error(&mut self, message: impl Into<SharedString>) {
+    pub(crate) fn set_error(&mut self, message: impl Into<SharedString>) -> bool {
         let message = message.into();
+        let changed = self.status != message || self.last_error.as_ref() != Some(&message);
         self.status = message.clone();
         self.last_error = Some(message);
+        changed
     }
 
     pub(crate) fn set_backend_diagnostic(&mut self, diagnostic: BackendDiagnostic) {
@@ -899,6 +1029,7 @@ pub(crate) struct WgApp {
     pub(crate) engine: Engine,
     pub(crate) configs: ConfigsState,
     pub(crate) selection: SelectionState,
+    pub(crate) editor: EditorState,
     pub(crate) runtime: RuntimeState,
     pub(crate) stats: StatsState,
     pub(crate) persistence: PersistenceState,
@@ -914,6 +1045,7 @@ impl WgApp {
             engine,
             configs: ConfigsState::new(),
             selection: SelectionState::new(),
+            editor: EditorState::new(),
             runtime: RuntimeState::new(),
             stats: StatsState::new(),
             persistence: PersistenceState::new(),
@@ -965,22 +1097,26 @@ impl WgApp {
         cx.notify();
     }
 
-    pub(crate) fn set_preferred_right_tab(
+    pub(crate) fn set_preferred_inspector_tab(
         &mut self,
-        value: RightTab,
+        value: ConfigInspectorTab,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.ui_prefs.preferred_right_tab != value {
-            self.ui_prefs.preferred_right_tab = value;
+        if self.ui_prefs.preferred_inspector_tab != value {
+            self.ui_prefs.preferred_inspector_tab = value;
             self.persist_state_async(cx);
         }
-        self.ui_session.right_tab = value;
+        self.ui_session.inspector_tab = value;
         cx.notify();
     }
 
-    pub(crate) fn set_session_right_tab(&mut self, value: RightTab, cx: &mut gpui::Context<Self>) {
-        if self.ui_session.right_tab != value {
-            self.ui_session.right_tab = value;
+    pub(crate) fn set_session_inspector_tab(
+        &mut self,
+        value: ConfigInspectorTab,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_session.inspector_tab != value {
+            self.ui_session.inspector_tab = value;
             cx.notify();
         }
     }

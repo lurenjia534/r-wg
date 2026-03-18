@@ -2,19 +2,33 @@ use gpui::*;
 use gpui_component::{tag::Tag, Sizable as _};
 
 use super::super::state::{BackendDiagnostic, BackendHealth};
-use super::data::ConfigStatus;
+use super::data::{ConfigStatus, ConfigStatusTone};
 
 /// 配置状态徽标（Valid/Invalid），没有状态时返回空元素。
 pub(crate) fn status_badge(status: Option<&ConfigStatus>) -> AnyElement {
     match status {
-        Some(status) => div()
-            .px_2()
-            .py_1()
-            .rounded_full()
-            .text_xs()
-            .bg(rgb(status.color))
-            .child(status.label)
-            .into_any_element(),
+        Some(status) => match status.tone {
+            ConfigStatusTone::Success => Tag::success()
+                .small()
+                .rounded_full()
+                .child(status.label)
+                .into_any_element(),
+            ConfigStatusTone::Danger => Tag::danger()
+                .small()
+                .rounded_full()
+                .child(status.label)
+                .into_any_element(),
+            ConfigStatusTone::Warning => Tag::warning()
+                .small()
+                .rounded_full()
+                .child(status.label)
+                .into_any_element(),
+            ConfigStatusTone::Secondary => Tag::secondary()
+                .small()
+                .rounded_full()
+                .child(status.label)
+                .into_any_element(),
+        },
         None => div().into_any_element(),
     }
 }

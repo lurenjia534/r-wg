@@ -9,7 +9,6 @@ mod logs;
 mod overview;
 mod proxies;
 mod proxies_grid;
-mod right_panel;
 mod top_bar;
 mod widgets;
 
@@ -24,18 +23,6 @@ impl Render for WgApp {
         // 输入控件按需延迟创建，避免在构造阶段就绑定窗口上下文。
         self.ensure_inputs(window, cx);
         self.start_load_persisted_state(window, cx);
-
-        // 复制 Entity 句柄，避免后续借用冲突。
-        let name_input = self
-            .ui
-            .name_input
-            .clone()
-            .expect("name input should be initialized");
-        let config_input = self
-            .ui
-            .config_input
-            .clone()
-            .expect("config input should be initialized");
 
         // 统一计算状态/解析结果等派生信息。
         let data = ViewData::new(self);
@@ -59,21 +46,15 @@ impl Render for WgApp {
                             let overview_data = data::OverviewData::new(self, &data);
                             overview::render_overview(&overview_data, cx).into_any_element()
                         }
-                        SidebarItem::Configs => div()
-                            .flex()
-                            .flex_row()
-                            .gap_3()
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .child(configs::render_configs_editor(
-                                self,
-                                &data,
-                                &name_input,
-                                &config_input,
-                                cx,
-                            ))
-                            .child(right_panel::render_right_panel(self, &data, cx))
-                            .into_any_element(),
+                        SidebarItem::Configs => {
+                            let workspace = self.ensure_configs_workspace(cx);
+                            div()
+                                .flex()
+                                .flex_1()
+                                .min_h(px(0.0))
+                                .child(workspace)
+                                .into_any_element()
+                        }
                         SidebarItem::Proxies => {
                             proxies::render_proxies(self, window, cx).into_any_element()
                         }
@@ -88,29 +69,41 @@ impl Render for WgApp {
                         _ => overview::render_placeholder(cx).into_any_element(),
                     };
 
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .flex_grow()
-                        .min_h(px(0.0))
-                        .p_3()
-                        // 顶部工具栏
-                        .child(top_bar::render_top_bar(self, &data, cx))
-                        .child({
-                            let body = div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_h(px(0.0))
-                                .child(main_body);
-                            let body = if self.ui_session.sidebar_active == SidebarItem::Overview {
-                                body.overflow_y_scrollbar().into_any_element()
-                            } else {
-                                body.into_any_element()
-                            };
-                            body
-                        })
+                    if self.ui_session.sidebar_active == SidebarItem::Configs {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .flex_grow()
+                            .min_h(px(0.0))
+                            .p_3()
+                            .child(main_body)
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .flex_grow()
+                            .min_h(px(0.0))
+                            .p_3()
+                            .child(top_bar::render_top_bar(self, &data, cx))
+                            .child({
+                                let body = div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_h(px(0.0))
+                                    .child(main_body);
+                                let body = if self.ui_session.sidebar_active == SidebarItem::Overview {
+                                    body.overflow_y_scrollbar().into_any_element()
+                                } else {
+                                    body.into_any_element()
+                                };
+                                body
+                            })
+                            .into_any_element()
+                    }
                 });
 
             let mut overlays = div().absolute().top_0().left_0().size_full();

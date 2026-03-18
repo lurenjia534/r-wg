@@ -22,7 +22,7 @@ use r_wg::backend::wg::PrivilegedServiceAction;
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use super::super::state::{
-    BackendDiagnostic, BackendHealth, RightTab, SidebarItem, TrafficPeriod, WgApp,
+    BackendDiagnostic, BackendHealth, ConfigInspectorTab, SidebarItem, TrafficPeriod, WgApp,
 };
 use super::widgets::backend_status_tag;
 
@@ -42,7 +42,7 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
             SettingGroup::new()
                 .title("Workspace")
                 .description("Choose which right-side panel opens first in Configs.")
-                .item(right_tab_item(app_handle.clone())),
+                .item(inspector_tab_item(app_handle.clone())),
         );
 
     let network_page = SettingPage::new("Network")
@@ -285,43 +285,63 @@ fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
     .description("Applies now and stays remembered for future sessions.")
 }
 
-fn right_tab_item(app: Entity<WgApp>) -> SettingItem {
+fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
-        "Preferred Right Panel",
+        "Inspector View",
         SettingField::render(move |_, _window, cx| {
-            let current = app.read(cx).ui_prefs.preferred_right_tab;
-            let status_handle = app.clone();
-            let logs_handle = app.clone();
+            let current = app.read(cx).ui_prefs.preferred_inspector_tab;
+            let preview_handle = app.clone();
+            let diagnostics_handle = app.clone();
+            let activity_handle = app.clone();
 
             div().child(
-                ButtonGroup::new("advanced-right-panel-default")
+                ButtonGroup::new("advanced-inspector-default")
                     .outline()
                     .small()
                     .compact()
                     .child(
-                        Button::new("advanced-right-panel-status")
-                            .label("Status")
-                            .selected(current == RightTab::Status)
+                        Button::new("advanced-inspector-preview")
+                            .label("Preview")
+                            .selected(current == ConfigInspectorTab::Preview)
                             .on_click(move |_, _, cx| {
-                                let _ = status_handle.update(cx, |app, cx| {
-                                    app.set_preferred_right_tab(RightTab::Status, cx);
+                                let _ = preview_handle.update(cx, |app, cx| {
+                                    app.set_preferred_inspector_tab(
+                                        ConfigInspectorTab::Preview,
+                                        cx,
+                                    );
                                 });
                             }),
                     )
                     .child(
-                        Button::new("advanced-right-panel-logs")
-                            .label("Logs")
-                            .selected(current == RightTab::Logs)
+                        Button::new("advanced-inspector-diagnostics")
+                            .label("Diagnostics")
+                            .selected(current == ConfigInspectorTab::Diagnostics)
                             .on_click(move |_, _, cx| {
-                                let _ = logs_handle.update(cx, |app, cx| {
-                                    app.set_preferred_right_tab(RightTab::Logs, cx);
+                                let _ = diagnostics_handle.update(cx, |app, cx| {
+                                    app.set_preferred_inspector_tab(
+                                        ConfigInspectorTab::Diagnostics,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new("advanced-inspector-activity")
+                            .label("Activity")
+                            .selected(current == ConfigInspectorTab::Activity)
+                            .on_click(move |_, _, cx| {
+                                let _ = activity_handle.update(cx, |app, cx| {
+                                    app.set_preferred_inspector_tab(
+                                        ConfigInspectorTab::Activity,
+                                        cx,
+                                    );
                                 });
                             }),
                     ),
             )
         }),
     )
-    .description("Applies now and is remembered when you reopen Configs.")
+    .description("Controls which Inspector view opens first in Configs.")
 }
 
 fn privileged_backend_item(app: Entity<WgApp>) -> SettingItem {

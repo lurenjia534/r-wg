@@ -113,6 +113,17 @@ impl WgApp {
             return;
         }
 
+        if self.editor.draft.source_id.is_none() {
+            self.set_error("Save this draft before starting");
+            cx.notify();
+            return;
+        }
+        if self.editor.draft.is_dirty() {
+            self.set_error("Save changes before starting");
+            cx.notify();
+            return;
+        }
+
         let Some(selected) = self.selected_config().cloned() else {
             self.set_error("Select a tunnel first");
             cx.notify();

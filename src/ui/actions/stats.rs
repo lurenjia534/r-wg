@@ -3,11 +3,14 @@ use std::time::{Duration, Instant};
 
 use chrono::Local;
 use gpui::{AppContext, Context};
-use r_wg::backend::wg::{EngineError, EngineStats};
+#[cfg(target_os = "windows")]
+use r_wg::backend::wg::EngineError;
+use r_wg::backend::wg::EngineStats;
 use r_wg::log::events::stats as log_stats;
 
 use super::super::state::{
-    SidebarItem, TrafficDay, TrafficDayStats, TrafficHour, WgApp, SPARKLINE_SAMPLES,
+    ConfigInspectorTab, SidebarItem, TrafficDay, TrafficDayStats, TrafficHour, WgApp,
+    SPARKLINE_SAMPLES,
     TRAFFIC_HISTORY_DAYS, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
 };
 
@@ -66,6 +69,7 @@ impl WgApp {
                         }
 
                         let mut persist_due = false;
+                        let mut status_changed = false;
                         match result {
                             Ok(stats) => {
                                 persist_due = this.apply_stats(stats);
@@ -78,11 +82,14 @@ impl WgApp {
                                 ) {
                                     this.runtime.finish_stop_success();
                                     this.stats.clear_runtime_metrics();
-                                    this.set_status("Stopped");
-                                    cx.notify();
+                                    status_changed = this.set_status("Stopped");
+                                    if status_changed {
+                                        cx.notify();
+                                    }
                                     return false;
                                 }
-                                this.stats.set_stats_error(format!("Stats failed: {err}"));
+                                status_changed =
+                                    this.stats.set_stats_error(format!("Stats failed: {err}"));
                             }
                         }
                         if persist_due {
@@ -91,7 +98,16 @@ impl WgApp {
                             this.stats.traffic_last_persist_at = Some(Instant::now());
                             this.stats.traffic_dirty = false;
                         }
-                        cx.notify();
+                        let should_notify = match this.ui_session.sidebar_active {
+                            SidebarItem::Configs => {
+                                this.ui_session.inspector_tab == ConfigInspectorTab::Activity
+                            }
+                            SidebarItem::Proxies => false,
+                            _ => true,
+                        };
+                        if should_notify || status_changed || persist_due {
+                            cx.notify();
+                        }
                         true
                     })
                     .unwrap_or(false);

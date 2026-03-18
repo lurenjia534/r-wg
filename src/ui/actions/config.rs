@@ -5,13 +5,22 @@ use std::io::ErrorKind;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
-use gpui::{AppContext, ClipboardItem, Context, SharedString, Window};
-use gpui_component::input::InputState;
+use gpui::{
+    div, AppContext, ClipboardItem, Context, IntoElement, ParentElement, SharedString, Styled,
+    Window,
+};
+use gpui_component::{
+    button::{Button, ButtonVariant, ButtonVariants as _},
+    dialog::DialogButtonProps,
+    input::{InputEvent, InputState},
+    ActiveTheme as _, WindowExt,
+};
 use r_wg::backend::wg::config;
 
 use super::super::persistence;
 use super::super::state::{
-    ConfigSource, EndpointFamily, LoadedConfigState, ParseCache, TunnelConfig, WgApp,
+    ConfigSource, ConfigDraftState, DraftValidationState, EditorOperation, EndpointFamily,
+    LoadedConfigState, ParseCache, PendingDraftAction, SidebarItem, TunnelConfig, WgApp,
 };
 
 const CONFIG_TEXT_CACHE_LIMIT: usize = 32;
@@ -35,7 +44,20 @@ impl WgApp {
     pub(crate) fn ensure_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.ui.name_input.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Tunnel name"));
+            let subscription = cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.sync_draft_from_inputs(cx);
+                    if let Some(workspace) = this.ui.configs_workspace.clone() {
+                        let _ = workspace.update(cx, |_, cx| {
+                            cx.notify();
+                        });
+                    } else {
+                        cx.notify();
+                    }
+                }
+            });
             self.ui.name_input = Some(input);
+            self.ui.name_input_subscription = Some(subscription);
         }
 
         if self.ui.config_input.is_none() {
@@ -46,7 +68,20 @@ impl WgApp {
                     .rows(16)
                     .placeholder(placeholder)
             });
+            let subscription = cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.sync_draft_from_inputs(cx);
+                    if let Some(workspace) = this.ui.configs_workspace.clone() {
+                        let _ = workspace.update(cx, |_, cx| {
+                            cx.notify();
+                        });
+                    } else {
+                        cx.notify();
+                    }
+                }
+            });
             self.ui.config_input = Some(input);
+            self.ui.config_input_subscription = Some(subscription);
         }
     }
 
@@ -94,38 +129,316 @@ impl WgApp {
         text
     }
 
-    /// 根据配置文本更新解析缓存。
-    ///
-    /// 说明：
-    /// - 只缓存当前选中配置，避免全量解析；
-    /// - 如果文本哈希没变，直接复用缓存；
-    /// - 解析发生在 UI 线程上，但仅在文本变更时触发。
-    fn update_parse_cache(&mut self, name: &str, text: &str, text_hash: u64) -> u64 {
-        if let Some(cache) = &self.selection.parse_cache {
-            if cache.name == name && cache.text_hash == text_hash {
-                return text_hash;
+    fn apply_draft_validation(&mut self) {
+        let name = self.editor.draft.name.to_string();
+        let text = self.editor.draft.text.clone();
+        let text_hash = text_hash(text.as_ref());
+
+        self.editor.draft.dirty_name = self.editor.draft.name != self.editor.draft.base_name;
+        self.editor.draft.dirty_text = text_hash != self.editor.draft.base_text_hash;
+        self.editor.draft.validation = if text.as_ref().trim().is_empty() {
+            DraftValidationState::Idle
+        } else {
+            match config::parse_config(text.as_ref()) {
+                Ok(parsed) => DraftValidationState::Valid {
+                    text_hash,
+                    endpoint_family: endpoint_family_hint_from_config(&parsed).base_family,
+                    parsed,
+                },
+                Err(err) => DraftValidationState::Invalid {
+                    text_hash,
+                    line: err.line,
+                    message: err.message.into(),
+                },
             }
+        };
+        self.editor.draft.needs_restart =
+            self.editor.draft.is_dirty() && self.runtime.running_id == self.editor.draft.source_id;
+        self.set_parse_cache_from_draft(&name);
+    }
+
+    fn set_parse_cache_from_draft(&mut self, name: &str) {
+        self.selection.parse_cache = match &self.editor.draft.validation {
+            DraftValidationState::Idle => None,
+            DraftValidationState::Valid {
+                text_hash, parsed, ..
+            } => Some(ParseCache {
+                name: name.to_string(),
+                text_hash: *text_hash,
+                parsed: Some(parsed.clone()),
+                error: None,
+            }),
+            DraftValidationState::Invalid {
+                text_hash,
+                line,
+                message,
+            } => Some(ParseCache {
+                name: name.to_string(),
+                text_hash: *text_hash,
+                parsed: None,
+                error: Some(match line {
+                    Some(line) => format!("line {line}: {message}"),
+                    None => message.to_string(),
+                }),
+            }),
+        };
+    }
+
+    fn set_saved_draft(&mut self, source_id: u64, name: SharedString, text: SharedString) {
+        self.editor.draft = ConfigDraftState {
+            source_id: Some(source_id),
+            name: name.clone(),
+            text: text.clone(),
+            base_name: name,
+            base_text_hash: text_hash(text.as_ref()),
+            dirty_name: false,
+            dirty_text: false,
+            validation: DraftValidationState::Idle,
+            needs_restart: false,
+        };
+        self.apply_draft_validation();
+    }
+
+    fn set_unsaved_draft(&mut self, name: SharedString, text: SharedString) {
+        self.editor.draft = ConfigDraftState {
+            source_id: None,
+            name,
+            text,
+            base_name: SharedString::new_static(""),
+            base_text_hash: 0,
+            dirty_name: true,
+            dirty_text: true,
+            validation: DraftValidationState::Idle,
+            needs_restart: false,
+        };
+        self.apply_draft_validation();
+    }
+
+    pub(crate) fn sync_draft_from_inputs(&mut self, _cx: &mut Context<Self>) {
+        let Some(name_input) = self.ui.name_input.as_ref() else {
+            return;
+        };
+        let Some(config_input) = self.ui.config_input.as_ref() else {
+            return;
+        };
+        let name = name_input.read(_cx).value();
+        let text = config_input.read(_cx).value();
+        if self.editor.draft.name == name && self.editor.draft.text == text {
+            return;
+        }
+        self.editor.draft.name = name;
+        self.editor.draft.text = text;
+        self.apply_draft_validation();
+    }
+
+    fn discard_current_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(source_id) = self.editor.draft.source_id.or(self.selection.selected_id) {
+            self.selection.selected_id = Some(source_id);
+            self.load_config_into_inputs(source_id, window, cx);
+        } else {
+            self.selection.selected_id = None;
+            self.clear_inputs(window, cx);
+        }
+    }
+
+    fn run_pending_draft_action(
+        &mut self,
+        action: PendingDraftAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            PendingDraftAction::SelectConfig(config_id) => {
+                if self.selection.selected_id == Some(config_id) {
+                    return;
+                }
+                self.selection.selected_id = Some(config_id);
+                self.load_config_into_inputs(config_id, window, cx);
+                self.persist_state_async(cx);
+                self.set_status("Loaded tunnel");
+                cx.notify();
+            }
+            PendingDraftAction::ActivateSidebar(item) => {
+                self.set_sidebar_active(item, cx);
+            }
+            PendingDraftAction::NewDraft => {
+                self.selection.selected_id = None;
+                self.clear_inputs(window, cx);
+                self.set_status("New draft");
+                cx.notify();
+            }
+            PendingDraftAction::Import => {
+                self.handle_import_click(window, cx);
+            }
+            PendingDraftAction::Paste => {
+                self.handle_paste_click(window, cx);
+            }
+            PendingDraftAction::DeleteCurrent => {
+                self.open_delete_current_config_dialog(window, cx);
+            }
+        }
+    }
+
+    pub(crate) fn confirm_discard_or_save(
+        &mut self,
+        action: PendingDraftAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        title: impl Into<SharedString>,
+        body: impl Into<SharedString>,
+    ) {
+        if !self.editor.draft.is_dirty() {
+            self.run_pending_draft_action(action, window, cx);
+            return;
         }
 
-        match config::parse_config(text) {
-            Ok(parsed) => {
-                self.selection.parse_cache = Some(ParseCache {
-                    name: name.to_string(),
-                    text_hash,
-                    parsed: Some(parsed),
-                    error: None,
-                });
-            }
-            Err(err) => {
-                self.selection.parse_cache = Some(ParseCache {
-                    name: name.to_string(),
-                    text_hash,
-                    parsed: None,
-                    error: Some(err.to_string()),
-                });
-            }
+        let app_handle = cx.entity();
+        let title = title.into();
+        let body = body.into();
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let app_handle_save = app_handle.clone();
+            let app_handle_discard = app_handle.clone();
+            let app_handle_ok = app_handle.clone();
+            dialog
+                .title(div().text_lg().child(title.clone()))
+                .confirm()
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("Save")
+                        .ok_variant(ButtonVariant::Primary)
+                        .cancel_text("Cancel"),
+                )
+                .child(div().text_sm().child(body.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(_cx.theme().muted_foreground)
+                        .child("Save your edits, discard them, or cancel this action."),
+                )
+                .footer(move |_ok, _cancel, _window, _cx| {
+                    let save_handle = app_handle_save.clone();
+                    let discard_handle = app_handle_discard.clone();
+                    let save_button = Button::new("draft-dialog-save")
+                        .label("Save")
+                        .on_click(move |_, window, cx| {
+                            let _ = save_handle.update(cx, |app, cx| {
+                                app.editor.pending_action = Some(action);
+                                app.save_draft(false, window, cx);
+                            });
+                            window.close_dialog(cx);
+                        });
+                    let discard_button = Button::new("draft-dialog-discard")
+                        .label("Discard")
+                        .danger()
+                        .on_click(move |_, window, cx| {
+                            window.on_next_frame({
+                                let discard_handle = discard_handle.clone();
+                                move |window, cx| {
+                                    let _ = discard_handle.update(cx, |app, cx| {
+                                        app.editor.pending_action = None;
+                                        app.discard_current_draft(window, cx);
+                                        app.run_pending_draft_action(action, window, cx);
+                                    });
+                                }
+                            });
+                            window.close_dialog(cx);
+                        });
+                    let cancel_button = Button::new("draft-dialog-cancel")
+                        .label("Cancel")
+                        .outline()
+                        .on_click(|_, window, cx| {
+                            window.close_dialog(cx);
+                        });
+                    vec![
+                        cancel_button.into_any_element(),
+                        discard_button.into_any_element(),
+                        save_button.into_any_element(),
+                    ]
+                })
+                .on_ok(move |_, window, cx| {
+                    let _ = app_handle_ok.update(cx, |app, cx| {
+                        app.editor.pending_action = Some(action);
+                        app.save_draft(false, window, cx);
+                    });
+                    true
+                })
+        });
+    }
+
+    pub(crate) fn request_sidebar_active(
+        &mut self,
+        item: SidebarItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.ui_session.sidebar_active == item {
+            return;
         }
-        text_hash
+        self.confirm_discard_or_save(
+            PendingDraftAction::ActivateSidebar(item),
+            window,
+            cx,
+            "Leave Configs?",
+            "You have unsaved changes in the current config draft.",
+        );
+    }
+
+    pub(crate) fn handle_new_draft_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.confirm_discard_or_save(
+            PendingDraftAction::NewDraft,
+            window,
+            cx,
+            "Create new draft?",
+            "Creating a new draft will replace the current unsaved draft.",
+        );
+    }
+
+    fn open_delete_current_config_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(config_id) = self.selection.selected_id else {
+            self.set_error("Select a tunnel first");
+            cx.notify();
+            return;
+        };
+        let config_name = self
+            .configs
+            .get_by_id(config_id)
+            .map(|cfg| cfg.name.clone())
+            .unwrap_or_else(|| "this config".to_string());
+        let app_handle = cx.entity();
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let delete_handle = app_handle.clone();
+            dialog
+                .title(div().text_lg().child("Delete config?"))
+                .confirm()
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("Delete")
+                        .ok_variant(ButtonVariant::Danger)
+                        .cancel_text("Cancel"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .child(format!("Delete \"{config_name}\"? This cannot be undone.")),
+                )
+                .on_ok(move |_, window, cx| {
+                    let _ = delete_handle.update(cx, |app, cx| {
+                        app.handle_confirmed_delete_current(window, cx);
+                    });
+                    true
+                })
+        });
+    }
+
+    fn handle_confirmed_delete_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(config_id) = self.selection.selected_id else {
+            self.set_error("Select a tunnel first");
+            cx.notify();
+            return;
+        };
+        self.delete_configs_blocking_running(&[config_id], window, cx);
     }
 
     fn update_parse_cache_name(&mut self, old_name: &str, new_name: &str) {
@@ -136,21 +449,14 @@ impl WgApp {
         }
     }
 
-    /// 插入或覆盖配置，并自动选中。
-    ///
-    /// 说明：以名称为主键，若同名则覆盖，保证列表里不会出现重复名称。
-    pub(crate) fn upsert_config(
+    /// 按 ID 插入或更新配置，并保持选中状态与 draft 基线一致。
+    pub(crate) fn insert_or_update_config(
         &mut self,
         config: TunnelConfig,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // 同名配置覆盖，不存在则追加。
-        let idx = match self
-            .configs
-            .iter()
-            .position(|entry| entry.name == config.name)
-        {
+        let idx = match self.configs.find_index_by_id(config.id) {
             Some(idx) => {
                 self.configs[idx] = config;
                 idx
@@ -163,6 +469,9 @@ impl WgApp {
 
         let config_id = self.configs[idx].id;
         self.selection.selected_id = Some(config_id);
+        if let Some(text) = self.configs[idx].text.clone() {
+            self.set_saved_draft(config_id, self.configs[idx].name.clone().into(), text);
+        }
         self.load_config_into_inputs(config_id, window, cx);
         if self.configs[idx].endpoint_family == EndpointFamily::Unknown {
             let text = self.configs[idx].text.clone();
@@ -207,15 +516,18 @@ impl WgApp {
                 }
             }
 
+            self.editor.operation = Some(EditorOperation::LoadingConfig);
+            self.set_saved_draft(config_id, name.clone().into(), text.clone());
+
             name_input.update(cx, |input, cx| {
                 input.set_value(name.clone(), window, cx);
             });
             config_input.update(cx, |input, cx| {
                 input.set_value(text.clone(), window, cx);
             });
+            self.editor.operation = None;
             self.selection.loading_config_id = None;
             self.selection.loading_config_path = None;
-            self.update_parse_cache(&name, text.as_ref(), text_hash);
             self.selection.loaded_config = Some(LoadedConfigState { name, text_hash });
             if endpoint_family == EndpointFamily::Unknown {
                 self.schedule_endpoint_family_refresh(config_id, Some(text), path, cx);
@@ -232,15 +544,18 @@ impl WgApp {
                 }
             }
 
+            self.editor.operation = Some(EditorOperation::LoadingConfig);
+            self.set_saved_draft(config_id, name.clone().into(), text.clone());
+
             name_input.update(cx, |input, cx| {
                 input.set_value(name.clone(), window, cx);
             });
             config_input.update(cx, |input, cx| {
                 input.set_value(text.clone(), window, cx);
             });
+            self.editor.operation = None;
             self.selection.loading_config_id = None;
             self.selection.loading_config_path = None;
-            self.update_parse_cache(&name, text.as_ref(), text_hash);
             self.selection.loaded_config = Some(LoadedConfigState { name, text_hash });
             if endpoint_family == EndpointFamily::Unknown {
                 self.schedule_endpoint_family_refresh(config_id, Some(text), path, cx);
@@ -252,6 +567,7 @@ impl WgApp {
         // 注意：这里会把 loading_config_path 记录下来，避免索引复用导致错写。
         self.selection.loading_config_id = Some(config_id);
         self.selection.loading_config_path = Some(path.clone());
+        self.editor.operation = Some(EditorOperation::LoadingConfig);
         if endpoint_family == EndpointFamily::Unknown {
             self.selection.endpoint_family_loading.insert(config_id);
         }
@@ -312,15 +628,21 @@ impl WgApp {
                             if should_write_ui {
                                 this.selection.loading_config_id = None;
                                 this.selection.loading_config_path = None;
+                                this.set_saved_draft(config_id, name.clone().into(), text.clone());
                                 if let Some(config_input) = this.ui.config_input.as_ref() {
                                     config_input.update(cx, |input, cx| {
                                         input.set_value(text.clone(), window, cx);
                                     });
                                 }
+                                if let Some(name_input) = this.ui.name_input.as_ref() {
+                                    name_input.update(cx, |input, cx| {
+                                        input.set_value(name.clone(), window, cx);
+                                    });
+                                }
                                 let text_hash = text_hash(text.as_ref());
-                                this.update_parse_cache(&name, text.as_ref(), text_hash);
                                 this.selection.loaded_config =
                                     Some(LoadedConfigState { name, text_hash });
+                                this.editor.operation = None;
                                 this.set_status("Loaded config");
                             }
                             cx.notify();
@@ -330,6 +652,7 @@ impl WgApp {
                             if should_write_ui {
                                 this.selection.loading_config_id = None;
                                 this.selection.loading_config_path = None;
+                                this.editor.operation = None;
                                 this.set_error(format!("Read failed: {err}"));
                                 cx.notify();
                             }
@@ -350,17 +673,32 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selection.selected_id = Some(config_id);
-        self.load_config_into_inputs(config_id, window, cx);
-        self.persist_state_async(cx);
-        self.set_status("Loaded tunnel");
-        cx.notify();
+        if self.selection.selected_id == Some(config_id) {
+            return;
+        }
+        self.confirm_discard_or_save(
+            PendingDraftAction::SelectConfig(config_id),
+            window,
+            cx,
+            "Switch config?",
+            "You have unsaved changes in the current config draft.",
+        );
     }
 
     /// 从剪贴板粘贴配置，并进行基础校验。
     ///
     /// 说明：粘贴路径不依赖文件系统，仍需要 parse 校验以避免写入无效配置。
     pub(crate) fn handle_paste_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.draft.is_dirty() {
+            self.confirm_discard_or_save(
+                PendingDraftAction::Paste,
+                window,
+                cx,
+                "Replace draft?",
+                "Pasting a config will replace the current unsaved draft.",
+            );
+            return;
+        }
         // 从剪贴板读取配置文本并校验。
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             self.set_error("Clipboard is empty");
@@ -375,116 +713,86 @@ impl WgApp {
         }
         let text: SharedString = text.into();
 
-        let name = self
+        let suggested_name = self
             .ui
             .name_input
             .as_ref()
             .map(|input| input.read(cx).value().to_string())
             .unwrap_or_default();
-        let name = name.trim();
-        let name = if name.is_empty() {
+        let suggested_name = suggested_name.trim();
+        let name = if suggested_name.is_empty() {
             self.next_config_name("pasted")
+        } else if self.configs.iter().any(|cfg| cfg.name == suggested_name) {
+            self.next_config_name(suggested_name)
         } else {
-            name.to_string()
+            suggested_name.to_string()
         };
 
-        let storage = match self.configs.ensure_storage() {
-            Ok(storage) => storage,
-            Err(err) => {
-                self.set_error(err);
-                cx.notify();
-                return;
-            }
-        };
-        let id = self.configs.alloc_config_id();
-        let storage_path = persistence::config_path(&storage, id);
-        let name_lower = name.to_lowercase();
-        let text_for_write = text.to_string();
-        let text_for_state = text.clone();
-
-        self.runtime.busy = true;
-        self.set_status("Saving config...");
+        self.selection.selected_id = None;
+        self.selection.loading_config_id = None;
+        self.selection.loading_config_path = None;
+        self.selection.loaded_config = None;
+        self.set_unsaved_draft(name.clone().into(), text.clone());
+        if let Some(name_input) = self.ui.name_input.as_ref() {
+            name_input.update(cx, |input, cx| {
+                input.set_value(name.clone(), window, cx);
+            });
+        }
+        if let Some(config_input) = self.ui.config_input.as_ref() {
+            config_input.update(cx, |input, cx| {
+                input.set_value(text, window, cx);
+            });
+        }
+        self.set_status("Pasted config into draft");
         cx.notify();
-
-        let storage_path_for_write = storage_path.clone();
-        let view = cx.weak_entity();
-        window
-            .spawn(cx, async move |cx| {
-                let write_task = cx.background_spawn(async move {
-                    persistence::write_config_text(&storage_path_for_write, &text_for_write)
-                });
-                let result = write_task.await;
-                view.update_in(cx, |this, window, cx| {
-                    this.runtime.busy = false;
-                    match result {
-                        Ok(()) => {
-                            this.upsert_config(
-                                TunnelConfig {
-                                    id,
-                                    name: name.clone(),
-                                    name_lower,
-                                    text: Some(text_for_state),
-                                    source: ConfigSource::Paste,
-                                    storage_path,
-                                    endpoint_family: EndpointFamily::Unknown,
-                                },
-                                window,
-                                cx,
-                            );
-                            this.persist_state_async(cx);
-                            this.set_status(format!("Pasted {name}"));
-                        }
-                        Err(err) => {
-                            this.set_error(err);
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
     }
 
-    /// 保存当前输入框内容到配置列表。
-    ///
-    /// 说明：包含必填校验、格式校验与重名校验，避免异常状态进入模型。
-    pub(crate) fn handle_save_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // 读取输入框并写回配置列表。
+    fn save_draft(&mut self, force_new: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_inputs(window, cx);
-        let Some(name_input) = self.ui.name_input.as_ref() else {
-            self.set_error("Name input not ready");
-            cx.notify();
-            return;
-        };
-        let Some(config_input) = self.ui.config_input.as_ref() else {
-            self.set_error("Config input not ready");
-            cx.notify();
-            return;
-        };
+        self.sync_draft_from_inputs(cx);
 
-        let name_value = name_input.read(cx).value();
-        let name = name_value.as_ref().trim();
+        let name = self.editor.draft.name.to_string();
+        let name = name.trim();
         if name.is_empty() {
             self.set_error("Tunnel name is required");
             cx.notify();
             return;
         }
 
-        let text = config_input.read(cx).value();
+        let text = self.editor.draft.text.clone();
         if text.as_ref().trim().is_empty() {
             self.set_error("Config text is required");
             cx.notify();
             return;
         }
 
-        if let Err(err) = config::parse_config(text.as_ref()) {
-            self.set_error(format!("Invalid config: {err}"));
-            cx.notify();
-            return;
-        }
+        let endpoint_family = match &self.editor.draft.validation {
+            DraftValidationState::Valid {
+                endpoint_family, ..
+            } => *endpoint_family,
+            DraftValidationState::Invalid { line, message, .. } => {
+                self.set_error(match line {
+                    Some(line) => format!("Invalid config: line {line}: {message}"),
+                    None => format!("Invalid config: {message}"),
+                });
+                cx.notify();
+                return;
+            }
+            DraftValidationState::Idle => {
+                self.set_error("Config text is required");
+                cx.notify();
+                return;
+            }
+        };
+
+        let source_id = if force_new {
+            None
+        } else {
+            self.editor.draft.source_id
+        };
 
         if self.configs.iter().any(|entry| {
-            entry.name == name && self.selected_config().map(|cfg| cfg.name.as_str()) != Some(name)
+            entry.name == name && Some(entry.id) != source_id
         }) {
             self.set_error("Tunnel name already exists");
             cx.notify();
@@ -501,11 +809,8 @@ impl WgApp {
             }
         };
 
-        let existing = self
-            .selected_config()
-            .filter(|cfg| cfg.name == name)
-            .cloned();
-        let (id, storage_path, source) = match existing {
+        let (id, storage_path, source) = match source_id.and_then(|id| self.configs.find_by_id(id))
+        {
             Some(cfg) => (cfg.id, cfg.storage_path, cfg.source),
             None => {
                 let id = self.configs.alloc_config_id();
@@ -518,7 +823,7 @@ impl WgApp {
         let text_for_write = text.to_string();
         let text_for_state = text.clone();
 
-        self.runtime.busy = true;
+        self.editor.operation = Some(EditorOperation::Saving);
         self.set_status("Saving config...");
         cx.notify();
 
@@ -531,10 +836,10 @@ impl WgApp {
                 });
                 let result = write_task.await;
                 view.update_in(cx, |this, window, cx| {
-                    this.runtime.busy = false;
+                    this.editor.operation = None;
                     match result {
                         Ok(()) => {
-                            this.upsert_config(
+                            this.insert_or_update_config(
                                 TunnelConfig {
                                     id,
                                     name: name.to_string(),
@@ -542,13 +847,20 @@ impl WgApp {
                                     text: Some(text_for_state),
                                     source,
                                     storage_path,
-                                    endpoint_family: EndpointFamily::Unknown,
+                                    endpoint_family,
                                 },
                                 window,
                                 cx,
                             );
                             this.persist_state_async(cx);
-                            this.set_status("Saved tunnel");
+                            if force_new {
+                                this.set_status(format!("Saved {name} as a new config"));
+                            } else {
+                                this.set_status("Saved tunnel");
+                            }
+                            if let Some(action) = this.editor.pending_action.take() {
+                                this.run_pending_draft_action(action, window, cx);
+                            }
                         }
                         Err(err) => {
                             this.set_error(err);
@@ -561,18 +873,24 @@ impl WgApp {
             .detach();
     }
 
+    /// 保存当前 draft 到当前选中的配置 ID。
+    pub(crate) fn handle_save_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_draft(false, window, cx);
+    }
+
+    /// 将当前 draft 另存为新的配置条目。
+    pub(crate) fn handle_save_as_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_draft(true, window, cx);
+    }
+
     /// 仅修改配置名称，不改内容。
     ///
     /// 说明：重命名时同步更新运行中的隧道名称，避免 UI 状态与引擎名称不一致。
     pub(crate) fn handle_rename_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // 仅更新名称，不修改配置文本。
         self.ensure_inputs(window, cx);
-        let Some(name_input) = self.ui.name_input.as_ref() else {
-            self.set_error("Name input not ready");
-            cx.notify();
-            return;
-        };
-        let new_name = name_input.read(cx).value().to_string();
+        self.sync_draft_from_inputs(cx);
+        let new_name = self.editor.draft.name.to_string();
         let new_name = new_name.trim();
         if new_name.is_empty() {
             self.set_error("Tunnel name is required");
@@ -580,7 +898,7 @@ impl WgApp {
             return;
         }
 
-        let Some(config_id) = self.selection.selected_id else {
+        let Some(config_id) = self.editor.draft.source_id.or(self.selection.selected_id) else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
@@ -610,11 +928,14 @@ impl WgApp {
                 loaded.name = new_name.to_string();
             }
         }
+        if self.editor.draft.source_id == Some(config_id) {
+            self.editor.draft.base_name = new_name.to_string().into();
+            self.apply_draft_validation();
+        }
         if self.runtime.running_name.as_deref() == Some(old_name.as_str()) {
             self.runtime.running_name = Some(new_name.to_string());
         }
         self.set_status(format!("Renamed to {new_name}"));
-        self.load_config_into_inputs(config_id, window, cx);
         self.persist_state_async(cx);
         cx.notify();
     }
@@ -623,12 +944,22 @@ impl WgApp {
     ///
     /// 说明：运行中的配置禁止删除，避免状态错乱和用户误操作。
     pub(crate) fn handle_delete_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(config_id) = self.selection.selected_id else {
+        let Some(_config_id) = self.selection.selected_id else {
             self.set_error("Select a tunnel first");
             cx.notify();
             return;
         };
-        self.delete_configs_blocking_running(&[config_id], window, cx);
+        if self.editor.draft.is_dirty() {
+            self.confirm_discard_or_save(
+                PendingDraftAction::DeleteCurrent,
+                window,
+                cx,
+                "Delete config?",
+                "You have unsaved changes in the current config draft.",
+            );
+            return;
+        }
+        self.open_delete_current_config_dialog(window, cx);
     }
 
     /// 删除指定配置：遇到运行中则阻止删除。
@@ -718,6 +1049,7 @@ impl WgApp {
             return;
         }
 
+        self.editor.operation = Some(EditorOperation::Deleting);
         let prev_selected_id = self.selection.selected_id;
         let prev_selected_idx = prev_selected_id.and_then(|id| self.configs.find_index_by_id(id));
 
@@ -766,6 +1098,7 @@ impl WgApp {
 
         self.set_status(format_delete_status(&deleted_names, skipped_running.len()));
         self.persist_state_async(cx);
+        self.editor.operation = None;
         cx.notify();
 
         cx.spawn(async move |view, cx| {
@@ -864,6 +1197,8 @@ impl WgApp {
         self.selection.loading_config_id = None;
         self.selection.loading_config_path = None;
         self.selection.parse_cache = None;
+        self.editor.draft = ConfigDraftState::new();
+        self.editor.operation = None;
         if let Some(name_input) = self.ui.name_input.as_ref() {
             name_input.update(cx, |input, cx| input.set_value("", window, cx));
         }
@@ -887,60 +1222,6 @@ impl WgApp {
             }
         }
         format!("{base}-{}", self.configs.len() + 1)
-    }
-
-    pub(crate) fn refresh_all_endpoint_family_metadata(&mut self, cx: &mut Context<Self>) {
-        let jobs = self
-            .configs
-            .iter()
-            .filter(|config| {
-                config.endpoint_family == EndpointFamily::Unknown
-                    && !self.selection.endpoint_family_loading.contains(&config.id)
-            })
-            .map(|config| (config.id, config.storage_path.clone()))
-            .collect::<Vec<_>>();
-        if jobs.is_empty() {
-            return;
-        }
-        for (config_id, _) in &jobs {
-            self.selection.endpoint_family_loading.insert(*config_id);
-        }
-
-        cx.spawn(async move |view, cx| {
-            let refresh_task = cx.background_spawn(async move {
-                let mut results = Vec::with_capacity(jobs.len());
-                for (config_id, path) in jobs {
-                    let family = match std::fs::read_to_string(&path) {
-                        Ok(text) => Some(resolve_endpoint_family_from_text(text).await),
-                        Err(_) => None,
-                    };
-                    results.push((config_id, family));
-                }
-                results
-            });
-            let results = refresh_task.await;
-            view.update(cx, |this, cx| {
-                let mut changed = false;
-                for (config_id, family) in results {
-                    this.selection.endpoint_family_loading.remove(&config_id);
-                    let Some(family) = family else {
-                        continue;
-                    };
-                    let Some(config) = this.configs.get_mut_by_id(config_id) else {
-                        continue;
-                    };
-                    if config.endpoint_family != family {
-                        config.endpoint_family = family;
-                        changed = true;
-                    }
-                }
-                if changed {
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
     }
 
     pub(crate) fn schedule_endpoint_family_refresh(

@@ -14,7 +14,11 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
     let title = div();
 
     let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
-    let can_start = config_valid && !app.runtime.running && !app.runtime.busy;
+    let can_start = config_valid
+        && data.has_saved_source
+        && !data.draft_dirty
+        && !app.runtime.running
+        && !app.runtime.busy;
     let can_stop = app.runtime.running && !app.runtime.busy;
 
     let is_dark = cx.theme().is_dark();
@@ -60,7 +64,11 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 })),
         );
 
-    let on_tooltip = if config_valid {
+    let on_tooltip = if !data.has_saved_source {
+        "Save this draft before starting"
+    } else if data.draft_dirty {
+        "Save changes before starting"
+    } else if config_valid {
         "Start tunnel"
     } else {
         "Select a valid config first"
@@ -138,8 +146,8 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .ghost()
         .icon(Icon::new(IconName::Settings).size_5())
         .tooltip("Open preferences")
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.set_sidebar_active(SidebarItem::Advanced, cx);
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.request_sidebar_active(SidebarItem::Advanced, window, cx);
         }));
 
     let tools = h_flex()
