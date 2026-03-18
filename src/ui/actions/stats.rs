@@ -100,7 +100,8 @@ impl WgApp {
                         }
                         let should_notify = match this.ui_session.sidebar_active {
                             SidebarItem::Configs => {
-                                this.ui_session.inspector_tab == ConfigInspectorTab::Activity
+                                this.current_configs_inspector_tab(cx)
+                                    == ConfigInspectorTab::Activity
                             }
                             SidebarItem::Proxies => false,
                             _ => true,

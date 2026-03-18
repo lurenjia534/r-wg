@@ -190,6 +190,8 @@ impl<'a> PersistedStateSnapshot<'a> {
             log_auto_follow: Some(self.ui_prefs.log_auto_follow),
             preferred_inspector_tab: Some(self.ui_prefs.preferred_inspector_tab),
             preferred_traffic_period: Some(self.ui_prefs.preferred_traffic_period),
+            configs_library_width: Some(self.ui_prefs.configs_library_width),
+            configs_inspector_width: Some(self.ui_prefs.configs_inspector_width),
             proxies_view_mode: Some(self.ui_prefs.proxies_view_mode),
             dns_mode: Some(self.ui_prefs.dns_mode),
             dns_preset: Some(self.ui_prefs.dns_preset),
@@ -264,6 +266,8 @@ struct PersistedStateRestore {
     log_auto_follow: Option<bool>,
     preferred_inspector_tab: Option<super::super::state::ConfigInspectorTab>,
     preferred_traffic_period: Option<super::super::state::TrafficPeriod>,
+    configs_library_width: Option<f32>,
+    configs_inspector_width: Option<f32>,
     proxies_view_mode: Option<super::super::state::ProxiesViewMode>,
     dns_mode: Option<DnsMode>,
     dns_preset: Option<DnsPreset>,
@@ -333,6 +337,8 @@ impl PersistedStateRestore {
             log_auto_follow: state.log_auto_follow,
             preferred_inspector_tab: state.preferred_inspector_tab,
             preferred_traffic_period: state.preferred_traffic_period,
+            configs_library_width: state.configs_library_width,
+            configs_inspector_width: state.configs_inspector_width,
             proxies_view_mode: state.proxies_view_mode,
             dns_mode: state.dns_mode,
             dns_preset: state.dns_preset,
@@ -366,6 +372,12 @@ impl PersistedStateRestore {
         }
         if let Some(preferred_traffic_period) = self.preferred_traffic_period {
             ui_prefs.preferred_traffic_period = preferred_traffic_period;
+        }
+        if let Some(configs_library_width) = self.configs_library_width {
+            ui_prefs.configs_library_width = configs_library_width.clamp(240.0, 420.0);
+        }
+        if let Some(configs_inspector_width) = self.configs_inspector_width {
+            ui_prefs.configs_inspector_width = configs_inspector_width.clamp(280.0, 440.0);
         }
         if let Some(proxies_view_mode) = self.proxies_view_mode {
             ui_prefs.proxies_view_mode = proxies_view_mode;

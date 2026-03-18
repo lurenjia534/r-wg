@@ -1,4 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::net::IpAddr;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
@@ -26,9 +29,11 @@ pub(crate) const TRAFFIC_ROLLING_DAYS: usize = 60;
 pub(crate) const TRAFFIC_HOURLY_HISTORY: usize = 48;
 /// stop -> start 的最短冷却时间。
 pub(crate) const RESTART_COOLDOWN: Duration = Duration::from_millis(300);
+pub(crate) const DEFAULT_CONFIGS_LIBRARY_WIDTH: f32 = 300.0;
+pub(crate) const DEFAULT_CONFIGS_INSPECTOR_WIDTH: f32 = 332.0;
 
 /// 配置来源：文件或粘贴文本。
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum ConfigSource {
     File { origin_path: Option<PathBuf> },
     Paste,
@@ -84,14 +89,6 @@ impl TunnelConfig {
     }
 }
 
-/// 选中配置的解析缓存，避免渲染时重复解析。
-pub(crate) struct ParseCache {
-    pub(crate) name: String,
-    pub(crate) text_hash: u64,
-    pub(crate) parsed: Option<config::WireGuardConfig>,
-    pub(crate) error: Option<String>,
-}
-
 /// 最近一次载入到输入框的配置，避免重复 set_value。
 pub(crate) struct LoadedConfigState {
     pub(crate) name: String,
@@ -102,12 +99,10 @@ pub(crate) struct LoadedConfigState {
 pub(crate) enum DraftValidationState {
     Idle,
     Valid {
-        text_hash: u64,
         parsed: config::WireGuardConfig,
         endpoint_family: EndpointFamily,
     },
     Invalid {
-        text_hash: u64,
         line: Option<usize>,
         message: SharedString,
     },
@@ -145,14 +140,6 @@ impl ConfigDraftState {
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty_name || self.dirty_text
     }
-
-    pub(crate) fn text_hash(&self) -> u64 {
-        match &self.validation {
-            DraftValidationState::Valid { text_hash, .. }
-            | DraftValidationState::Invalid { text_hash, .. } => *text_hash,
-            DraftValidationState::Idle => 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,6 +158,7 @@ pub(crate) struct EditorState {
     pub(crate) draft: ConfigDraftState,
     pub(crate) operation: Option<EditorOperation>,
     pub(crate) pending_action: Option<PendingDraftAction>,
+    pub(crate) validation_generation: u64,
 }
 
 impl EditorState {
@@ -179,6 +167,7 @@ impl EditorState {
             draft: ConfigDraftState::new(),
             operation: None,
             pending_action: None,
+            validation_generation: 0,
         }
     }
 
@@ -189,12 +178,244 @@ impl EditorState {
 
 pub(crate) struct ConfigsWorkspace {
     pub(crate) app: Entity<WgApp>,
+    pub(crate) draft: ConfigDraftState,
+    pub(crate) operation: Option<EditorOperation>,
+    pub(crate) pending_action: Option<PendingDraftAction>,
+    pub(crate) validation_generation: u64,
+    pub(crate) has_selection: bool,
+    pub(crate) inspector_tab: ConfigInspectorTab,
+    pub(crate) library_rows: Vec<ConfigsLibraryRow>,
+    pub(crate) library_width: f32,
+    pub(crate) inspector_width: f32,
+    pub(crate) name_input: Option<Entity<InputState>>,
+    pub(crate) config_input: Option<Entity<InputState>>,
+    pub(crate) name_input_subscription: Option<Subscription>,
+    pub(crate) config_input_subscription: Option<Subscription>,
+    initialized: bool,
 }
 
 impl ConfigsWorkspace {
     pub(crate) fn new(app: Entity<WgApp>) -> Self {
-        Self { app }
+        Self {
+            app,
+            draft: ConfigDraftState::new(),
+            operation: None,
+            pending_action: None,
+            validation_generation: 0,
+            has_selection: false,
+            inspector_tab: ConfigInspectorTab::Preview,
+            library_rows: Vec::new(),
+            library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,
+            inspector_width: DEFAULT_CONFIGS_INSPECTOR_WIDTH,
+            name_input: None,
+            config_input: None,
+            name_input_subscription: None,
+            config_input_subscription: None,
+            initialized: false,
+        }
     }
+
+    pub(crate) fn sync_from_app(&mut self, app: &WgApp) {
+        if !self.initialized {
+            self.inspector_tab = app.ui_prefs.preferred_inspector_tab;
+            self.library_width = app.ui_prefs.configs_library_width;
+            self.inspector_width = app.ui_prefs.configs_inspector_width;
+            self.initialized = true;
+        }
+
+        self.draft = app.editor.draft.clone();
+        self.operation = app.editor.operation.clone();
+        self.pending_action = app.editor.pending_action;
+        self.validation_generation = app.editor.validation_generation;
+        self.has_selection = app.selection.selected_id.is_some();
+
+        let next_rows = app
+            .configs
+            .iter()
+            .map(|config| ConfigsLibraryRow {
+                id: config.id,
+                name: config.name.clone(),
+                subtitle: match &config.source {
+                    ConfigSource::File { origin_path } => origin_path
+                        .as_ref()
+                        .and_then(|path| path.file_name())
+                        .and_then(|name| name.to_str())
+                        .map(|name| format!("Imported • {name}"))
+                        .unwrap_or_else(|| "Imported config".to_string()),
+                    ConfigSource::Paste => "Saved in app storage".to_string(),
+                },
+                source: config.source.clone(),
+                endpoint_family: config.endpoint_family,
+                is_running: app.runtime.running_id == Some(config.id)
+                    || app.runtime.running_name.as_deref() == Some(config.name.as_str()),
+                is_dirty: self.draft.source_id == Some(config.id) && self.draft.is_dirty(),
+            })
+            .collect::<Vec<_>>();
+
+        if self.library_rows != next_rows {
+            self.library_rows = next_rows;
+        }
+    }
+
+    pub(crate) fn sync_editor_snapshot(
+        &mut self,
+        draft: ConfigDraftState,
+        operation: Option<EditorOperation>,
+        pending_action: Option<PendingDraftAction>,
+        validation_generation: u64,
+        has_selection: bool,
+    ) {
+        self.draft = draft;
+        self.operation = operation;
+        self.pending_action = pending_action;
+        self.validation_generation = validation_generation;
+        self.has_selection = has_selection;
+    }
+
+    pub(crate) fn refresh_draft_flags(&mut self, running_id: Option<u64>) {
+        let text_hash = workspace_text_hash(self.draft.text.as_ref());
+        self.draft.dirty_name = self.draft.name != self.draft.base_name;
+        self.draft.dirty_text = text_hash != self.draft.base_text_hash;
+        self.draft.needs_restart =
+            self.draft.is_dirty() && running_id == self.draft.source_id;
+    }
+
+    pub(crate) fn sync_draft_from_values(
+        &mut self,
+        name: SharedString,
+        text: SharedString,
+        running_id: Option<u64>,
+    ) -> bool {
+        if self.draft.name == name && self.draft.text == text {
+            return false;
+        }
+        let text_changed = self.draft.text != text;
+        self.draft.name = name;
+        self.draft.text = text;
+        self.refresh_draft_flags(running_id);
+        if text_changed {
+            self.draft.validation = DraftValidationState::Idle;
+        }
+        true
+    }
+
+    pub(crate) fn apply_draft_validation(&mut self, running_id: Option<u64>) {
+        let text = self.draft.text.clone();
+        self.refresh_draft_flags(running_id);
+        self.draft.validation = if text.as_ref().trim().is_empty() {
+            DraftValidationState::Idle
+        } else {
+            match config::parse_config(text.as_ref()) {
+                Ok(parsed) => DraftValidationState::Valid {
+                    endpoint_family: workspace_endpoint_family_hint_from_config(&parsed),
+                    parsed,
+                },
+                Err(err) => DraftValidationState::Invalid {
+                    line: err.line,
+                    message: err.message.into(),
+                },
+            }
+        };
+    }
+
+    pub(crate) fn set_saved_draft(&mut self, source_id: u64, name: SharedString, text: SharedString) {
+        self.draft = ConfigDraftState {
+            source_id: Some(source_id),
+            name: name.clone(),
+            text: text.clone(),
+            base_name: name,
+            base_text_hash: workspace_text_hash(text.as_ref()),
+            dirty_name: false,
+            dirty_text: false,
+            validation: DraftValidationState::Idle,
+            needs_restart: false,
+        };
+    }
+
+    pub(crate) fn set_unsaved_draft(&mut self, name: SharedString, text: SharedString) {
+        self.draft = ConfigDraftState {
+            source_id: None,
+            name,
+            text,
+            base_name: SharedString::new_static(""),
+            base_text_hash: 0,
+            dirty_name: true,
+            dirty_text: true,
+            validation: DraftValidationState::Idle,
+            needs_restart: false,
+        };
+    }
+
+    pub(crate) fn set_inspector_tab(&mut self, value: ConfigInspectorTab) -> bool {
+        if self.inspector_tab == value {
+            return false;
+        }
+        self.inspector_tab = value;
+        true
+    }
+
+    pub(crate) fn has_inputs(&self) -> bool {
+        self.name_input.is_some() && self.config_input.is_some()
+    }
+
+    pub(crate) fn set_panel_widths(&mut self, library_width: f32, inspector_width: f32) -> bool {
+        let changed = self.library_width != library_width || self.inspector_width != inspector_width;
+        if changed {
+            self.library_width = library_width;
+            self.inspector_width = inspector_width;
+        }
+        changed
+    }
+}
+
+fn workspace_text_hash(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn workspace_endpoint_family_hint_from_config(cfg: &config::WireGuardConfig) -> EndpointFamily {
+    let mut has_v4 = false;
+    let mut has_v6 = false;
+
+    for peer in &cfg.peers {
+        let Some(endpoint) = &peer.endpoint else {
+            continue;
+        };
+        let host = endpoint.host.trim();
+        if host.is_empty() {
+            continue;
+        }
+        if let Ok(addr) = host.parse::<IpAddr>() {
+            if addr.is_ipv4() {
+                has_v4 = true;
+            } else {
+                has_v6 = true;
+            }
+            continue;
+        }
+        if host.contains(':') {
+            has_v6 = true;
+        }
+    }
+
+    match (has_v4, has_v6) {
+        (true, true) => EndpointFamily::Dual,
+        (true, false) => EndpointFamily::V4,
+        (false, true) => EndpointFamily::V6,
+        (false, false) => EndpointFamily::Unknown,
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct ConfigsLibraryRow {
+    pub(crate) id: u64,
+    pub(crate) name: String,
+    pub(crate) subtitle: String,
+    pub(crate) source: ConfigSource,
+    pub(crate) endpoint_family: EndpointFamily,
+    pub(crate) is_running: bool,
+    pub(crate) is_dirty: bool,
 }
 
 /// 日流量统计（按本地日期汇总）。
@@ -522,6 +743,7 @@ pub(crate) enum PendingDraftAction {
     Import,
     Paste,
     DeleteCurrent,
+    RestartTunnel,
 }
 
 pub(crate) struct ConfigsState {
@@ -615,8 +837,6 @@ pub(crate) struct SelectionState {
     pub(crate) loading_config_id: Option<u64>,
     /// 正在异步加载的配置路径（用于防止索引复用带来的错写）。
     pub(crate) loading_config_path: Option<PathBuf>,
-    /// 解析缓存：只缓存“当前选中”的解析结果，避免每次渲染都解析。
-    pub(crate) parse_cache: Option<ParseCache>,
     /// 最近一次写入输入框的配置标记，用于跳过重复 set_value。
     pub(crate) loaded_config: Option<LoadedConfigState>,
     /// 文本缓存：按路径缓存最近读取的配置文本，减少重复 IO。
@@ -646,7 +866,6 @@ impl SelectionState {
             selected_id: None,
             loading_config_id: None,
             loading_config_path: None,
-            parse_cache: None,
             loaded_config: None,
             config_text_cache: HashMap::new(),
             config_text_cache_order: VecDeque::new(),
@@ -687,7 +906,6 @@ impl SelectionState {
         configs: &ConfigsState,
     ) {
         self.selected_id = selected_id.filter(|id| configs.get_by_id(*id).is_some());
-        self.parse_cache = None;
         self.loaded_config = None;
         self.loading_config_id = None;
         self.loading_config_path = None;
@@ -880,6 +1098,8 @@ pub(crate) struct UiPrefsState {
     pub(crate) log_auto_follow: bool,
     pub(crate) preferred_inspector_tab: ConfigInspectorTab,
     pub(crate) preferred_traffic_period: TrafficPeriod,
+    pub(crate) configs_library_width: f32,
+    pub(crate) configs_inspector_width: f32,
     pub(crate) proxies_view_mode: ProxiesViewMode,
     pub(crate) theme_mode: ThemeMode,
     pub(crate) dns_mode: DnsMode,
@@ -892,6 +1112,8 @@ impl UiPrefsState {
             log_auto_follow: true,
             preferred_inspector_tab: ConfigInspectorTab::Preview,
             preferred_traffic_period: TrafficPeriod::Today,
+            configs_library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,
+            configs_inspector_width: DEFAULT_CONFIGS_INSPECTOR_WIDTH,
             proxies_view_mode: ProxiesViewMode::List,
             theme_mode,
             dns_mode: DnsMode::FollowConfig,
@@ -901,7 +1123,6 @@ impl UiPrefsState {
 }
 
 pub(crate) struct UiSessionState {
-    pub(crate) inspector_tab: ConfigInspectorTab,
     pub(crate) traffic_period: TrafficPeriod,
     pub(crate) sidebar_active: SidebarItem,
 }
@@ -909,14 +1130,12 @@ pub(crate) struct UiSessionState {
 impl UiSessionState {
     fn from_prefs(prefs: &UiPrefsState) -> Self {
         Self {
-            inspector_tab: prefs.preferred_inspector_tab,
             traffic_period: prefs.preferred_traffic_period,
             sidebar_active: SidebarItem::Overview,
         }
     }
 
     pub(crate) fn sync_from_prefs(&mut self, prefs: &UiPrefsState) {
-        self.inspector_tab = prefs.preferred_inspector_tab;
         self.traffic_period = prefs.preferred_traffic_period;
     }
 }
@@ -952,14 +1171,9 @@ impl PersistenceState {
 }
 
 pub(crate) struct UiState {
-    // 输入控件句柄（懒创建，避免提前绑定窗口上下文）。
-    pub(crate) name_input: Option<Entity<InputState>>,
-    pub(crate) config_input: Option<Entity<InputState>>,
     pub(crate) log_input: Option<Entity<InputState>>,
     pub(crate) proxy_search_input: Option<Entity<InputState>>,
     pub(crate) configs_workspace: Option<Entity<ConfigsWorkspace>>,
-    pub(crate) name_input_subscription: Option<Subscription>,
-    pub(crate) config_input_subscription: Option<Subscription>,
     // 日志状态与提示。
     pub(crate) status: SharedString,
     pub(crate) last_error: Option<SharedString>,
@@ -970,13 +1184,9 @@ pub(crate) struct UiState {
 impl UiState {
     fn new() -> Self {
         Self {
-            name_input: None,
-            config_input: None,
             log_input: None,
             proxy_search_input: None,
             configs_workspace: None,
-            name_input_subscription: None,
-            config_input_subscription: None,
             status: "Ready".into(),
             last_error: None,
             backend: BackendDiagnostic::default_for_platform(),
@@ -1055,6 +1265,49 @@ impl WgApp {
         }
     }
 
+    pub(crate) fn current_configs_inspector_tab(
+        &self,
+        cx: &mut gpui::Context<Self>,
+    ) -> ConfigInspectorTab {
+        self.ui
+            .configs_workspace
+            .as_ref()
+            .map(|workspace| workspace.read(cx).inspector_tab)
+            .unwrap_or(self.ui_prefs.preferred_inspector_tab)
+    }
+
+    pub(crate) fn persist_preferred_inspector_tab(
+        &mut self,
+        value: ConfigInspectorTab,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        if self.ui_prefs.preferred_inspector_tab == value {
+            return false;
+        }
+        self.ui_prefs.preferred_inspector_tab = value;
+        self.persist_state_async(cx);
+        true
+    }
+
+    pub(crate) fn persist_configs_panel_widths(
+        &mut self,
+        library_width: f32,
+        inspector_width: f32,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let library_width = library_width.clamp(240.0, 420.0);
+        let inspector_width = inspector_width.clamp(280.0, 440.0);
+        if self.ui_prefs.configs_library_width == library_width
+            && self.ui_prefs.configs_inspector_width == inspector_width
+        {
+            return false;
+        }
+        self.ui_prefs.configs_library_width = library_width;
+        self.ui_prefs.configs_inspector_width = inspector_width;
+        self.persist_state_async(cx);
+        true
+    }
+
     pub(crate) fn set_theme_mode_pref(
         &mut self,
         value: ThemeMode,
@@ -1102,23 +1355,15 @@ impl WgApp {
         value: ConfigInspectorTab,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.ui_prefs.preferred_inspector_tab != value {
-            self.ui_prefs.preferred_inspector_tab = value;
-            self.persist_state_async(cx);
+        self.persist_preferred_inspector_tab(value, cx);
+        if let Some(workspace) = self.ui.configs_workspace.clone() {
+            let _ = workspace.update(cx, |workspace, cx| {
+                if workspace.set_inspector_tab(value) {
+                    cx.notify();
+                }
+            });
         }
-        self.ui_session.inspector_tab = value;
         cx.notify();
-    }
-
-    pub(crate) fn set_session_inspector_tab(
-        &mut self,
-        value: ConfigInspectorTab,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if self.ui_session.inspector_tab != value {
-            self.ui_session.inspector_tab = value;
-            cx.notify();
-        }
     }
 
     pub(crate) fn set_preferred_traffic_period(

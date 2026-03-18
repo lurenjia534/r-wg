@@ -20,7 +20,8 @@ impl WgApp {
         self.handle_start_stop_core(cx);
     }
 
-    fn handle_start_stop_core(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn handle_start_stop_core(&mut self, cx: &mut Context<Self>) {
+        let draft = self.configs_draft_snapshot(cx);
         // 统一入口：所有 Start/Stop 点击都会走这里。
         // busy=true 表示已有异步流程在执行，避免并发触发导致状态错乱。
         if self.runtime.busy {
@@ -113,12 +114,12 @@ impl WgApp {
             return;
         }
 
-        if self.editor.draft.source_id.is_none() {
+        if draft.source_id.is_none() {
             self.set_error("Save this draft before starting");
             cx.notify();
             return;
         }
-        if self.editor.draft.is_dirty() {
+        if draft.is_dirty() {
             self.set_error("Save changes before starting");
             cx.notify();
             return;

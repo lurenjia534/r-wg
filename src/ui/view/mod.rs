@@ -20,12 +20,10 @@ use data::ViewData;
 
 impl Render for WgApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 输入控件按需延迟创建，避免在构造阶段就绑定窗口上下文。
-        self.ensure_inputs(window, cx);
         self.start_load_persisted_state(window, cx);
 
-        // 统一计算状态/解析结果等派生信息。
-        let data = ViewData::new(self);
+        let root_data =
+            (self.ui_session.sidebar_active != SidebarItem::Configs).then(|| ViewData::new(self));
 
         {
             let main = div()
@@ -39,10 +37,13 @@ impl Render for WgApp {
                 ))
                 .text_color(cx.theme().foreground)
                 // 左侧：隧道列表 + 操作按钮
-                .child(left_panel::render_left_panel(self, &data, cx))
+                .child(left_panel::render_left_panel(self, cx))
                 .child({
                     let main_body = match self.ui_session.sidebar_active {
                         SidebarItem::Overview => {
+                            let data = root_data
+                                .as_ref()
+                                .expect("root data should exist outside Configs");
                             let overview_data = data::OverviewData::new(self, &data);
                             overview::render_overview(&overview_data, cx).into_any_element()
                         }
@@ -80,6 +81,9 @@ impl Render for WgApp {
                             .child(main_body)
                             .into_any_element()
                     } else {
+                        let data = root_data
+                            .as_ref()
+                            .expect("root data should exist outside Configs");
                         div()
                             .flex()
                             .flex_col()
@@ -87,7 +91,7 @@ impl Render for WgApp {
                             .flex_grow()
                             .min_h(px(0.0))
                             .p_3()
-                            .child(top_bar::render_top_bar(self, &data, cx))
+                            .child(top_bar::render_top_bar(self, data, cx))
                             .child({
                                 let body = div()
                                     .flex()

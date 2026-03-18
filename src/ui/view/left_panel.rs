@@ -8,14 +8,9 @@ use gpui_component::{
 };
 
 use super::super::state::{SidebarItem, WgApp};
-use super::data::ViewData;
 
 /// 左侧导航栏：分组 + 图标 + 选中态，仅负责布局与高亮。
-pub(crate) fn render_left_panel(
-    app: &mut WgApp,
-    _data: &ViewData,
-    cx: &mut Context<WgApp>,
-) -> impl IntoElement {
+pub(crate) fn render_left_panel(app: &mut WgApp, cx: &mut Context<WgApp>) -> impl IntoElement {
     let header = SidebarHeader::new()
         .child(
             div()

@@ -7,7 +7,8 @@ use super::super::format::{
     format_bytes, format_duration, format_route_table, summarize_peers, PeerSummary,
 };
 use super::super::state::{
-    DraftValidationState, TrafficDayStats, TrafficHour, TrafficPeriod, WgApp,
+    ConfigDraftState, DraftValidationState, EditorOperation, TrafficDayStats, TrafficHour,
+    TrafficPeriod, TunnelConfig, WgApp,
     TRAFFIC_TREND_DAYS,
 };
 
@@ -27,6 +28,26 @@ pub(crate) enum ConfigStatusTone {
     Danger,
     Warning,
     Secondary,
+}
+
+/// Configs 页的局部渲染快照。
+///
+/// 这个 ViewModel 的目标不是减少字段数量，而是把 “Configs 页需要的 editor 状态”
+/// 从 `WgApp` 根状态里显式裁一份出来：
+/// - 视图层后续只依赖这份快照，不再散落读取 `app.editor.*`；
+/// - 等 `draft / operation` 真正迁进 `ConfigsWorkspace` 时，Configs 视图不需要再改一轮。
+pub(crate) struct ConfigsViewData {
+    pub(crate) shared: ViewData,
+    pub(crate) draft: ConfigDraftState,
+    pub(crate) has_selection: bool,
+    pub(crate) is_busy: bool,
+    pub(crate) has_saved_source: bool,
+    pub(crate) is_running_draft: bool,
+    pub(crate) can_save: bool,
+    pub(crate) can_restart: bool,
+    pub(crate) title: String,
+    pub(crate) source_summary: String,
+    pub(crate) runtime_note: String,
 }
 
 /// `ViewData` 是“跨页面复用”的基础派生数据。
@@ -165,7 +186,16 @@ impl TrafficRankItem {
 impl ViewData {
     /// 从应用状态构造渲染数据。
     pub(crate) fn new(app: &WgApp) -> Self {
-        let is_loading = matches!(app.editor.operation, Some(super::super::state::EditorOperation::LoadingConfig));
+        Self::from_editor(app, &app.editor.draft, app.editor.operation.as_ref())
+    }
+
+    /// 从显式传入的 editor 快照构造共享派生数据。
+    pub(crate) fn from_editor(
+        app: &WgApp,
+        draft: &ConfigDraftState,
+        operation: Option<&EditorOperation>,
+    ) -> Self {
+        let is_loading = matches!(operation, Some(EditorOperation::LoadingConfig));
         let (parsed_config, parse_error, config_status) = if is_loading {
             (
                 None,
@@ -176,9 +206,9 @@ impl ViewData {
                 }),
             )
         } else {
-            match &app.editor.draft.validation {
+            match &draft.validation {
                 DraftValidationState::Idle => {
-                    if app.editor.draft.name.is_empty() && app.editor.draft.text.is_empty() {
+                    if draft.name.is_empty() && draft.text.is_empty() {
                         (None, None, None)
                     } else {
                         (
@@ -223,11 +253,59 @@ impl ViewData {
             parsed_config,
             parse_error,
             config_status,
-            draft_dirty: app.editor.draft.is_dirty(),
-            has_saved_source: app.editor.draft.source_id.is_some(),
-            needs_restart: app.editor.draft.needs_restart,
+            draft_dirty: draft.is_dirty(),
+            has_saved_source: draft.source_id.is_some(),
+            needs_restart: draft.needs_restart,
             peer_summary,
             last_handshake,
+        }
+    }
+}
+
+impl ConfigsViewData {
+    pub(crate) fn from_editor(
+        app: &WgApp,
+        draft: ConfigDraftState,
+        operation: Option<EditorOperation>,
+        has_selection: bool,
+    ) -> Self {
+        let shared = ViewData::from_editor(app, &draft, operation.as_ref());
+        let has_saved_source = draft.source_id.is_some();
+        let is_busy = operation.is_some();
+        let is_running_draft = app.runtime.running && app.runtime.running_id == draft.source_id;
+        let source_summary = draft
+            .source_id
+            .and_then(|id| app.configs.get_by_id(id))
+            .map(config_origin_summary)
+            .unwrap_or_else(|| "Unsaved draft".to_string());
+        let title = current_draft_title(&draft);
+        let runtime_note = if is_running_draft && draft.is_dirty() {
+            "Editing a running tunnel. Saved changes take effect after restart.".to_string()
+        } else if is_running_draft {
+            "This tunnel is currently running.".to_string()
+        } else {
+            "Changes affect the saved config after you save them.".to_string()
+        };
+        let can_save = !is_busy
+            && !matches!(draft.validation, DraftValidationState::Idle)
+            && (draft.is_dirty() || !has_saved_source);
+        let can_restart = !is_busy
+            && is_running_draft
+            && draft.is_dirty()
+            && matches!(draft.validation, DraftValidationState::Valid { .. });
+
+        Self {
+            shared,
+            draft,
+            has_selection,
+            is_busy,
+            has_saved_source,
+            is_running_draft,
+            can_save,
+            can_restart,
+            title,
+            source_summary,
+            runtime_note,
         }
     }
 }
@@ -517,6 +595,27 @@ fn format_speed(bytes_per_sec: f64) -> String {
         format!("{:.1} KB/s", bytes_per_sec / KB)
     } else {
         format!("{:.0} B/s", bytes_per_sec)
+    }
+}
+
+fn current_draft_title(draft: &ConfigDraftState) -> String {
+    let name = draft.name.as_ref().trim();
+    if !name.is_empty() {
+        return name.to_string();
+    }
+    if draft.source_id.is_none() {
+        return "New Draft".to_string();
+    }
+    "Untitled Config".to_string()
+}
+
+fn config_origin_summary(config: &TunnelConfig) -> String {
+    match &config.source {
+        super::super::state::ConfigSource::File { origin_path } => origin_path
+            .as_ref()
+            .map(|path| format!("Imported from {}", path.display()))
+            .unwrap_or_else(|| "Imported config".to_string()),
+        super::super::state::ConfigSource::Paste => "Created in app storage".to_string(),
     }
 }
 
