@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{Entity, SharedString, Window};
 use gpui_component::theme::{Theme, ThemeMode};
-use gpui_component::{input::InputState, IconName};
+use gpui_component::{input::InputState, notification::Notification, IconName, WindowExt};
 use r_wg::backend::wg::{
     config, Engine, PeerStats, PrivilegedServiceAction, PrivilegedServiceStatus,
 };
@@ -1026,6 +1026,15 @@ impl WgApp {
             self.ui_session.sidebar_active = value;
             cx.notify();
         }
+    }
+
+    pub(crate) fn push_success_toast(
+        &mut self,
+        message: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        window.push_notification(Notification::success(message.into()), cx);
     }
 }
 

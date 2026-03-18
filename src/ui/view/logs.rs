@@ -63,7 +63,7 @@ pub(crate) fn render_logs(
                 .outline()
                 .small()
                 .compact()
-                .on_click(cx.listener(|this, _, _, cx| {
+                .on_click(cx.listener(|this, _, window, cx| {
                     let text = this
                         .ui
                         .log_input
@@ -71,8 +71,7 @@ pub(crate) fn render_logs(
                         .map(|input| input.read(cx).value().to_string())
                         .unwrap_or_default();
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    this.set_status("Logs copied to clipboard");
-                    cx.notify();
+                    this.push_success_toast("Logs copied", window, cx);
                 })),
         )
         .child(

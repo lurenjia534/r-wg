@@ -1,3 +1,4 @@
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 
 use gpui_component::{
@@ -107,9 +108,13 @@ fn sidebar_group(
 ) -> SidebarGroup<SidebarMenu> {
     SidebarGroup::new(label).child(SidebarMenu::new().children(items.iter().map(|item| {
         let item = *item;
+        let active = app.ui_session.sidebar_active == item;
         SidebarMenuItem::new(item.label())
             .icon(Icon::new(item.icon()).size_4())
-            .active(app.ui_session.sidebar_active == item)
+            .active(active)
+            .when(active, |this| {
+                this.suffix(div().size(px(6.0)).rounded_full().bg(cx.theme().accent))
+            })
             .on_click(cx.listener(move |this, _event, _window, cx| {
                 this.set_sidebar_active(item, cx);
             }))

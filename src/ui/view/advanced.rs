@@ -30,20 +30,18 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
     let app_handle = cx.entity();
 
     let general_page = SettingPage::new("General")
-        .description("Appearance and workspace defaults for the desktop shell.")
+        .description("Appearance and remembered app defaults.")
         .default_open(true)
         .group(
             SettingGroup::new()
                 .title("Appearance")
-                .description("Use the same compact control language as the top bar.")
+                .description("Match the theme controls shown in the toolbar.")
                 .item(theme_mode_item(app_handle.clone())),
         )
         .group(
             SettingGroup::new()
                 .title("Workspace")
-                .description(
-                    "Remember which panel opens first when you return to the configs screen.",
-                )
+                .description("Choose which right-side panel opens first in Configs.")
                 .item(right_tab_item(app_handle.clone())),
         );
 
@@ -119,32 +117,35 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
 }
 
 fn render_settings_shell_header(cx: &mut Context<WgApp>) -> Div {
-    div().px_5().py_4().border_b_1().border_color(cx.theme().border).child(
-        v_flex()
-            .gap_1()
-            .child(
-                div()
-                    .text_xs()
-                    .font_semibold()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("SETTINGS"),
-            )
-            .child(div().text_xl().font_semibold().child("Preferences"))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(
-                        "Apply appearance, remembered defaults, and system control from one workspace.",
-                    ),
-            ),
-    )
+    div()
+        .px_5()
+        .py_4()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            v_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("SETTINGS"),
+                )
+                .child(div().text_xl().font_semibold().child("Preferences"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Manage appearance, defaults, and system integration in one place."),
+                ),
+        )
 }
 
 fn settings_sidebar_style(cx: &mut Context<WgApp>) -> gpui::StyleRefinement {
     let mut style = div()
-        .bg(cx.theme().sidebar.alpha(0.82))
-        .border_color(cx.theme().sidebar_border.alpha(0.4));
+        .bg(cx.theme().sidebar.alpha(0.72))
+        .border_color(cx.theme().sidebar_border.alpha(0.28));
     style.style().clone()
 }
 
@@ -325,7 +326,7 @@ fn right_tab_item(app: Entity<WgApp>) -> SettingItem {
 
 fn privileged_backend_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
-        "Privileged Backend",
+        "Service Status",
         SettingField::render(move |_, window, cx| {
             render_privileged_backend_panel(app.clone(), window, cx)
         }),
@@ -458,7 +459,6 @@ fn render_privileged_backend_panel(
                         .child(
                             v_flex()
                                 .gap_1()
-                                .child(div().text_sm().font_semibold().child("Service Status"))
                                 .child(
                                     div()
                                         .text_sm()
@@ -575,15 +575,18 @@ fn render_privileged_backend_panel(
                                         .small()
                                         .compact()
                                         .on_click({
-                                            move |_, _, cx| {
+                                            move |_, window, cx| {
                                                 let _ = copy_handle.update(cx, |app, cx| {
                                                     cx.write_to_clipboard(
                                                         gpui::ClipboardItem::new_string(
                                                             build_backend_diagnostics_text(app),
                                                         ),
                                                     );
-                                                    app.set_status("Diagnostics copied");
-                                                    cx.notify();
+                                                    app.push_success_toast(
+                                                        "Diagnostics copied",
+                                                        window,
+                                                        cx,
+                                                    );
                                                 });
                                             }
                                         }),
@@ -789,7 +792,7 @@ fn render_backend_details(app: &Entity<WgApp>, cx: &mut gpui::App) -> Div {
         .columns(1)
         .item("Integration", helper_platform_detail(), 1)
         .item("Control Endpoint", helper_control_endpoint(), 1)
-        .item("Install State", diagnostic.summary(), 1)
+        .item("Health", diagnostic.summary(), 1)
         .item("Checked", checked, 1)
         .item("Recommended", backend_recommended_action(diagnostic), 1)
         .item("Backend Last Error", backend_last_error, 1);

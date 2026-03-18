@@ -177,12 +177,11 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
                                 .compact()
                                 .on_click({
                                     let latest_status = latest_status.clone();
-                                    cx.listener(move |this, _, _, cx| {
+                                    cx.listener(move |this, _, window, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             latest_status.clone(),
                                         ));
-                                        this.set_status("Status copied to clipboard");
-                                        cx.notify();
+                                        this.push_success_toast("Status copied", window, cx);
                                     })
                                 }),
                         )
@@ -197,12 +196,11 @@ pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Cont
                                 .disabled(last_error_text == "None")
                                 .on_click({
                                     let last_error_text = last_error_text.clone();
-                                    cx.listener(move |this, _, _, cx| {
+                                    cx.listener(move |this, _, window, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             last_error_text.clone(),
                                         ));
-                                        this.set_status("Last error copied to clipboard");
-                                        cx.notify();
+                                        this.push_success_toast("Last error copied", window, cx);
                                     })
                                 }),
                         ),
