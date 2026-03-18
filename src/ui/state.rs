@@ -3,8 +3,8 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
-use gpui::{Entity, SharedString};
-use gpui_component::theme::ThemeMode;
+use gpui::{Entity, SharedString, Window};
+use gpui_component::theme::{Theme, ThemeMode};
 use gpui_component::{input::InputState, IconName};
 use r_wg::backend::wg::{
     config, Engine, PeerStats, PrivilegedServiceAction, PrivilegedServiceStatus,
@@ -804,6 +804,36 @@ impl UiSessionState {
     }
 }
 
+pub(crate) struct PersistenceState {
+    next_revision: u64,
+    queued_revision: Option<u64>,
+    pub(crate) worker_active: bool,
+}
+
+impl PersistenceState {
+    fn new() -> Self {
+        Self {
+            next_revision: 0,
+            queued_revision: None,
+            worker_active: false,
+        }
+    }
+
+    pub(crate) fn enqueue(&mut self) -> u64 {
+        self.next_revision = self.next_revision.saturating_add(1);
+        self.queued_revision = Some(self.next_revision);
+        self.next_revision
+    }
+
+    pub(crate) fn take_queued_revision(&mut self) -> Option<u64> {
+        self.queued_revision.take()
+    }
+
+    pub(crate) fn has_pending(&self) -> bool {
+        self.queued_revision.is_some()
+    }
+}
+
 pub(crate) struct UiState {
     // 输入控件句柄（懒创建，避免提前绑定窗口上下文）。
     pub(crate) name_input: Option<Entity<InputState>>,
@@ -814,6 +844,7 @@ pub(crate) struct UiState {
     pub(crate) status: SharedString,
     pub(crate) last_error: Option<SharedString>,
     pub(crate) backend: BackendDiagnostic,
+    pub(crate) backend_last_error: Option<SharedString>,
 }
 
 impl UiState {
@@ -826,6 +857,7 @@ impl UiState {
             status: "Ready".into(),
             last_error: None,
             backend: BackendDiagnostic::default_for_platform(),
+            backend_last_error: None,
         }
     }
 
@@ -840,7 +872,26 @@ impl UiState {
     }
 
     pub(crate) fn set_backend_diagnostic(&mut self, diagnostic: BackendDiagnostic) {
+        match diagnostic.health {
+            BackendHealth::AccessDenied
+            | BackendHealth::VersionMismatch { .. }
+            | BackendHealth::Unreachable => {
+                self.backend_last_error = Some(diagnostic.detail.clone());
+            }
+            BackendHealth::Running | BackendHealth::Installed | BackendHealth::NotInstalled => {
+                self.backend_last_error = None;
+            }
+            BackendHealth::Unknown | BackendHealth::Checking | BackendHealth::Working { .. } => {}
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            BackendHealth::Unsupported => {
+                self.backend_last_error = None;
+            }
+        }
         self.backend = diagnostic;
+    }
+
+    pub(crate) fn set_backend_last_error(&mut self, message: impl Into<SharedString>) {
+        self.backend_last_error = Some(message.into());
     }
 }
 
@@ -850,6 +901,7 @@ pub(crate) struct WgApp {
     pub(crate) selection: SelectionState,
     pub(crate) runtime: RuntimeState,
     pub(crate) stats: StatsState,
+    pub(crate) persistence: PersistenceState,
     pub(crate) ui_prefs: UiPrefsState,
     pub(crate) ui_session: UiSessionState,
     pub(crate) ui: UiState,
@@ -864,10 +916,29 @@ impl WgApp {
             selection: SelectionState::new(),
             runtime: RuntimeState::new(),
             stats: StatsState::new(),
+            persistence: PersistenceState::new(),
             ui_session: UiSessionState::from_prefs(&ui_prefs),
             ui_prefs,
             ui: UiState::new(),
         }
+    }
+
+    pub(crate) fn set_theme_mode_pref(
+        &mut self,
+        value: ThemeMode,
+        window: Option<&mut Window>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.theme_mode != value {
+            self.ui_prefs.theme_mode = value;
+            let refresh_all_windows = window.is_none();
+            Theme::change(value, window, cx);
+            if refresh_all_windows {
+                cx.refresh_windows();
+            }
+            self.persist_state_async(cx);
+        }
+        cx.notify();
     }
 
     pub(crate) fn set_log_auto_follow_pref(&mut self, value: bool, cx: &mut gpui::Context<Self>) {
@@ -907,6 +978,13 @@ impl WgApp {
         cx.notify();
     }
 
+    pub(crate) fn set_session_right_tab(&mut self, value: RightTab, cx: &mut gpui::Context<Self>) {
+        if self.ui_session.right_tab != value {
+            self.ui_session.right_tab = value;
+            cx.notify();
+        }
+    }
+
     pub(crate) fn set_preferred_traffic_period(
         &mut self,
         value: TrafficPeriod,
@@ -929,6 +1007,18 @@ impl WgApp {
             self.ui_session.traffic_period = value;
             cx.notify();
         }
+    }
+
+    pub(crate) fn set_proxies_view_mode_pref(
+        &mut self,
+        value: ProxiesViewMode,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.proxies_view_mode != value {
+            self.ui_prefs.proxies_view_mode = value;
+            self.persist_state_async(cx);
+        }
+        cx.notify();
     }
 
     pub(crate) fn set_sidebar_active(&mut self, value: SidebarItem, cx: &mut gpui::Context<Self>) {

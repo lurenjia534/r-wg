@@ -1,11 +1,11 @@
 ﻿use gpui::*;
 use gpui_component::{
-    button::Button,
+    button::{Button, ButtonGroup},
     description_list::DescriptionList,
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     scroll::ScrollableElement,
-    ActiveTheme as _, Disableable as _, Sizable as _,
+    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
 };
 
 use super::super::format::{
@@ -14,7 +14,6 @@ use super::super::format::{
 };
 use super::super::state::{RightTab, WgApp};
 use super::data::ViewData;
-use super::widgets::tab_button;
 
 /// 渲染右侧状态面板。
 ///
@@ -26,21 +25,26 @@ use super::widgets::tab_button;
 /// 用户仍然可以在应用内复制同一条状态或错误文本。
 pub(crate) fn render_right_panel(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
     // 顶部页签切换：在“状态”和“日志”两个视图之间切换右侧面板内容。
-    let right_tab_row = div()
-        .flex()
-        .gap_2()
-        .child(tab_button(
-            "Status",
-            app.ui_session.right_tab == RightTab::Status,
-            cx,
-            |this| this.ui_session.right_tab = RightTab::Status,
-        ))
-        .child(tab_button(
-            "Logs",
-            app.ui_session.right_tab == RightTab::Logs,
-            cx,
-            |this| this.ui_session.right_tab = RightTab::Logs,
-        ));
+    let right_tab_row = ButtonGroup::new("right-panel-tabs")
+        .outline()
+        .compact()
+        .small()
+        .child(
+            Button::new("right-panel-tab-status")
+                .label("Status")
+                .selected(app.ui_session.right_tab == RightTab::Status)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.set_session_right_tab(RightTab::Status, cx);
+                })),
+        )
+        .child(
+            Button::new("right-panel-tab-logs")
+                .label("Logs")
+                .selected(app.ui_session.right_tab == RightTab::Logs)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.set_session_right_tab(RightTab::Logs, cx);
+                })),
+        );
 
     // 网络信息卡片：展示当前配置解析出的地址、DNS、路由表和 Allowed IPs。
     let network_card = {

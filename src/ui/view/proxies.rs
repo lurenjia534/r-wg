@@ -245,11 +245,7 @@ fn render_proxies_toolbar(
                 .label("List")
                 .selected(app.ui_prefs.proxies_view_mode == ProxiesViewMode::List)
                 .on_click(cx.listener(|this, _, _, cx| {
-                    if this.ui_prefs.proxies_view_mode != ProxiesViewMode::List {
-                        this.ui_prefs.proxies_view_mode = ProxiesViewMode::List;
-                        this.persist_state_async(cx);
-                        cx.notify();
-                    }
+                    this.set_proxies_view_mode_pref(ProxiesViewMode::List, cx);
                 })),
         )
         .child(
@@ -257,11 +253,7 @@ fn render_proxies_toolbar(
                 .label("Gallery")
                 .selected(app.ui_prefs.proxies_view_mode == ProxiesViewMode::Gallery)
                 .on_click(cx.listener(|this, _, _, cx| {
-                    if this.ui_prefs.proxies_view_mode != ProxiesViewMode::Gallery {
-                        this.ui_prefs.proxies_view_mode = ProxiesViewMode::Gallery;
-                        this.persist_state_async(cx);
-                        cx.notify();
-                    }
+                    this.set_proxies_view_mode_pref(ProxiesViewMode::Gallery, cx);
                 })),
         );
 

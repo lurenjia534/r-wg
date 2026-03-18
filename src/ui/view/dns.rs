@@ -14,6 +14,8 @@ use r_wg::dns::{DnsMode, DnsPreset};
 
 /// DNS 页面：模式选择 + 预设 DNS 卡片。
 pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
+    let preset_active = dns_mode_uses_preset(app.ui_prefs.dns_mode);
+
     let mode_group = ButtonGroup::new("dns-mode")
         .outline()
         .compact()
@@ -72,11 +74,6 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         _ => None,
     };
 
-    let show_cards = matches!(
-        app.ui_prefs.dns_mode,
-        DnsMode::AutoFillMissingFamilies | DnsMode::OverrideAll
-    );
-
     let mut content = v_flex()
         .gap_3()
         .child(
@@ -95,35 +92,63 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
             )
         });
 
-    if show_cards {
-        let cloudflare_cards = v_flex()
-            .gap_3()
-            .child(dns_section_title("Cloudflare (1.1.1.1)", "Plain / 53"))
-            .child(
-                div()
-                    .grid()
-                    .grid_cols(2)
-                    .gap_3()
-                    .child(dns_card(app, cx, DnsPreset::CloudflareStandard))
-                    .child(dns_card(app, cx, DnsPreset::CloudflareMalware))
-                    .child(dns_card(app, cx, DnsPreset::CloudflareMalwareAdult)),
-            );
+    let cloudflare_cards = v_flex()
+        .gap_3()
+        .child(dns_section_title("Cloudflare (1.1.1.1)", "Plain / 53"))
+        .child(
+            div()
+                .grid()
+                .grid_cols(2)
+                .gap_3()
+                .child(dns_card(
+                    app,
+                    cx,
+                    DnsPreset::CloudflareStandard,
+                    preset_active,
+                ))
+                .child(dns_card(
+                    app,
+                    cx,
+                    DnsPreset::CloudflareMalware,
+                    preset_active,
+                ))
+                .child(dns_card(
+                    app,
+                    cx,
+                    DnsPreset::CloudflareMalwareAdult,
+                    preset_active,
+                )),
+        );
 
-        let adguard_cards = v_flex()
-            .gap_3()
-            .child(dns_section_title("AdGuard DNS", "Plain / 53"))
-            .child(
-                div()
-                    .grid()
-                    .grid_cols(2)
-                    .gap_3()
-                    .child(dns_card(app, cx, DnsPreset::AdguardDefault))
-                    .child(dns_card(app, cx, DnsPreset::AdguardUnfiltered))
-                    .child(dns_card(app, cx, DnsPreset::AdguardFamily)),
-            );
+    let adguard_cards = v_flex()
+        .gap_3()
+        .child(dns_section_title("AdGuard DNS", "Plain / 53"))
+        .child(
+            div()
+                .grid()
+                .grid_cols(2)
+                .gap_3()
+                .child(dns_card(app, cx, DnsPreset::AdguardDefault, preset_active))
+                .child(dns_card(
+                    app,
+                    cx,
+                    DnsPreset::AdguardUnfiltered,
+                    preset_active,
+                ))
+                .child(dns_card(app, cx, DnsPreset::AdguardFamily, preset_active)),
+        );
 
-        content = content.child(cloudflare_cards).child(adguard_cards);
-    }
+    content = content
+        .when(!preset_active, |this| {
+            this.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Preset selection is remembered, but inactive in the current DNS mode."),
+            )
+        })
+        .child(cloudflare_cards)
+        .child(adguard_cards);
 
     let group = GroupBox::new().title("DNS").w_full().child(content);
     let scrollable = v_flex()
@@ -161,21 +186,32 @@ fn dns_section_title(title: &'static str, subtitle: &'static str) -> Div {
         .child(Tag::secondary().small().child(subtitle))
 }
 
-fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stateful<Div> {
+fn dns_card(
+    app: &mut WgApp,
+    cx: &mut Context<WgApp>,
+    preset: DnsPreset,
+    active: bool,
+) -> Stateful<Div> {
     let info = preset.info();
     let selected = app.ui_prefs.dns_preset == preset;
-    let border_color = if selected {
+    let border_color = if selected && active {
         cx.theme().accent
+    } else if !active {
+        cx.theme().border.alpha(0.72)
     } else {
         cx.theme().border
     };
-    let background = if selected {
+    let background = if selected && active {
         cx.theme().accent.alpha(0.14)
+    } else if !active {
+        cx.theme().muted.alpha(0.6)
     } else {
         cx.theme().group_box
     };
-    let title_color = if selected {
+    let title_color = if selected && active {
         cx.theme().accent
+    } else if !active {
+        cx.theme().muted_foreground
     } else {
         cx.theme().foreground
     };
@@ -189,9 +225,9 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stat
         .border_1()
         .border_color(border_color)
         .bg(background)
-        .cursor_pointer()
         .relative()
         .id(dns_preset_id(preset))
+        .when(active, |this| this.cursor_pointer())
         .child(
             h_flex()
                 .items_center()
@@ -207,7 +243,7 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stat
                                 .child(info.note),
                         ),
                 )
-                .child(if selected {
+                .child(if selected && active {
                     h_flex()
                         .items_center()
                         .gap_2()
@@ -218,6 +254,11 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stat
                                 .text_color(cx.theme().accent),
                         )
                         .into_any_element()
+                } else if selected {
+                    Tag::secondary()
+                        .small()
+                        .child("Remembered")
+                        .into_any_element()
                 } else {
                     div().into_any_element()
                 }),
@@ -225,7 +266,7 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stat
         .child(dns_address_block("IPv4", info.ipv4, cx))
         .child(dns_address_block("IPv6", info.ipv6, cx));
 
-    if selected {
+    if selected && active {
         card = card.child(
             div()
                 .absolute()
@@ -239,8 +280,17 @@ fn dns_card(app: &mut WgApp, cx: &mut Context<WgApp>, preset: DnsPreset) -> Stat
     }
 
     card.on_click(cx.listener(move |this, _, _, cx| {
-        this.set_dns_preset_pref(preset, cx);
+        if active {
+            this.set_dns_preset_pref(preset, cx);
+        }
     }))
+}
+
+fn dns_mode_uses_preset(mode: DnsMode) -> bool {
+    matches!(
+        mode,
+        DnsMode::AutoFillMissingFamilies | DnsMode::OverrideAll
+    )
 }
 
 fn dns_preset_id(preset: DnsPreset) -> &'static str {

@@ -1,22 +1,29 @@
+use std::env::consts::{ARCH, OS};
+use std::time::{Duration, SystemTime};
+
+use chrono::{DateTime, Local};
 use gpui::{
-    div, prelude::FluentBuilder as _, px, Axis, Context, Div, Entity, ParentElement, SharedString,
-    Styled, Window,
+    div, prelude::FluentBuilder as _, px, Axis, Context, Div, Entity, IntoElement, ParentElement,
+    SharedString, Styled, Timer, Window,
 };
-use gpui_component::theme::{Theme, ThemeMode};
+use gpui_component::theme::ThemeMode;
 use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
+    description_list::DescriptionList,
     dialog::DialogButtonProps,
     group_box::GroupBoxVariant,
     h_flex,
+    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
     setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     v_flex, ActiveTheme as _, Disableable as _, Selectable, Sizable as _, StyledExt as _,
     WindowExt,
 };
 use r_wg::backend::wg::PrivilegedServiceAction;
 use r_wg::dns::{DnsMode, DnsPreset};
-use std::time::{Duration, SystemTime};
 
-use super::super::state::{BackendDiagnostic, BackendHealth, RightTab, TrafficPeriod, WgApp};
+use super::super::state::{
+    BackendDiagnostic, BackendHealth, RightTab, SidebarItem, TrafficPeriod, WgApp,
+};
 use super::widgets::backend_status_tag;
 
 pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
@@ -83,6 +90,7 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
     let settings = Settings::new("advanced-settings")
         .with_group_variant(GroupBoxVariant::Fill)
         .sidebar_width(px(210.0))
+        .sidebar_style(&settings_sidebar_style(cx))
         .page(general_page)
         .page(network_page)
         .page(monitoring_page)
@@ -106,7 +114,7 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
                 .w_full()
                 .flex()
                 .justify_center()
-                .child(div().h_full().w_full().max_w(px(1180.0)).child(settings)),
+                .child(div().h_full().w_full().max_w(px(1040.0)).child(settings)),
         )
 }
 
@@ -133,6 +141,13 @@ fn render_settings_shell_header(cx: &mut Context<WgApp>) -> Div {
     )
 }
 
+fn settings_sidebar_style(cx: &mut Context<WgApp>) -> gpui::StyleRefinement {
+    let mut style = div()
+        .bg(cx.theme().sidebar.alpha(0.82))
+        .border_color(cx.theme().sidebar_border.alpha(0.4));
+    style.style().clone()
+}
+
 fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Theme",
@@ -152,13 +167,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                             .selected(current == ThemeMode::Light)
                             .on_click(move |_, _, cx| {
                                 let _ = light_handle.update(cx, |app, cx| {
-                                    if app.ui_prefs.theme_mode != ThemeMode::Light {
-                                        app.ui_prefs.theme_mode = ThemeMode::Light;
-                                        Theme::change(ThemeMode::Light, None, cx);
-                                        cx.refresh_windows();
-                                        app.persist_state_async(cx);
-                                    }
-                                    cx.notify();
+                                    app.set_theme_mode_pref(ThemeMode::Light, None, cx);
                                 });
                             }),
                     )
@@ -168,13 +177,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                             .selected(current == ThemeMode::Dark)
                             .on_click(move |_, _, cx| {
                                 let _ = dark_handle.update(cx, |app, cx| {
-                                    if app.ui_prefs.theme_mode != ThemeMode::Dark {
-                                        app.ui_prefs.theme_mode = ThemeMode::Dark;
-                                        Theme::change(ThemeMode::Dark, None, cx);
-                                        cx.refresh_windows();
-                                        app.persist_state_async(cx);
-                                    }
-                                    cx.notify();
+                                    app.set_theme_mode_pref(ThemeMode::Dark, None, cx);
                                 });
                             }),
                     ),
@@ -224,22 +227,9 @@ fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
 }
 
 fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {
-    let options = dns_preset_options();
-    let get_handle = app.clone();
-    let set_handle = app;
-
     SettingItem::new(
         "DNS Preset",
-        SettingField::dropdown(
-            options,
-            move |cx| dns_preset_value(get_handle.read(cx).ui_prefs.dns_preset),
-            move |value, cx| {
-                let next = dns_preset_from_value(&value);
-                let _ = set_handle.update(cx, |app, cx| {
-                    app.set_dns_preset_pref(next, cx);
-                });
-            },
-        ),
+        SettingField::render(move |_, _window, cx| render_dns_preset_field(app.clone(), cx)),
     )
     .description("Only used when DNS mode fills or overrides resolver records.")
 }
@@ -291,7 +281,7 @@ fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
             )
         }),
     )
-    .description("Used as the initial range when the traffic view opens.")
+    .description("Applies now and stays remembered for future sessions.")
 }
 
 fn right_tab_item(app: Entity<WgApp>) -> SettingItem {
@@ -330,18 +320,17 @@ fn right_tab_item(app: Entity<WgApp>) -> SettingItem {
             )
         }),
     )
-    .description("Used as the initial panel when the configs workspace opens.")
+    .description("Applies now and is remembered when you reopen Configs.")
 }
 
 fn privileged_backend_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Privileged Backend",
-        SettingField::render(move |_, _window, cx| {
-            render_privileged_backend_panel(app.clone(), cx)
+        SettingField::render(move |_, window, cx| {
+            render_privileged_backend_panel(app.clone(), window, cx)
         }),
     )
     .layout(Axis::Vertical)
-    .description("Service bridge for tunnel startup, routes, DNS changes, and backend repair.")
 }
 
 fn troubleshooting_item() -> SettingItem {
@@ -374,17 +363,85 @@ fn troubleshooting_item() -> SettingItem {
         }),
     )
     .layout(Axis::Vertical)
-    .description("Compact action guidance that stays inside System instead of becoming another boxed card.")
+    .description("What Refresh, Repair, and Remove do.")
 }
 
-fn render_privileged_backend_panel(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
+fn render_dns_preset_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
+    let (mode, preset) = {
+        let app = app.read(cx);
+        (app.ui_prefs.dns_mode, app.ui_prefs.dns_preset)
+    };
+    let active = dns_mode_uses_preset(mode);
+    let current_label = dns_preset_label(preset);
+    let set_handle = app;
+
+    let button = Button::new("advanced-dns-preset")
+        .label(current_label)
+        .outline()
+        .small()
+        .compact()
+        .disabled(!active);
+
+    let button =
+        if active {
+            button
+                .dropdown_caret(true)
+                .dropdown_menu_with_anchor(gpui::Corner::TopRight, move |menu: PopupMenu, _, _| {
+                    dns_preset_options()
+                        .iter()
+                        .fold(menu, |menu, (value, label)| {
+                            let checked = *value == dns_preset_value(preset);
+                            menu.item(PopupMenuItem::new(label.clone()).checked(checked).on_click(
+                                {
+                                    let set_handle = set_handle.clone();
+                                    let value = value.clone();
+                                    move |_, _, cx| {
+                                        let next = dns_preset_from_value(&value);
+                                        let _ = set_handle.update(cx, |app, cx| {
+                                            app.set_dns_preset_pref(next, cx);
+                                        });
+                                    }
+                                },
+                            ))
+                        })
+                })
+                .into_any_element()
+        } else {
+            button.into_any_element()
+        };
+
+    v_flex()
+        .w_full()
+        .gap_1()
+        .child(button)
+        .when(!active, |this| {
+            this.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Inactive in Follow Config and System DNS modes."),
+            )
+        })
+}
+
+fn render_privileged_backend_panel(
+    app: Entity<WgApp>,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> Div {
+    ensure_backend_freshness_ticker(app.clone(), window, cx);
     let diagnostic = app.read(cx).ui.backend.clone();
     let busy = diagnostic.is_busy();
     let note = backend_recovery_note(&diagnostic);
+    let details_open = window.use_keyed_state("backend-details-open", cx, |_, _| false);
+    let is_details_open = *details_open.read(cx);
 
     let refresh_handle = app.clone();
     let install_handle = app.clone();
     let repair_handle = app.clone();
+    let copy_handle = app.clone();
+    let details_handle = details_open.clone();
+    let details_app_handle = app.clone();
     let remove_handle = app;
 
     div()
@@ -518,16 +575,33 @@ fn render_privileged_backend_panel(app: Entity<WgApp>, cx: &mut gpui::App) -> Di
                                         .small()
                                         .compact()
                                         .on_click({
-                                            let diagnostic = diagnostic.clone();
                                             move |_, _, cx| {
-                                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                                    format!(
-                                                        "Privileged Backend: {}\n{}",
-                                                        diagnostic.summary(),
-                                                        diagnostic.detail
-                                                    ),
-                                                ));
+                                                let _ = copy_handle.update(cx, |app, cx| {
+                                                    cx.write_to_clipboard(
+                                                        gpui::ClipboardItem::new_string(
+                                                            build_backend_diagnostics_text(app),
+                                                        ),
+                                                    );
+                                                    app.set_status("Diagnostics copied");
+                                                    cx.notify();
+                                                });
                                             }
+                                        }),
+                                )
+                                .child(
+                                    Button::new("backend-toggle-details")
+                                        .label(if is_details_open {
+                                            "Hide Details"
+                                        } else {
+                                            "Details"
+                                        })
+                                        .outline()
+                                        .small()
+                                        .compact()
+                                        .on_click(move |_, _, cx| {
+                                            let _ = details_handle.update(cx, |open, _| {
+                                                *open = !*open;
+                                            });
                                         }),
                                 ),
                         )
@@ -554,6 +628,9 @@ fn render_privileged_backend_panel(app: Entity<WgApp>, cx: &mut gpui::App) -> Di
                         }),
                 ),
         )
+        .when(is_details_open, |this| {
+            this.child(render_backend_details(&details_app_handle, cx))
+        })
 }
 
 fn open_backend_remove_dialog(app_handle: Entity<WgApp>, window: &mut Window, cx: &mut gpui::App) {
@@ -605,6 +682,42 @@ fn backend_checked_label(diagnostic: &BackendDiagnostic) -> SharedString {
     }
 }
 
+fn ensure_backend_freshness_ticker(app: Entity<WgApp>, window: &mut Window, cx: &mut gpui::App) {
+    let ticker_running = window.use_keyed_state("backend-freshness-ticker", cx, |_, _| false);
+    if *ticker_running.read(cx) {
+        return;
+    }
+    let _ = ticker_running.update(cx, |running, _| {
+        *running = true;
+    });
+
+    cx.spawn({
+        let ticker_running = ticker_running.clone();
+        async move |cx| loop {
+            Timer::after(Duration::from_secs(10)).await;
+
+            let keep_running = app
+                .update(cx, |app, cx| {
+                    if app.ui_session.sidebar_active == SidebarItem::Advanced {
+                        cx.notify();
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+
+            if !keep_running {
+                let _ = ticker_running.update(cx, |running, _| {
+                    *running = false;
+                });
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
 fn format_checked_age(checked_at: SystemTime) -> String {
     let elapsed = SystemTime::now()
         .duration_since(checked_at)
@@ -620,6 +733,144 @@ fn format_checked_age(checked_at: SystemTime) -> String {
     }
 }
 
+fn build_backend_diagnostics_text(app: &WgApp) -> String {
+    let diagnostic = &app.ui.backend;
+    let checked = diagnostic
+        .checked_at
+        .map(format_checked_timestamp)
+        .unwrap_or_else(|| "not checked yet".to_string());
+    let mut lines = vec![
+        format!("App: r-wg v{}", env!("CARGO_PKG_VERSION")),
+        format!("Platform: {OS} / {ARCH}"),
+        format!("Health: {}", diagnostic.summary()),
+        format!("Checked: {checked}"),
+        format!("Integration: {}", helper_platform_detail()),
+        format!("Control endpoint: {}", helper_control_endpoint()),
+        format!(
+            "Recommended next step: {}",
+            backend_recommended_action(diagnostic)
+        ),
+        format!("Detail: {}", diagnostic.detail),
+    ];
+    if let Some(last_error) = &app.ui.backend_last_error {
+        lines.push(format!("Backend last error: {last_error}"));
+    }
+
+    match diagnostic.health {
+        BackendHealth::VersionMismatch { expected, actual } => {
+            lines.push(format!(
+                "Protocol mismatch: expected v{expected}, actual v{actual}"
+            ));
+        }
+        BackendHealth::Unreachable => {
+            lines.push(format!("Unreachable message: {}", diagnostic.detail));
+        }
+        _ => {}
+    }
+
+    lines.join("\n")
+}
+
+fn render_backend_details(app: &Entity<WgApp>, cx: &mut gpui::App) -> Div {
+    let app = app.read(cx);
+    let diagnostic = &app.ui.backend;
+    let checked = diagnostic
+        .checked_at
+        .map(format_checked_timestamp)
+        .unwrap_or_else(|| "not checked yet".to_string());
+    let backend_last_error = app
+        .ui
+        .backend_last_error
+        .as_ref()
+        .map(|err| err.to_string())
+        .unwrap_or_else(|| "None".to_string());
+
+    let details = DescriptionList::new()
+        .columns(1)
+        .item("Integration", helper_platform_detail(), 1)
+        .item("Control Endpoint", helper_control_endpoint(), 1)
+        .item("Install State", diagnostic.summary(), 1)
+        .item("Checked", checked, 1)
+        .item("Recommended", backend_recommended_action(diagnostic), 1)
+        .item("Backend Last Error", backend_last_error, 1);
+
+    let details = if let BackendHealth::VersionMismatch { expected, actual } = diagnostic.health {
+        details.item(
+            "Protocol",
+            format!("Expected v{expected}, actual v{actual}"),
+            1,
+        )
+    } else {
+        details
+    };
+
+    let details = if matches!(diagnostic.health, BackendHealth::Unreachable) {
+        details.item("Transport Error", diagnostic.detail.to_string(), 1)
+    } else {
+        details
+    };
+
+    div()
+        .pt_2()
+        .border_t_1()
+        .border_color(cx.theme().border)
+        .child(details)
+}
+
+fn format_checked_timestamp(checked_at: SystemTime) -> String {
+    let absolute = DateTime::<Local>::from(checked_at)
+        .format("%Y-%m-%d %H:%M:%S local")
+        .to_string();
+    format!("{absolute} ({})", format_checked_age(checked_at))
+}
+
+fn backend_recommended_action(diagnostic: &BackendDiagnostic) -> &'static str {
+    match diagnostic.health {
+        BackendHealth::Running => "Refresh only if you want to re-check service health.",
+        BackendHealth::NotInstalled => "Install the helper integration.",
+        BackendHealth::Installed => "Refresh first, then Repair if the helper stays unavailable.",
+        BackendHealth::AccessDenied | BackendHealth::VersionMismatch { .. } => {
+            "Repair the helper integration."
+        }
+        BackendHealth::Unreachable => "Refresh first, then Repair if the helper stays unreachable.",
+        BackendHealth::Checking => "Wait for the current probe to finish.",
+        BackendHealth::Working { .. } => "Wait for the current action to finish.",
+        BackendHealth::Unknown => "Refresh to probe the helper state.",
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        BackendHealth::Unsupported => "No helper actions are available on this platform.",
+    }
+}
+
+fn helper_platform_detail() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "Linux privileged service"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "Windows privileged service"
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        "No privileged helper on this platform"
+    }
+}
+
+fn helper_control_endpoint() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "/run/r-wg/control.sock"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        r"\\.\pipe\r-wg-control"
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        "Not available"
+    }
+}
+
 fn should_show_repair_action(diagnostic: &BackendDiagnostic) -> bool {
     !matches!(diagnostic.health, BackendHealth::Running)
         && diagnostic.allows_action(PrivilegedServiceAction::Repair)
@@ -632,9 +883,6 @@ fn should_show_remove_action(diagnostic: &BackendDiagnostic) -> bool {
 
 fn backend_recovery_note(diagnostic: &BackendDiagnostic) -> Option<SharedString> {
     let note = match diagnostic.health {
-        BackendHealth::Running => {
-            "Healthy state stays quiet. Maintenance actions appear when the helper needs attention."
-        }
         BackendHealth::NotInstalled => {
             "Install is the recommended next step before using desktop tunnel start, route, or DNS actions."
         }
@@ -654,6 +902,21 @@ fn backend_recovery_note(diagnostic: &BackendDiagnostic) -> Option<SharedString>
     };
 
     Some(note.into())
+}
+
+fn dns_mode_uses_preset(mode: DnsMode) -> bool {
+    matches!(
+        mode,
+        DnsMode::AutoFillMissingFamilies | DnsMode::OverrideAll
+    )
+}
+
+fn dns_preset_label(preset: DnsPreset) -> SharedString {
+    dns_preset_options()
+        .into_iter()
+        .find(|(value, _)| *value == dns_preset_value(preset))
+        .map(|(_, label)| label)
+        .unwrap_or_else(|| SharedString::from("Preset"))
 }
 
 fn shared(value: &'static str) -> SharedString {

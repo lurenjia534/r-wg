@@ -77,7 +77,11 @@ impl WgApp {
                         };
                         this.set_status(done);
                     }
-                    Err(err) => this.set_error(format!("Backend action failed: {err}")),
+                    Err(err) => {
+                        let message = format!("Backend action failed: {err}");
+                        this.ui.set_backend_last_error(message.clone());
+                        this.set_error(message);
+                    }
                 }
                 this.refresh_privileged_backend_status(cx);
             });

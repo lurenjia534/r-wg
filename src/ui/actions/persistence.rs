@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Duration;
 
-use gpui::{AppContext, Context, Window};
+use gpui::{AppContext, Context, Timer, Window};
 use gpui_component::theme::{Theme, ThemeMode};
 use r_wg::dns::{DnsMode, DnsPreset};
 
@@ -95,7 +96,7 @@ impl WgApp {
     }
 
     pub(crate) fn persist_state_async(&mut self, cx: &mut Context<Self>) {
-        // 异步写盘：避免阻塞 UI；失败只提示错误，不影响当前交互。
+        // 单 writer + debounce：避免多次快速变更时旧快照后写覆盖新快照。
         let storage = match self.configs.ensure_storage() {
             Ok(storage) => storage,
             Err(err) => {
@@ -104,17 +105,58 @@ impl WgApp {
                 return;
             }
         };
-        let state = PersistedStateSnapshot::capture(self).build();
+        self.persistence.enqueue();
 
-        cx.spawn(async move |view, cx| {
-            let save_task =
-                cx.background_spawn(async move { persistence::save_state(&storage, &state) });
-            if let Err(err) = save_task.await {
-                view.update(cx, |this, cx| {
-                    this.set_error(err);
-                    cx.notify();
+        if self.persistence.worker_active {
+            return;
+        }
+        self.persistence.worker_active = true;
+
+        cx.spawn(async move |view, cx| loop {
+            Timer::after(Duration::from_millis(200)).await;
+
+            let Some(state) = view
+                .update(cx, |this, _cx| {
+                    match this.persistence.take_queued_revision() {
+                        Some(_) => {}
+                        None => {
+                            this.persistence.worker_active = false;
+                            return None;
+                        }
+                    }
+                    Some(PersistedStateSnapshot::capture(this).build())
                 })
-                .ok();
+                .ok()
+                .flatten()
+            else {
+                break;
+            };
+
+            let save_task = cx.background_spawn({
+                let storage = storage.clone();
+                async move { persistence::save_state(&storage, &state) }
+            });
+
+            let result = save_task.await;
+
+            let should_continue = view
+                .update(cx, |this, cx| {
+                    if let Err(err) = result {
+                        this.set_error(err);
+                        cx.notify();
+                    }
+
+                    if this.persistence.has_pending() {
+                        true
+                    } else {
+                        this.persistence.worker_active = false;
+                        false
+                    }
+                })
+                .unwrap_or(false);
+
+            if !should_continue {
+                break;
             }
         })
         .detach();
