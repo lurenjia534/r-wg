@@ -10,9 +10,9 @@ use super::super::persistence::{
     PersistedState, PersistedTrafficDayStats, PersistedTrafficHour, StoragePaths, STATE_VERSION,
 };
 use super::super::state::{
-    ConfigSource, ConfigsState, EndpointFamily, SelectionState, StatsState, TrafficDay,
-    TrafficDayStats, TrafficHour, TunnelConfig, UiPrefsState, WgApp, TRAFFIC_HOURLY_HISTORY,
-    TRAFFIC_ROLLING_DAYS,
+    build_configs_library_rows, ConfigSource, ConfigsState, EndpointFamily, SelectionState,
+    StatsState, TrafficDay, TrafficDayStats, TrafficHour, TunnelConfig, UiPrefsState, WgApp,
+    TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
 };
 
 impl WgApp {
@@ -54,7 +54,18 @@ impl WgApp {
                                     &mut this.stats,
                                     &mut this.ui_prefs,
                                 );
-                                this.refresh_configs_workspace_library_rows(cx);
+                                if let Some(workspace) = this.ui.configs_workspace.clone() {
+                                    let rows = build_configs_library_rows(
+                                        &this.configs,
+                                        &this.runtime,
+                                        &workspace.read(cx).draft,
+                                    );
+                                    let _ = workspace.update(cx, |workspace, cx| {
+                                        if workspace.set_library_rows(rows) {
+                                            cx.notify();
+                                        }
+                                    });
+                                }
                                 this.ui_session.sync_from_prefs(&this.ui_prefs);
                                 if let Some(theme_mode) = summary.theme_mode {
                                     Theme::change(theme_mode, Some(window), cx);

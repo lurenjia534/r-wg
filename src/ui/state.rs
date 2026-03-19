@@ -244,6 +244,22 @@ impl ConfigsWorkspace {
         before != rows.len()
     }
 
+    pub(crate) fn append_library_rows(
+        &mut self,
+        configs: &[TunnelConfig],
+        running_id: Option<u64>,
+        running_name: Option<&str>,
+    ) -> bool {
+        if configs.is_empty() {
+            return false;
+        }
+        let rows = Arc::make_mut(&mut self.library_rows);
+        rows.extend(configs.iter().map(|config| {
+            build_configs_library_row_with_runtime(config, running_id, running_name, &self.draft)
+        }));
+        true
+    }
+
     pub(crate) fn refresh_library_row_flags(
         &mut self,
         running_id: Option<u64>,

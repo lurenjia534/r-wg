@@ -282,6 +282,7 @@ impl WgApp {
                     if outcomes_batch.len() >= IMPORT_BATCH_SIZE || processed == total {
                         let outcomes = std::mem::take(&mut outcomes_batch);
                         view.update_in(cx, |this, _window, cx| {
+                            let mut imported_configs = Vec::new();
                             for outcome in outcomes {
                                 if let ImportOutcome::Ok {
                                     id,
@@ -291,7 +292,7 @@ impl WgApp {
                                     endpoint_family,
                                 } = outcome
                                 {
-                                    this.configs.push(TunnelConfig {
+                                    imported_configs.push(TunnelConfig {
                                         id,
                                         name_lower: name.to_lowercase(),
                                         name,
@@ -304,7 +305,10 @@ impl WgApp {
                                     });
                                 }
                             }
-                            this.refresh_configs_workspace_library_rows(cx);
+                            if !imported_configs.is_empty() {
+                                this.configs.extend(imported_configs.iter().cloned());
+                                this.append_configs_workspace_library_rows(&imported_configs, cx);
+                            }
                             // 使用状态文本作为轻量“进度提示”。
                             this.set_editor_operation(
                                 Some(EditorOperation::Importing { processed, total }),

@@ -20,9 +20,8 @@ use r_wg::backend::wg::config;
 
 use super::super::persistence;
 use super::super::state::{
-    build_configs_library_rows, ConfigDraftState, ConfigSource, ConfigsWorkspace,
-    DraftValidationState, EditorOperation, EndpointFamily, LoadedConfigState,
-    PendingDraftAction, SidebarItem, TunnelConfig, WgApp,
+    ConfigDraftState, ConfigSource, ConfigsWorkspace, DraftValidationState, EditorOperation,
+    EndpointFamily, LoadedConfigState, PendingDraftAction, SidebarItem, TunnelConfig, WgApp,
 };
 
 const CONFIG_TEXT_CACHE_LIMIT: usize = 32;
@@ -40,19 +39,6 @@ enum DeletePolicy {
 }
 
 impl WgApp {
-    pub(crate) fn refresh_configs_workspace_library_rows(&mut self, cx: &mut Context<Self>) {
-        let Some(workspace) = self.ui.configs_workspace.clone() else {
-            return;
-        };
-        let draft = workspace.read(cx).draft.clone();
-        let rows = build_configs_library_rows(&self.configs, &self.runtime, &draft);
-        let _ = workspace.update(cx, |workspace, cx| {
-            if workspace.set_library_rows(rows) {
-                cx.notify();
-            }
-        });
-    }
-
     pub(crate) fn upsert_configs_workspace_library_row(
         &mut self,
         config: &TunnelConfig,
@@ -82,6 +68,24 @@ impl WgApp {
         let ids = ids.clone();
         let _ = workspace.update(cx, |workspace, cx| {
             if workspace.remove_library_rows(&ids) {
+                cx.notify();
+            }
+        });
+    }
+
+    pub(crate) fn append_configs_workspace_library_rows(
+        &mut self,
+        configs: &[TunnelConfig],
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.ui.configs_workspace.clone() else {
+            return;
+        };
+        let configs = configs.to_vec();
+        let running_id = self.runtime.running_id;
+        let running_name = self.runtime.running_name.clone();
+        let _ = workspace.update(cx, |workspace, cx| {
+            if workspace.append_library_rows(&configs, running_id, running_name.as_deref()) {
                 cx.notify();
             }
         });
