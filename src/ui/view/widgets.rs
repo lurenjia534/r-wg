@@ -2,36 +2,6 @@ use gpui::*;
 use gpui_component::{tag::Tag, Sizable as _};
 
 use super::super::state::{BackendDiagnostic, BackendHealth};
-use super::data::{ConfigStatus, ConfigStatusTone};
-
-/// 配置状态徽标（Valid/Invalid），没有状态时返回空元素。
-pub(crate) fn status_badge(status: Option<&ConfigStatus>) -> AnyElement {
-    match status {
-        Some(status) => match status.tone {
-            ConfigStatusTone::Success => Tag::success()
-                .small()
-                .rounded_full()
-                .child(status.label)
-                .into_any_element(),
-            ConfigStatusTone::Danger => Tag::danger()
-                .small()
-                .rounded_full()
-                .child(status.label)
-                .into_any_element(),
-            ConfigStatusTone::Warning => Tag::warning()
-                .small()
-                .rounded_full()
-                .child(status.label)
-                .into_any_element(),
-            ConfigStatusTone::Secondary => Tag::secondary()
-                .small()
-                .rounded_full()
-                .child(status.label)
-                .into_any_element(),
-        },
-        None => div().into_any_element(),
-    }
-}
 
 pub(crate) fn backend_status_badge(diagnostic: &BackendDiagnostic) -> Tag {
     backend_status_tag(diagnostic, diagnostic.badge_label())

@@ -11,24 +11,6 @@ use super::super::state::{
     TrafficPeriod, TunnelConfig, WgApp, TRAFFIC_TREND_DAYS,
 };
 
-/// `ConfigStatus` 是配置编辑页和顶部工具栏共享的“解析结果快照”。
-///
-/// 这里不直接暴露布尔值，而是提前整理成 UI 直接可消费的 label + color：
-/// - 这样视图层不需要知道 `Loading / Invalid / Valid / Unknown` 的判定细节；
-/// - 也避免多个面板各自复制一份状态映射逻辑。
-/// 配置解析状态，用于显示“Valid/Invalid”徽标。
-pub(crate) struct ConfigStatus {
-    pub(crate) label: &'static str,
-    pub(crate) tone: ConfigStatusTone,
-}
-
-pub(crate) enum ConfigStatusTone {
-    Success,
-    Danger,
-    Warning,
-    Secondary,
-}
-
 /// Configs 页的局部渲染快照。
 ///
 /// 这个 ViewModel 的目标不是减少字段数量，而是把 “Configs 页需要的 editor 状态”
@@ -39,6 +21,7 @@ pub(crate) struct ConfigsViewData {
     pub(crate) shared: ViewData,
     pub(crate) draft: ConfigDraftState,
     pub(crate) has_selection: bool,
+    pub(crate) title_editing: bool,
     pub(crate) is_busy: bool,
     pub(crate) has_saved_source: bool,
     pub(crate) is_running_draft: bool,
@@ -64,8 +47,6 @@ pub(crate) struct ViewData {
     pub(crate) parsed_config: Option<config::WireGuardConfig>,
     /// 配置解析错误文本。
     pub(crate) parse_error: Option<String>,
-    /// 状态徽标（有效/无效）。
-    pub(crate) config_status: Option<ConfigStatus>,
     /// 当前 draft 是否有未保存改动。
     pub(crate) draft_dirty: bool,
     /// 当前 draft 是否对应已保存配置。
@@ -190,48 +171,17 @@ impl ViewData {
         operation: Option<&EditorOperation>,
     ) -> Self {
         let is_loading = matches!(operation, Some(EditorOperation::LoadingConfig));
-        let (parsed_config, parse_error, config_status) = if is_loading {
-            (
-                None,
-                None,
-                Some(ConfigStatus {
-                    label: "Loading",
-                    tone: ConfigStatusTone::Secondary,
-                }),
-            )
+        let (parsed_config, parse_error) = if is_loading {
+            (None, None)
         } else {
             match &draft.validation {
-                DraftValidationState::Idle => {
-                    if draft.name.is_empty() && draft.text.is_empty() {
-                        (None, None, None)
-                    } else {
-                        (
-                            None,
-                            None,
-                            Some(ConfigStatus {
-                                label: "Draft",
-                                tone: ConfigStatusTone::Warning,
-                            }),
-                        )
-                    }
-                }
-                DraftValidationState::Valid { parsed, .. } => (
-                    Some(parsed.clone()),
-                    None,
-                    Some(ConfigStatus {
-                        label: "Valid",
-                        tone: ConfigStatusTone::Success,
-                    }),
-                ),
+                DraftValidationState::Idle => (None, None),
+                DraftValidationState::Valid { parsed, .. } => (Some(parsed.clone()), None),
                 DraftValidationState::Invalid { line, message, .. } => (
                     None,
                     Some(match line {
                         Some(line) => format!("line {line}: {message}"),
                         None => message.to_string(),
-                    }),
-                    Some(ConfigStatus {
-                        label: "Invalid",
-                        tone: ConfigStatusTone::Danger,
                     }),
                 ),
             }
@@ -246,7 +196,6 @@ impl ViewData {
         Self {
             parsed_config,
             parse_error,
-            config_status,
             draft_dirty: draft.is_dirty(),
             has_saved_source: draft.source_id.is_some(),
             needs_restart: draft.needs_restart,
@@ -262,6 +211,7 @@ impl ConfigsViewData {
         draft: ConfigDraftState,
         operation: Option<EditorOperation>,
         has_selection: bool,
+        title_editing: bool,
     ) -> Self {
         let shared = ViewData::from_editor(app, &draft, operation.as_ref());
         let has_saved_source = draft.source_id.is_some();
@@ -292,6 +242,7 @@ impl ConfigsViewData {
             shared,
             draft,
             has_selection,
+            title_editing,
             is_busy,
             has_saved_source,
             is_running_draft,

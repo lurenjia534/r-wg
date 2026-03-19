@@ -164,6 +164,7 @@ pub(crate) struct ConfigsWorkspace {
     pub(crate) library_rows: Arc<Vec<ConfigsLibraryRow>>,
     pub(crate) library_width: f32,
     pub(crate) inspector_width: f32,
+    pub(crate) title_editing: bool,
     pub(crate) library_search_input: Option<Entity<InputState>>,
     pub(crate) name_input: Option<Entity<InputState>>,
     pub(crate) config_input: Option<Entity<InputState>>,
@@ -186,6 +187,7 @@ impl ConfigsWorkspace {
             library_rows: Arc::new(Vec::new()),
             library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,
             inspector_width: DEFAULT_CONFIGS_INSPECTOR_WIDTH,
+            title_editing: false,
             library_search_input: None,
             name_input: None,
             config_input: None,
@@ -346,6 +348,7 @@ impl ConfigsWorkspace {
             validation: DraftValidationState::Idle,
             needs_restart: false,
         };
+        self.title_editing = false;
     }
 
     pub(crate) fn set_unsaved_draft(&mut self, name: SharedString, text: SharedString) {
@@ -360,6 +363,7 @@ impl ConfigsWorkspace {
             validation: DraftValidationState::Idle,
             needs_restart: false,
         };
+        self.title_editing = false;
     }
 
     pub(crate) fn set_inspector_tab(&mut self, value: ConfigInspectorTab) -> bool {
@@ -367,6 +371,14 @@ impl ConfigsWorkspace {
             return false;
         }
         self.inspector_tab = value;
+        true
+    }
+
+    pub(crate) fn set_title_editing(&mut self, value: bool) -> bool {
+        if self.title_editing == value {
+            return false;
+        }
+        self.title_editing = value;
         true
     }
 

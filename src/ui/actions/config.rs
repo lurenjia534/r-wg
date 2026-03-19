@@ -13,7 +13,7 @@ use gpui::{
 use gpui_component::{
     button::{Button, ButtonVariant, ButtonVariants as _},
     dialog::DialogButtonProps,
-    input::{InputEvent, InputState},
+    input::{InputEvent, InputState, TabSize},
     ActiveTheme as _, WindowExt,
 };
 use r_wg::backend::wg::config;
@@ -290,11 +290,11 @@ impl ConfigsWorkspace {
         }
 
         if self.name_input.is_none() {
-            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Tunnel name"));
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Config title"));
             let subscription = cx.subscribe(
                 &input,
-                |this, _, event: &InputEvent, cx: &mut Context<Self>| {
-                    if matches!(event, InputEvent::Change) {
+                |this, _, event: &InputEvent, cx: &mut Context<Self>| match event {
+                    InputEvent::Change => {
                         let Some(name_input) = this.name_input.as_ref() else {
                             return;
                         };
@@ -310,6 +310,16 @@ impl ConfigsWorkspace {
                         this.schedule_draft_validation(cx);
                         cx.notify();
                     }
+                    InputEvent::Focus => {
+                        if this.set_title_editing(true) {
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::Blur | InputEvent::PressEnter { .. } => {
+                        if this.set_title_editing(false) {
+                            cx.notify();
+                        }
+                    }
                 },
             );
             self.name_input = Some(input);
@@ -321,6 +331,13 @@ impl ConfigsWorkspace {
             let input = cx.new(|cx| {
                 InputState::new(window, cx)
                     .code_editor("toml")
+                    .line_number(true)
+                    .searchable(true)
+                    .soft_wrap(false)
+                    .tab_size(TabSize {
+                        hard_tabs: false,
+                        tab_size: 4,
+                    })
                     .rows(16)
                     .placeholder(placeholder)
             });
