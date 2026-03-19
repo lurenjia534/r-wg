@@ -3,10 +3,10 @@ use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Local};
 use gpui::{
-    div, prelude::FluentBuilder as _, px, Axis, Context, Div, Entity, IntoElement, ParentElement,
-    SharedString, Styled, Timer, Window,
+    div, prelude::FluentBuilder as _, px, Axis, Context, Div, Entity, Hsla, IntoElement,
+    ParentElement, SharedString, Styled, Timer, Window,
 };
-use gpui_component::theme::ThemeMode;
+use gpui_component::theme::{Theme, ThemeConfig, ThemeMode};
 use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
     description_list::DescriptionList,
@@ -24,6 +24,7 @@ use r_wg::dns::{DnsMode, DnsPreset};
 use super::super::state::{
     BackendDiagnostic, BackendHealth, ConfigInspectorTab, SidebarItem, TrafficPeriod, WgApp,
 };
+use super::super::themes;
 use super::widgets::backend_status_tag;
 
 pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
@@ -35,8 +36,14 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
         .group(
             SettingGroup::new()
                 .title("Appearance")
-                .description("Match the theme controls shown in the toolbar.")
-                .item(theme_mode_item(app_handle.clone())),
+                .description(
+                    "Keep mode switching fast while storing a separate palette for light and dark.",
+                )
+                .item(theme_mode_item(app_handle.clone()))
+                .item(theme_palette_item(app_handle.clone(), ThemeMode::Light))
+                .item(theme_palette_item(app_handle.clone(), ThemeMode::Dark))
+                .item(reset_theme_item(app_handle.clone()))
+                .item(theme_preview_item(app_handle.clone())),
         )
         .group(
             SettingGroup::new()
@@ -151,7 +158,7 @@ fn settings_sidebar_style(cx: &mut Context<WgApp>) -> gpui::StyleRefinement {
 
 fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
-        "Theme",
+        "Theme Mode",
         SettingField::render(move |_, _window, cx| {
             let current = app.read(cx).ui_prefs.theme_mode;
             let light_handle = app.clone();
@@ -186,6 +193,372 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
         }),
     )
     .description("Keep theme selection aligned with the toolbar controls.")
+}
+
+fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
+    let title = match mode {
+        ThemeMode::Light => "Light Palette",
+        ThemeMode::Dark => "Dark Palette",
+    };
+    let description = match mode {
+        ThemeMode::Light => "Used when the quick toggle or app state returns to light mode.",
+        ThemeMode::Dark => "Used when the quick toggle or app state returns to dark mode.",
+    };
+
+    SettingItem::new(
+        title,
+        SettingField::render(move |_, _window, cx| {
+            render_theme_palette_field(app.clone(), mode, cx)
+        }),
+    )
+    .description(description)
+}
+
+fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
+    SettingItem::new(
+        "Reset Palettes",
+        SettingField::render(move |_, _window, _cx| {
+            div().child(
+                Button::new("advanced-theme-reset")
+                    .label("Use Default Light and Default Dark")
+                    .outline()
+                    .small()
+                    .compact()
+                    .on_click({
+                        let app = app.clone();
+                        move |_, window, cx| {
+                            let _ = app.update(cx, |app, cx| {
+                                app.reset_theme_prefs(Some(window), cx);
+                            });
+                        }
+                    }),
+            )
+        }),
+    )
+    .description("Clear stored palette names and fall back to the registry defaults for each mode.")
+}
+
+fn theme_preview_item(app: Entity<WgApp>) -> SettingItem {
+    SettingItem::new(
+        "Preview",
+        SettingField::render(move |_, _window, cx| render_theme_preview_field(app.clone(), cx)),
+    )
+    .layout(Axis::Vertical)
+    .description(
+        "Preview the currently stored light and dark palettes without leaving Preferences.",
+    )
+}
+
+fn render_theme_palette_field(app: Entity<WgApp>, mode: ThemeMode, cx: &mut gpui::App) -> Div {
+    let preferred_name = app
+        .read(cx)
+        .ui_prefs
+        .theme_palette_name(mode)
+        .map(|name| name.to_string());
+    let current_label =
+        themes::resolved_theme_name(mode, preferred_name.as_deref(), cx).to_string();
+    let selected_name = preferred_name.clone();
+    let button_id = match mode {
+        ThemeMode::Light => "advanced-theme-light-palette",
+        ThemeMode::Dark => "advanced-theme-dark-palette",
+    };
+    let set_handle = app;
+
+    div().child(
+        Button::new(button_id)
+            .label(current_label)
+            .outline()
+            .small()
+            .compact()
+            .dropdown_caret(true)
+            .dropdown_menu_with_anchor(gpui::Corner::TopRight, move |menu: PopupMenu, _, cx| {
+                let menu =
+                    themes::available_themes(mode, cx)
+                        .into_iter()
+                        .fold(menu, |menu, theme| {
+                            let checked = selected_name
+                                .as_deref()
+                                .map(|selected| theme.name.eq_ignore_ascii_case(selected))
+                                .unwrap_or(false);
+                            menu.item(
+                                PopupMenuItem::new(theme.name.to_string())
+                                    .checked(checked)
+                                    .on_click({
+                                        let set_handle = set_handle.clone();
+                                        let name = theme.name.clone();
+                                        move |_, window, cx| {
+                                            let _ = set_handle.update(cx, |app, cx| {
+                                                app.set_theme_palette_pref(
+                                                    mode,
+                                                    Some(name.clone()),
+                                                    Some(window),
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    }),
+                            )
+                        });
+
+                menu.item(PopupMenuItem::separator()).item(
+                    PopupMenuItem::new("Use Default")
+                        .checked(selected_name.is_none())
+                        .on_click({
+                            let set_handle = set_handle.clone();
+                            move |_, window, cx| {
+                                let _ = set_handle.update(cx, |app, cx| {
+                                    app.set_theme_palette_pref(mode, None, Some(window), cx);
+                                });
+                            }
+                        }),
+                )
+            }),
+    )
+}
+
+fn render_theme_preview_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
+    let (light_name, dark_name) = {
+        let app = app.read(cx);
+        (
+            app.ui_prefs
+                .theme_palette_name(ThemeMode::Light)
+                .map(|name| name.to_string()),
+            app.ui_prefs
+                .theme_palette_name(ThemeMode::Dark)
+                .map(|name| name.to_string()),
+        )
+    };
+    let light_preview = theme_preview_tokens(themes::resolve_theme_config(
+        ThemeMode::Light,
+        light_name.as_deref(),
+        cx,
+    ));
+    let dark_preview = theme_preview_tokens(themes::resolve_theme_config(
+        ThemeMode::Dark,
+        dark_name.as_deref(),
+        cx,
+    ));
+
+    v_flex()
+        .w_full()
+        .gap_3()
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Status colors stay semantic. Palettes only change the surrounding surfaces and emphasis."),
+        )
+        .child(
+            h_flex()
+                .items_start()
+                .flex_wrap()
+                .gap_3()
+                .child(render_theme_preview_card(&light_preview))
+                .child(render_theme_preview_card(&dark_preview)),
+        )
+}
+
+struct ThemePreviewTokens {
+    mode: ThemeMode,
+    name: SharedString,
+    background: Hsla,
+    panel: Hsla,
+    border: Hsla,
+    foreground: Hsla,
+    muted_foreground: Hsla,
+    accent: Hsla,
+    accent_foreground: Hsla,
+    success: Hsla,
+    success_foreground: Hsla,
+    danger: Hsla,
+    danger_foreground: Hsla,
+    input_border: Hsla,
+}
+
+fn theme_preview_tokens(config: std::rc::Rc<ThemeConfig>) -> ThemePreviewTokens {
+    let mut theme = Theme::default();
+    theme.apply_config(&config);
+
+    ThemePreviewTokens {
+        mode: config.mode,
+        name: config.name.clone(),
+        background: theme.background,
+        panel: theme.group_box,
+        border: theme.border,
+        foreground: theme.foreground,
+        muted_foreground: theme.muted_foreground,
+        accent: theme.accent,
+        accent_foreground: theme.accent_foreground,
+        success: theme.success,
+        success_foreground: theme.success_foreground,
+        danger: theme.danger,
+        danger_foreground: theme.danger_foreground,
+        input_border: theme.input,
+    }
+}
+
+fn render_theme_preview_card(preview: &ThemePreviewTokens) -> Div {
+    let mode_label = match preview.mode {
+        ThemeMode::Light => "LIGHT",
+        ThemeMode::Dark => "DARK",
+    };
+
+    div()
+        .flex_1()
+        .min_w(px(260.0))
+        .rounded(px(18.0))
+        .border_1()
+        .border_color(preview.border)
+        .bg(preview.background)
+        .p_4()
+        .child(
+            v_flex()
+                .gap_3()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_semibold()
+                                        .text_color(preview.muted_foreground)
+                                        .child(mode_label),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_semibold()
+                                        .text_color(preview.foreground)
+                                        .child(preview.name.clone()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .rounded_full()
+                                .bg(preview.accent.alpha(0.22))
+                                .text_color(preview.accent)
+                                .text_xs()
+                                .font_semibold()
+                                .child("Preview"),
+                        ),
+                )
+                .child(
+                    div()
+                        .rounded(px(14.0))
+                        .border_1()
+                        .border_color(preview.border)
+                        .bg(preview.panel)
+                        .p_3()
+                        .child(
+                            v_flex()
+                                .gap_3()
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_semibold()
+                                                .text_color(preview.foreground)
+                                                .child("Infrastructure Theme"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(preview.muted_foreground)
+                                                .child("Readable surfaces, restrained contrast, and stable status cues."),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .px_3()
+                                                .py_1()
+                                                .rounded(px(10.0))
+                                                .bg(preview.accent)
+                                                .text_color(preview.accent_foreground)
+                                                .text_xs()
+                                                .font_semibold()
+                                                .child("Primary"),
+                                        )
+                                        .child(
+                                            div()
+                                                .px_3()
+                                                .py_1()
+                                                .rounded(px(10.0))
+                                                .border_1()
+                                                .border_color(preview.border)
+                                                .bg(preview.background)
+                                                .text_color(preview.foreground)
+                                                .text_xs()
+                                                .font_semibold()
+                                                .child("Secondary"),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .rounded(px(10.0))
+                                        .border_1()
+                                        .border_color(preview.input_border)
+                                        .bg(preview.background)
+                                        .px_3()
+                                        .py_2()
+                                        .text_xs()
+                                        .text_color(preview.muted_foreground)
+                                        .child("DNS override, health notes, and other form surfaces."),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .flex_wrap()
+                                        .child(preview_color_chip("Accent", preview.accent, preview.accent_foreground))
+                                        .child(preview_color_chip("Success", preview.success, preview.success_foreground))
+                                        .child(preview_color_chip("Danger", preview.danger, preview.danger_foreground)),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .flex_wrap()
+                                        .child(preview_swatch("Canvas", preview.background, preview.foreground))
+                                        .child(preview_swatch("Panel", preview.panel, preview.foreground))
+                                        .child(preview_swatch("Border", preview.border, preview.foreground))
+                                        .child(preview_swatch("Input", preview.input_border, preview.foreground)),
+                                ),
+                        ),
+                ),
+        )
+}
+
+fn preview_color_chip(label: &'static str, background: Hsla, foreground: Hsla) -> Div {
+    div()
+        .px_3()
+        .py_1()
+        .rounded_full()
+        .bg(background)
+        .text_color(foreground)
+        .text_xs()
+        .font_semibold()
+        .child(label)
+}
+
+fn preview_swatch(label: &'static str, color: Hsla, text_color: Hsla) -> Div {
+    h_flex()
+        .items_center()
+        .gap_2()
+        .child(div().size(px(12.0)).rounded_full().bg(color))
+        .child(div().text_xs().text_color(text_color).child(label))
 }
 
 fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {

@@ -1,6 +1,5 @@
 // UI 入口：负责应用初始化、窗口创建以及关闭时的隧道清理。
 use gpui::*;
-use gpui_component::theme::{Theme, ThemeMode};
 use gpui_component::Root;
 use gpui_component_assets::Assets;
 // Engine 负责隧道生命周期；EngineError 用于区分停止时的错误类型。
@@ -15,7 +14,15 @@ use std::sync::Arc;
 
 use super::persistence;
 use super::state::WgApp;
+use super::themes;
 use super::tray;
+
+#[derive(Clone)]
+struct StartupThemePrefs {
+    mode: gpui_component::theme::ThemeMode,
+    light_name: Option<SharedString>,
+    dark_name: Option<SharedString>,
+}
 
 pub fn run() {
     // 在 UI 启动前先创建后端引擎，供整个应用生命周期复用。
@@ -25,9 +32,18 @@ pub fn run() {
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
-            // 打开窗口前加载主题选择，确保首帧使用正确主题。
-            let theme_mode = load_persisted_theme_mode();
-            Theme::change(theme_mode, None, cx);
+            // 打开窗口前加载主题选择，确保首帧尽量贴近用户偏好。
+            let startup_theme = load_startup_theme_prefs();
+            if let Ok(storage) = persistence::ensure_storage_dirs() {
+                let _ = themes::ensure_theme_registry(&storage, cx);
+            }
+            themes::apply_theme_preferences(
+                startup_theme.mode,
+                startup_theme.light_name.as_deref().map(|name| &**name),
+                startup_theme.dark_name.as_deref().map(|name| &**name),
+                None,
+                cx,
+            );
 
             let engine = engine.clone();
             cx.open_window(
@@ -37,7 +53,16 @@ pub fn run() {
                 },
                 move |window, cx| {
                     // 创建应用状态并挂到窗口根视图。
-                    let view = cx.new(|_cx| WgApp::new(engine.clone(), theme_mode));
+                    let startup_theme = startup_theme.clone();
+                    let view_engine = engine.clone();
+                    let view = cx.new(move |_cx| {
+                        WgApp::new(
+                            view_engine.clone(),
+                            startup_theme.mode,
+                            startup_theme.light_name.clone(),
+                            startup_theme.dark_name.clone(),
+                        )
+                    });
                     let _ = view.update(cx, |this, cx| {
                         this.refresh_privileged_backend_status(cx);
                     });
@@ -179,15 +204,31 @@ fn sync_engine_status(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut Ap
     })
     .detach();
 }
-fn load_persisted_theme_mode() -> ThemeMode {
-    // 读取持久化主题；读取失败则回退深色模式。
+fn load_startup_theme_prefs() -> StartupThemePrefs {
+    // 读取持久化主题；读取失败则回退深色模式与默认 palette。
     let storage = match persistence::ensure_storage_dirs() {
         Ok(storage) => storage,
-        Err(_) => return ThemeMode::Dark,
+        Err(_) => {
+            return StartupThemePrefs {
+                mode: gpui_component::theme::ThemeMode::Dark,
+                light_name: None,
+                dark_name: None,
+            };
+        }
     };
-    persistence::load_state(&storage)
-        .ok()
-        .flatten()
-        .and_then(|state| state.theme_mode)
-        .unwrap_or(ThemeMode::Dark)
+    let state = persistence::load_state(&storage).ok().flatten();
+    StartupThemePrefs {
+        mode: state
+            .as_ref()
+            .and_then(|state| state.theme_mode)
+            .unwrap_or(gpui_component::theme::ThemeMode::Dark),
+        light_name: state
+            .as_ref()
+            .and_then(|state| state.theme_light_name.clone())
+            .map(Into::into),
+        dark_name: state
+            .as_ref()
+            .and_then(|state| state.theme_dark_name.clone())
+            .map(Into::into),
+    }
 }

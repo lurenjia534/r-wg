@@ -742,7 +742,12 @@ mod tests {
     };
 
     fn make_app() -> WgApp {
-        WgApp::new(r_wg::backend::wg::Engine::new(), ThemeMode::Dark)
+        WgApp::new(
+            r_wg::backend::wg::Engine::new(),
+            ThemeMode::Dark,
+            None,
+            None,
+        )
     }
 
     fn make_config(id: u64, name: &str) -> TunnelConfig {

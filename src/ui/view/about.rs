@@ -31,7 +31,11 @@ pub(crate) fn render_about(app: &mut WgApp, window: &mut Window, cx: &mut Contex
         "Release"
     };
     let platform_text = format!("{OS} / {ARCH}");
-    let theme_text = theme_mode_text(app.ui_prefs.theme_mode);
+    let theme_text = format!(
+        "{} · {}",
+        theme_mode_text(app.ui_prefs.theme_mode),
+        cx.theme().theme_name()
+    );
     let (latest_version, latest_changes) = latest_release_notes();
     let two_column_layout = window.viewport_size().width >= px(ABOUT_TWO_COLUMN_BREAKPOINT);
     let wide_readiness = window.viewport_size().width >= px(ABOUT_READINESS_BREAKPOINT);
@@ -49,7 +53,7 @@ pub(crate) fn render_about(app: &mut WgApp, window: &mut Window, cx: &mut Contex
     let side_column = v_flex()
         .gap_3()
         .w(px(336.0))
-        .child(render_system_card(app, theme_text, cx));
+        .child(render_system_card(app, &theme_text, cx));
 
     let body = if two_column_layout {
         h_flex()
@@ -62,7 +66,7 @@ pub(crate) fn render_about(app: &mut WgApp, window: &mut Window, cx: &mut Contex
         v_flex()
             .gap_3()
             .child(primary_column)
-            .child(render_system_card(app, theme_text, cx))
+            .child(render_system_card(app, &theme_text, cx))
             .into_any_element()
     };
 

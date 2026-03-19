@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
+use gpui::SharedString;
 use gpui::{AppContext, Context, Timer, Window};
-use gpui_component::theme::{Theme, ThemeMode};
+use gpui_component::theme::ThemeMode;
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use super::super::persistence::{
@@ -67,9 +68,7 @@ impl WgApp {
                                     });
                                 }
                                 this.ui_session.sync_from_prefs(&this.ui_prefs);
-                                if let Some(theme_mode) = summary.theme_mode {
-                                    Theme::change(theme_mode, Some(window), cx);
-                                }
+                                this.apply_theme_prefs(Some(window), cx);
                                 if let Some(selected_id) = summary.selected_id {
                                     this.load_config_into_inputs(selected_id, window, cx);
                                 }
@@ -199,6 +198,16 @@ impl<'a> PersistedStateSnapshot<'a> {
             next_id: self.configs.next_config_id,
             selected_id,
             theme_mode: Some(self.ui_prefs.theme_mode),
+            theme_light_name: self
+                .ui_prefs
+                .theme_light_name
+                .as_ref()
+                .map(ToString::to_string),
+            theme_dark_name: self
+                .ui_prefs
+                .theme_dark_name
+                .as_ref()
+                .map(ToString::to_string),
             log_auto_follow: Some(self.ui_prefs.log_auto_follow),
             preferred_inspector_tab: Some(self.ui_prefs.preferred_inspector_tab),
             preferred_traffic_period: Some(self.ui_prefs.preferred_traffic_period),
@@ -275,6 +284,8 @@ impl<'a> PersistedStateSnapshot<'a> {
 
 struct PersistedStateRestore {
     theme_mode: Option<ThemeMode>,
+    theme_light_name: Option<SharedString>,
+    theme_dark_name: Option<SharedString>,
     log_auto_follow: Option<bool>,
     preferred_inspector_tab: Option<super::super::state::ConfigInspectorTab>,
     preferred_traffic_period: Option<super::super::state::TrafficPeriod>,
@@ -295,7 +306,6 @@ struct PersistedStateRestore {
 }
 
 struct PersistedStateSummary {
-    theme_mode: Option<ThemeMode>,
     selected_id: Option<u64>,
     loaded_count: usize,
     missing_files: usize,
@@ -346,6 +356,8 @@ impl PersistedStateRestore {
 
         Ok(Self {
             theme_mode: state.theme_mode,
+            theme_light_name: state.theme_light_name.map(Into::into),
+            theme_dark_name: state.theme_dark_name.map(Into::into),
             log_auto_follow: state.log_auto_follow,
             preferred_inspector_tab: state.preferred_inspector_tab,
             preferred_traffic_period: state.preferred_traffic_period,
@@ -375,6 +387,12 @@ impl PersistedStateRestore {
     ) -> PersistedStateSummary {
         if let Some(theme_mode) = self.theme_mode {
             ui_prefs.theme_mode = theme_mode;
+        }
+        if let Some(theme_light_name) = self.theme_light_name {
+            ui_prefs.theme_light_name = Some(theme_light_name);
+        }
+        if let Some(theme_dark_name) = self.theme_dark_name {
+            ui_prefs.theme_dark_name = Some(theme_dark_name);
         }
         if let Some(log_auto_follow) = self.log_auto_follow {
             ui_prefs.log_auto_follow = log_auto_follow;
@@ -415,7 +433,6 @@ impl PersistedStateRestore {
         selection.restore_after_persist(self.selected_id, configs);
 
         PersistedStateSummary {
-            theme_mode: self.theme_mode,
             selected_id: selection.selected_id,
             loaded_count: configs.len(),
             missing_files: self.missing_files,

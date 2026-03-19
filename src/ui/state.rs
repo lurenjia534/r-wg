@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{Entity, SharedString, Subscription, Window};
-use gpui_component::theme::{Theme, ThemeMode};
+use gpui_component::theme::ThemeMode;
 use gpui_component::{input::InputState, notification::Notification, IconName, WindowExt};
 use r_wg::backend::wg::{
     config, Engine, PeerStats, PrivilegedServiceAction, PrivilegedServiceStatus,
@@ -17,6 +17,7 @@ use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
 use super::persistence::{self, StoragePaths};
+use super::themes;
 
 /// 速度曲线采样点数量（固定窗口）。
 pub(crate) const SPARKLINE_SAMPLES: usize = 24;
@@ -1191,12 +1192,18 @@ pub(crate) struct UiPrefsState {
     pub(crate) configs_inspector_width: f32,
     pub(crate) proxies_view_mode: ProxiesViewMode,
     pub(crate) theme_mode: ThemeMode,
+    pub(crate) theme_light_name: Option<SharedString>,
+    pub(crate) theme_dark_name: Option<SharedString>,
     pub(crate) dns_mode: DnsMode,
     pub(crate) dns_preset: DnsPreset,
 }
 
 impl UiPrefsState {
-    fn new(theme_mode: ThemeMode) -> Self {
+    fn new(
+        theme_mode: ThemeMode,
+        theme_light_name: Option<SharedString>,
+        theme_dark_name: Option<SharedString>,
+    ) -> Self {
         Self {
             log_auto_follow: true,
             preferred_inspector_tab: ConfigInspectorTab::Preview,
@@ -1205,8 +1212,17 @@ impl UiPrefsState {
             configs_inspector_width: DEFAULT_CONFIGS_INSPECTOR_WIDTH,
             proxies_view_mode: ProxiesViewMode::List,
             theme_mode,
+            theme_light_name,
+            theme_dark_name,
             dns_mode: DnsMode::FollowConfig,
             dns_preset: DnsPreset::CloudflareStandard,
+        }
+    }
+
+    pub(crate) fn theme_palette_name(&self, mode: ThemeMode) -> Option<&SharedString> {
+        match mode {
+            ThemeMode::Light => self.theme_light_name.as_ref(),
+            ThemeMode::Dark => self.theme_dark_name.as_ref(),
         }
     }
 }
@@ -1337,8 +1353,13 @@ pub(crate) struct WgApp {
 }
 
 impl WgApp {
-    pub(crate) fn new(engine: Engine, theme_mode: ThemeMode) -> Self {
-        let ui_prefs = UiPrefsState::new(theme_mode);
+    pub(crate) fn new(
+        engine: Engine,
+        theme_mode: ThemeMode,
+        theme_light_name: Option<SharedString>,
+        theme_dark_name: Option<SharedString>,
+    ) -> Self {
+        let ui_prefs = UiPrefsState::new(theme_mode, theme_light_name, theme_dark_name);
         Self {
             engine,
             configs: ConfigsState::new(),
@@ -1404,13 +1425,75 @@ impl WgApp {
         if self.ui_prefs.theme_mode != value {
             self.ui_prefs.theme_mode = value;
             let refresh_all_windows = window.is_none();
-            Theme::change(value, window, cx);
+            self.apply_theme_prefs(window, cx);
             if refresh_all_windows {
                 cx.refresh_windows();
             }
             self.persist_state_async(cx);
         }
         cx.notify();
+    }
+
+    pub(crate) fn set_theme_palette_pref(
+        &mut self,
+        mode: ThemeMode,
+        value: Option<SharedString>,
+        window: Option<&mut Window>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let slot = match mode {
+            ThemeMode::Light => &mut self.ui_prefs.theme_light_name,
+            ThemeMode::Dark => &mut self.ui_prefs.theme_dark_name,
+        };
+
+        if *slot != value {
+            *slot = value;
+
+            let active_mode_changed = self.ui_prefs.theme_mode == mode;
+            let refresh_all_windows = active_mode_changed && window.is_none();
+            self.apply_theme_prefs(if active_mode_changed { window } else { None }, cx);
+            if refresh_all_windows {
+                cx.refresh_windows();
+            }
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn reset_theme_prefs(
+        &mut self,
+        window: Option<&mut Window>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let changed = self.ui_prefs.theme_light_name.take().is_some()
+            || self.ui_prefs.theme_dark_name.take().is_some();
+
+        if changed {
+            let refresh_all_windows = window.is_none();
+            self.apply_theme_prefs(window, cx);
+            if refresh_all_windows {
+                cx.refresh_windows();
+            }
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn apply_theme_prefs(
+        &mut self,
+        window: Option<&mut Window>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        themes::apply_theme_preferences(
+            self.ui_prefs.theme_mode,
+            self.ui_prefs
+                .theme_light_name
+                .as_deref()
+                .map(|name| &**name),
+            self.ui_prefs.theme_dark_name.as_deref().map(|name| &**name),
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn set_log_auto_follow_pref(&mut self, value: bool, cx: &mut gpui::Context<Self>) {

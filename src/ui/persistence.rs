@@ -27,6 +27,10 @@ pub(crate) struct PersistedState {
     #[serde(default)]
     pub(crate) theme_mode: Option<ThemeMode>,
     #[serde(default)]
+    pub(crate) theme_light_name: Option<String>,
+    #[serde(default)]
+    pub(crate) theme_dark_name: Option<String>,
+    #[serde(default)]
     pub(crate) log_auto_follow: Option<bool>,
     #[serde(default, alias = "preferred_right_tab")]
     pub(crate) preferred_inspector_tab: Option<ConfigInspectorTab>,
@@ -231,6 +235,8 @@ mod tests {
             next_id: 42,
             selected_id: Some(7),
             theme_mode: Some(ThemeMode::Dark),
+            theme_light_name: Some("Signal Light".to_string()),
+            theme_dark_name: Some("Network Dark".to_string()),
             log_auto_follow: Some(true),
             preferred_inspector_tab: Some(ConfigInspectorTab::Preview),
             preferred_traffic_period: Some(TrafficPeriod::Today),
@@ -296,6 +302,8 @@ mod tests {
         assert_eq!(loaded.next_id, state.next_id);
         assert_eq!(loaded.selected_id, state.selected_id);
         assert_eq!(loaded.theme_mode, state.theme_mode);
+        assert_eq!(loaded.theme_light_name, state.theme_light_name);
+        assert_eq!(loaded.theme_dark_name, state.theme_dark_name);
         assert_eq!(loaded.log_auto_follow, state.log_auto_follow);
         assert_eq!(
             loaded.preferred_inspector_tab,

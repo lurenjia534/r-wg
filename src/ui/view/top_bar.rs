@@ -182,14 +182,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                     h_flex()
                         .items_center()
                         .gap_2()
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_family(ui_font)
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Theme"),
-                        )
+                        .child(icon_button("theme-palette", IconName::Palette))
                         .child(theme_toggle),
                 )
                 .child(vertical_divider(cx))
