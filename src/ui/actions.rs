@@ -5,6 +5,7 @@ mod config;
 mod import_export;
 mod logs;
 mod persistence;
+mod route_map;
 mod stats;
 mod status;
 mod theme;

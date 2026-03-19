@@ -774,6 +774,42 @@ pub(crate) enum ProxiesViewMode {
     Gallery,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RouteMapMode {
+    Flow,
+    Routes,
+    Explain,
+    Events,
+}
+
+impl RouteMapMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Flow => "Flow",
+            Self::Routes => "Routes",
+            Self::Explain => "Explain",
+            Self::Events => "Events",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RouteFamilyFilter {
+    All,
+    Ipv4,
+    Ipv6,
+}
+
+impl RouteFamilyFilter {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Ipv4 => "IPv4",
+            Self::Ipv6 => "IPv6",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProxyRunningFilter {
     All,
@@ -1258,6 +1294,10 @@ impl UiPrefsState {
 pub(crate) struct UiSessionState {
     pub(crate) traffic_period: TrafficPeriod,
     pub(crate) sidebar_active: SidebarItem,
+    pub(crate) show_alternate_theme_preview: bool,
+    pub(crate) route_map_mode: RouteMapMode,
+    pub(crate) route_map_family_filter: RouteFamilyFilter,
+    pub(crate) route_map_selected_item: Option<SharedString>,
 }
 
 impl UiSessionState {
@@ -1265,6 +1305,10 @@ impl UiSessionState {
         Self {
             traffic_period: prefs.preferred_traffic_period,
             sidebar_active: SidebarItem::Overview,
+            show_alternate_theme_preview: false,
+            route_map_mode: RouteMapMode::Flow,
+            route_map_family_filter: RouteFamilyFilter::All,
+            route_map_selected_item: None,
         }
     }
 
@@ -1306,6 +1350,7 @@ impl PersistenceState {
 pub(crate) struct UiState {
     pub(crate) log_input: Option<Entity<InputState>>,
     pub(crate) proxy_search_input: Option<Entity<InputState>>,
+    pub(crate) route_map_search_input: Option<Entity<InputState>>,
     pub(crate) configs_workspace: Option<Entity<ConfigsWorkspace>>,
     // 日志状态与提示。
     pub(crate) status: SharedString,
@@ -1320,6 +1365,7 @@ impl UiState {
         Self {
             log_input: None,
             proxy_search_input: None,
+            route_map_search_input: None,
             configs_workspace: None,
             status: "Ready".into(),
             last_error: None,
@@ -1640,6 +1686,46 @@ impl WgApp {
     pub(crate) fn set_sidebar_active(&mut self, value: SidebarItem, cx: &mut gpui::Context<Self>) {
         if self.ui_session.sidebar_active != value {
             self.ui_session.sidebar_active = value;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_route_map_mode(&mut self, value: RouteMapMode, cx: &mut gpui::Context<Self>) {
+        if self.ui_session.route_map_mode != value {
+            self.ui_session.route_map_mode = value;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_route_map_family_filter(
+        &mut self,
+        value: RouteFamilyFilter,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_session.route_map_family_filter != value {
+            self.ui_session.route_map_family_filter = value;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_route_map_selected_item(
+        &mut self,
+        value: Option<SharedString>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_session.route_map_selected_item != value {
+            self.ui_session.route_map_selected_item = value;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_show_alternate_theme_preview(
+        &mut self,
+        value: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_session.show_alternate_theme_preview != value {
+            self.ui_session.show_alternate_theme_preview = value;
             cx.notify();
         }
     }

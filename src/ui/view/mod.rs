@@ -9,6 +9,7 @@ mod logs;
 mod overview;
 mod proxies;
 mod proxies_grid;
+mod route_map;
 mod top_bar;
 mod widgets;
 
@@ -104,6 +105,12 @@ impl Render for WgApp {
                         }
                         SidebarItem::Advanced => {
                             advanced::render_advanced(self, cx).into_any_element()
+                        }
+                        SidebarItem::RouteMap => {
+                            let data = root_data
+                                .as_ref()
+                                .expect("root data should exist outside Configs");
+                            route_map::render_route_map(self, data, window, cx).into_any_element()
                         }
                         _ => overview::render_placeholder(cx).into_any_element(),
                     };
