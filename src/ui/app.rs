@@ -14,12 +14,15 @@ use std::sync::Arc;
 
 use super::persistence;
 use super::state::WgApp;
-use super::themes;
+use super::themes::{self, AppearancePolicy};
 use super::tray;
 
 #[derive(Clone)]
 struct StartupThemePrefs {
-    mode: gpui_component::theme::ThemeMode,
+    appearance_policy: AppearancePolicy,
+    resolved_mode: gpui_component::theme::ThemeMode,
+    light_key: Option<SharedString>,
+    dark_key: Option<SharedString>,
     light_name: Option<SharedString>,
     dark_name: Option<SharedString>,
 }
@@ -33,14 +36,33 @@ pub fn run() {
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
             // 打开窗口前加载主题选择，确保首帧尽量贴近用户偏好。
-            let startup_theme = load_startup_theme_prefs();
-            if let Ok(storage) = persistence::ensure_storage_dirs() {
+            let mut startup_theme = load_startup_theme_prefs(cx);
+            let storage = persistence::ensure_storage_dirs().ok();
+            if let Some(storage) = storage.as_ref() {
                 let _ = themes::ensure_theme_registry(&storage, cx);
             }
-            themes::apply_theme_preferences(
-                startup_theme.mode,
+            let light_theme = themes::resolve_theme_preference(
+                gpui_component::theme::ThemeMode::Light,
+                startup_theme.light_key.as_deref().map(|key| &**key),
                 startup_theme.light_name.as_deref().map(|name| &**name),
+                storage.as_ref(),
+                cx,
+            );
+            let dark_theme = themes::resolve_theme_preference(
+                gpui_component::theme::ThemeMode::Dark,
+                startup_theme.dark_key.as_deref().map(|key| &**key),
                 startup_theme.dark_name.as_deref().map(|name| &**name),
+                storage.as_ref(),
+                cx,
+            );
+            startup_theme.light_key = Some(light_theme.entry.key.clone());
+            startup_theme.dark_key = Some(dark_theme.entry.key.clone());
+            startup_theme.light_name = Some(light_theme.entry.name.clone());
+            startup_theme.dark_name = Some(dark_theme.entry.name.clone());
+            startup_theme.resolved_mode = themes::apply_resolved_theme_preferences(
+                startup_theme.appearance_policy,
+                light_theme.entry.config.clone(),
+                dark_theme.entry.config.clone(),
                 None,
                 cx,
             );
@@ -58,7 +80,10 @@ pub fn run() {
                     let view = cx.new(move |_cx| {
                         WgApp::new(
                             view_engine.clone(),
-                            startup_theme.mode,
+                            startup_theme.appearance_policy,
+                            startup_theme.resolved_mode,
+                            startup_theme.light_key.clone(),
+                            startup_theme.dark_key.clone(),
                             startup_theme.light_name.clone(),
                             startup_theme.dark_name.clone(),
                         )
@@ -204,24 +229,46 @@ fn sync_engine_status(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut Ap
     })
     .detach();
 }
-fn load_startup_theme_prefs() -> StartupThemePrefs {
+fn load_startup_theme_prefs(_cx: &App) -> StartupThemePrefs {
     // 读取持久化主题；读取失败则回退深色模式与默认 palette。
     let storage = match persistence::ensure_storage_dirs() {
         Ok(storage) => storage,
         Err(_) => {
             return StartupThemePrefs {
-                mode: gpui_component::theme::ThemeMode::Dark,
+                appearance_policy: AppearancePolicy::System,
+                resolved_mode: gpui_component::theme::ThemeMode::Dark,
+                light_key: None,
+                dark_key: None,
                 light_name: None,
                 dark_name: None,
             };
         }
     };
     let state = persistence::load_state(&storage).ok().flatten();
+    let appearance_policy = state
+        .as_ref()
+        .and_then(|state| state.theme_policy)
+        .or_else(|| {
+            state
+                .as_ref()
+                .and_then(|state| state.theme_mode.map(Into::into))
+        })
+        .unwrap_or(AppearancePolicy::System);
     StartupThemePrefs {
-        mode: state
+        appearance_policy,
+        resolved_mode: match appearance_policy {
+            AppearancePolicy::Light => gpui_component::theme::ThemeMode::Light,
+            AppearancePolicy::Dark => gpui_component::theme::ThemeMode::Dark,
+            AppearancePolicy::System => gpui_component::theme::ThemeMode::Dark,
+        },
+        light_key: state
             .as_ref()
-            .and_then(|state| state.theme_mode)
-            .unwrap_or(gpui_component::theme::ThemeMode::Dark),
+            .and_then(|state| state.theme_light_key.clone())
+            .map(Into::into),
+        dark_key: state
+            .as_ref()
+            .and_then(|state| state.theme_dark_key.clone())
+            .map(Into::into),
         light_name: state
             .as_ref()
             .and_then(|state| state.theme_light_name.clone())

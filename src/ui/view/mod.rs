@@ -16,6 +16,7 @@ use gpui::*;
 use gpui_component::{scroll::ScrollableElement as _, ActiveTheme as _, Root};
 
 use super::state::{ConfigDraftState, SidebarItem, WgApp};
+use super::themes::AppearancePolicy;
 use data::ViewData;
 
 impl WgApp {
@@ -32,11 +33,32 @@ impl WgApp {
         let draft = ConfigDraftState::new();
         ViewData::from_editor(self, &draft, None)
     }
+
+    fn ensure_theme_appearance_observer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.ui.theme_appearance_observer_ready {
+            return;
+        }
+
+        self.ui.theme_appearance_observer_ready = true;
+        cx.observe_window_appearance(window, |this, window, cx| {
+            if this.ui_prefs.appearance_policy != AppearancePolicy::System {
+                return;
+            }
+
+            let previous_mode = this.ui_prefs.resolved_theme_mode;
+            this.apply_theme_prefs(Some(window), cx);
+            if this.ui_prefs.resolved_theme_mode != previous_mode {
+                cx.notify();
+            }
+        })
+        .detach();
+    }
 }
 
 impl Render for WgApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.start_load_persisted_state(window, cx);
+        self.ensure_theme_appearance_observer(window, cx);
 
         let root_data = (self.ui_session.sidebar_active != SidebarItem::Configs)
             .then(|| self.shared_view_data(cx));

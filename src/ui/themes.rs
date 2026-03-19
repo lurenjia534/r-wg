@@ -1,15 +1,20 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::LazyLock;
 
 use gpui::{App, SharedString, Window};
 use gpui_component::theme::{Theme, ThemeConfig, ThemeMode, ThemeRegistry, ThemeSet};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
+use super::format::sanitize_file_stem;
 use super::persistence::StoragePaths;
 
 const THEMES_DIR_NAME: &str = "themes";
 const LEGACY_CURATED_THEMES_FILE_NAME: &str = "r-wg-curated.json";
+const THEME_SCHEMA_URL: &str =
+    "https://github.com/longbridge/gpui-component/raw/refs/heads/main/.theme-schema.json";
 
 struct BundledThemeFile {
     file_name: &'static str,
@@ -43,18 +48,101 @@ const BUNDLED_THEME_FILES: &[BundledThemeFile] = &[
     },
 ];
 
-static BUNDLED_THEMES: LazyLock<Vec<ThemeConfig>> = LazyLock::new(|| {
+static BUNDLED_THEME_FILE_NAMES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     BUNDLED_THEME_FILES
         .iter()
-        .flat_map(|file| parse_theme_file(file.file_name, file.contents).into_iter())
+        .map(|file| file.file_name)
         .collect()
 });
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AppearancePolicy {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl AppearancePolicy {}
+
+impl From<ThemeMode> for AppearancePolicy {
+    fn from(value: ThemeMode) -> Self {
+        match value {
+            ThemeMode::Light => Self::Light,
+            ThemeMode::Dark => Self::Dark,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) enum ThemeCollection {
+    Builtin,
+    Curated,
+    Custom,
+}
+
+impl ThemeCollection {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Builtin => "Built-in",
+            Self::Curated => "Curated",
+            Self::Custom => "Custom",
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ThemeCatalogEntry {
+    pub(crate) key: SharedString,
+    pub(crate) name: SharedString,
+    pub(crate) collection: ThemeCollection,
+    pub(crate) source_label: SharedString,
+    pub(crate) config: Rc<ThemeConfig>,
+}
+
+impl ThemeCatalogEntry {
+    pub(crate) fn menu_label(&self) -> SharedString {
+        match self.collection {
+            ThemeCollection::Builtin => {
+                format!("{} · {}", self.collection.label(), self.name).into()
+            }
+            ThemeCollection::Curated | ThemeCollection::Custom => format!(
+                "{} · {} ({})",
+                self.collection.label(),
+                self.name,
+                self.source_label
+            )
+            .into(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ResolvedThemePreference {
+    pub(crate) entry: ThemeCatalogEntry,
+    pub(crate) migrated: bool,
+    pub(crate) notice: Option<String>,
+}
 
 pub(crate) fn ensure_theme_registry(
     storage: &StoragePaths,
     cx: &mut App,
 ) -> Result<PathBuf, String> {
-    let themes_dir = storage.root.join(THEMES_DIR_NAME);
+    let themes_dir = ensure_themes_dir(storage)?;
+
+    ThemeRegistry::watch_dir(themes_dir.clone(), cx, |_cx| {})
+        .map_err(|err| format!("Watch themes dir failed: {err}"))?;
+
+    Ok(themes_dir)
+}
+
+pub(crate) fn themes_dir(storage: &StoragePaths) -> PathBuf {
+    storage.root.join(THEMES_DIR_NAME)
+}
+
+pub(crate) fn ensure_themes_dir(storage: &StoragePaths) -> Result<PathBuf, String> {
+    let themes_dir = themes_dir(storage);
     std::fs::create_dir_all(&themes_dir)
         .map_err(|err| format!("Create themes dir failed: {err}"))?;
 
@@ -65,79 +153,158 @@ pub(crate) fn ensure_theme_registry(
     }
 
     sync_bundled_theme_files(&themes_dir)?;
-
-    ThemeRegistry::watch_dir(themes_dir.clone(), cx, |_cx| {})
-        .map_err(|err| format!("Watch themes dir failed: {err}"))?;
-
     Ok(themes_dir)
 }
 
-pub(crate) fn available_themes(mode: ThemeMode, cx: &App) -> Vec<Rc<ThemeConfig>> {
-    let mut themes = HashMap::<String, Rc<ThemeConfig>>::new();
+pub(crate) fn available_themes(
+    mode: ThemeMode,
+    storage: Option<&StoragePaths>,
+    cx: &App,
+) -> Vec<ThemeCatalogEntry> {
+    let mut themes = Vec::new();
+    push_builtin_theme_entries(mode, &mut themes, cx);
+    push_curated_theme_entries(mode, &mut themes);
+    push_custom_theme_entries(mode, storage, &mut themes);
 
-    for theme in BUNDLED_THEMES.iter().filter(|theme| theme.mode == mode) {
-        themes.insert(theme.name.to_lowercase(), Rc::new(theme.clone()));
-    }
-
-    for theme in ThemeRegistry::global(cx)
-        .themes()
-        .values()
-        .filter(|theme| theme.mode == mode)
-    {
-        themes.insert(theme.name.to_lowercase(), theme.clone());
-    }
-
-    let mut themes = themes.into_values().collect::<Vec<_>>();
     themes.sort_by(|a, b| {
-        b.is_default
-            .cmp(&a.is_default)
+        a.collection
+            .cmp(&b.collection)
             .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then(
+                a.source_label
+                    .to_lowercase()
+                    .cmp(&b.source_label.to_lowercase()),
+            )
     });
     themes
 }
 
-pub(crate) fn resolve_theme_config(
+pub(crate) fn resolve_theme_preference(
     mode: ThemeMode,
+    preferred_key: Option<&str>,
     preferred_name: Option<&str>,
+    storage: Option<&StoragePaths>,
     cx: &App,
-) -> Rc<ThemeConfig> {
-    if let Some(name) = preferred_name {
-        if let Some(theme) = available_themes(mode, cx)
-            .into_iter()
-            .find(|theme| theme.name.eq_ignore_ascii_case(name))
-        {
-            return theme;
+) -> ResolvedThemePreference {
+    let available = available_themes(mode, storage, cx);
+
+    if let Some(key) = preferred_key {
+        if let Some(entry) = available.iter().find(|entry| entry.key == key).cloned() {
+            let migrated = preferred_name
+                .map(|name| !entry.name.eq_ignore_ascii_case(name))
+                .unwrap_or(false);
+            return ResolvedThemePreference {
+                entry,
+                migrated,
+                notice: None,
+            };
         }
     }
 
-    if mode.is_dark() {
-        ThemeRegistry::global(cx).default_dark_theme().clone()
-    } else {
-        ThemeRegistry::global(cx).default_light_theme().clone()
+    if let Some(name) = preferred_name {
+        if let Some(entry) = available
+            .iter()
+            .find(|entry| entry.name.eq_ignore_ascii_case(name))
+            .cloned()
+        {
+            return ResolvedThemePreference {
+                notice: preferred_key
+                    .map(|_| format!("{} palette moved to {}", theme_mode_label(mode), entry.name))
+                    .or_else(|| {
+                        preferred_key.is_none().then(|| {
+                            format!(
+                                "{} palette migrated to {}",
+                                theme_mode_label(mode),
+                                entry.name
+                            )
+                        })
+                    }),
+                entry,
+                migrated: true,
+            };
+        }
+    }
+
+    let entry = default_theme_entry(mode, cx);
+    ResolvedThemePreference {
+        notice: preferred_key.or(preferred_name).map(|_| {
+            format!(
+                "{} palette fell back to {}",
+                theme_mode_label(mode),
+                entry.name
+            )
+        }),
+        entry,
+        migrated: preferred_key.is_some() || preferred_name.is_some(),
     }
 }
 
-pub(crate) fn resolved_theme_name(
-    mode: ThemeMode,
-    preferred_name: Option<&str>,
+pub(crate) fn theme_name_inventory(
+    storage: Option<&StoragePaths>,
     cx: &App,
-) -> SharedString {
-    resolve_theme_config(mode, preferred_name, cx).name.clone()
+) -> HashSet<(ThemeMode, String)> {
+    let mut names = HashSet::new();
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for entry in available_themes(mode, storage, cx) {
+            names.insert((mode, entry.name.to_lowercase()));
+        }
+    }
+    names
 }
 
-pub(crate) fn apply_theme_preferences(
+pub(crate) fn resolve_theme_config(
     mode: ThemeMode,
-    light_name: Option<&str>,
-    dark_name: Option<&str>,
+    preferred_key: Option<&str>,
+    preferred_name: Option<&str>,
+    storage: Option<&StoragePaths>,
+    cx: &App,
+) -> Rc<ThemeConfig> {
+    resolve_theme_preference(mode, preferred_key, preferred_name, storage, cx)
+        .entry
+        .config
+}
+
+pub(crate) fn unique_theme_name(
+    mode: ThemeMode,
+    preferred_name: &str,
+    names_in_use: &mut HashSet<(ThemeMode, String)>,
+) -> SharedString {
+    let base = preferred_name.trim();
+    let base = if base.is_empty() {
+        "Custom Theme".to_string()
+    } else {
+        base.to_string()
+    };
+
+    if names_in_use.insert((mode, base.to_lowercase())) {
+        return base.into();
+    }
+
+    let custom = format!("{base} (Custom)");
+    if names_in_use.insert((mode, custom.to_lowercase())) {
+        return custom.into();
+    }
+
+    for index in 2..10_000 {
+        let candidate = format!("{base} (Custom {index})");
+        if names_in_use.insert((mode, candidate.to_lowercase())) {
+            return candidate.into();
+        }
+    }
+
+    format!("{base} (Imported)").into()
+}
+
+pub(crate) fn apply_resolved_theme_preferences(
+    policy: AppearancePolicy,
+    light_theme: Rc<ThemeConfig>,
+    dark_theme: Rc<ThemeConfig>,
     window: Option<&mut Window>,
     cx: &mut App,
-) {
+) -> ThemeMode {
     if !cx.has_global::<Theme>() {
-        Theme::change(mode, None, cx);
+        Theme::change(resolve_theme_mode(policy, None, cx), None, cx);
     }
-
-    let light_theme = resolve_theme_config(ThemeMode::Light, light_name, cx);
-    let dark_theme = resolve_theme_config(ThemeMode::Dark, dark_name, cx);
 
     {
         let theme = Theme::global_mut(cx);
@@ -145,7 +312,323 @@ pub(crate) fn apply_theme_preferences(
         theme.dark_theme = dark_theme;
     }
 
+    let mode = resolve_theme_mode(policy, window.as_deref(), cx);
     Theme::change(mode, window, cx);
+    mode
+}
+
+pub(crate) fn resolve_theme_mode(
+    policy: AppearancePolicy,
+    window: Option<&Window>,
+    cx: &App,
+) -> ThemeMode {
+    match policy {
+        AppearancePolicy::System => window
+            .map(|window| window.appearance().into())
+            .unwrap_or_else(|| cx.window_appearance().into()),
+        AppearancePolicy::Light => ThemeMode::Light,
+        AppearancePolicy::Dark => ThemeMode::Dark,
+    }
+}
+
+pub(crate) fn restore_curated_themes(storage: &StoragePaths) -> Result<PathBuf, String> {
+    ensure_themes_dir(storage)
+}
+
+pub(crate) fn import_theme_file(
+    source_path: &Path,
+    storage: &StoragePaths,
+    names_in_use: &mut HashSet<(ThemeMode, String)>,
+) -> Result<PathBuf, String> {
+    let contents = std::fs::read_to_string(source_path)
+        .map_err(|err| format!("Read theme {} failed: {err}", source_path.display()))?;
+    let theme_set = serde_json::from_str::<ThemeSet>(&contents)
+        .map_err(|err| format!("Parse theme {} failed: {err}", source_path.display()))?;
+    if theme_set.themes.is_empty() {
+        return Err(format!(
+            "Theme file {} has no themes",
+            source_path.display()
+        ));
+    }
+
+    let base_name = source_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("custom-theme");
+    write_theme_set(
+        storage,
+        base_name,
+        &sanitize_theme_set_with_inventory(theme_set, names_in_use),
+    )
+}
+
+pub(crate) fn write_theme_set(
+    storage: &StoragePaths,
+    file_stem: &str,
+    theme_set: &ThemeSet,
+) -> Result<PathBuf, String> {
+    let themes_dir = ensure_themes_dir(storage)?;
+    let path = unique_theme_file_path(&themes_dir, file_stem);
+    let data = encode_theme_set(theme_set)?;
+    std::fs::write(&path, data)
+        .map_err(|err| format!("Write theme {} failed: {err}", path.display()))?;
+    Ok(path)
+}
+
+pub(crate) fn build_theme_template(
+    light_theme: &ThemeConfig,
+    dark_theme: &ThemeConfig,
+) -> ThemeSet {
+    let mut light_theme = sanitize_theme_config(light_theme.clone());
+    let mut dark_theme = sanitize_theme_config(dark_theme.clone());
+    light_theme.name = "Custom Light".into();
+    dark_theme.name = "Custom Dark".into();
+
+    ThemeSet {
+        name: "r-wg Custom Theme".into(),
+        author: Some("r-wg".into()),
+        url: None,
+        themes: vec![light_theme, dark_theme],
+    }
+}
+
+pub(crate) fn sanitize_theme_set(theme_set: ThemeSet) -> ThemeSet {
+    ThemeSet {
+        name: theme_set.name,
+        author: theme_set.author,
+        url: theme_set.url,
+        themes: theme_set
+            .themes
+            .into_iter()
+            .map(sanitize_theme_config)
+            .collect(),
+    }
+}
+
+fn sanitize_theme_config(mut config: ThemeConfig) -> ThemeConfig {
+    config.is_default = false;
+    config.font_size = None;
+    config.font_family = None;
+    config.mono_font_family = None;
+    config.mono_font_size = None;
+    config.radius = None;
+    config.radius_lg = None;
+    config.shadow = None;
+    config
+}
+
+pub(crate) fn sanitize_theme_set_with_inventory(
+    theme_set: ThemeSet,
+    names_in_use: &mut HashSet<(ThemeMode, String)>,
+) -> ThemeSet {
+    let mut theme_set = sanitize_theme_set(theme_set);
+    for theme in &mut theme_set.themes {
+        theme.name = unique_theme_name(theme.mode, &theme.name, names_in_use);
+    }
+    theme_set
+}
+
+fn encode_theme_set(theme_set: &ThemeSet) -> Result<Vec<u8>, String> {
+    let mut value =
+        serde_json::to_value(theme_set).map_err(|err| format!("Serialize theme failed: {err}"))?;
+    if let Value::Object(ref mut object) = value {
+        object.insert(
+            "$schema".to_string(),
+            Value::String(THEME_SCHEMA_URL.to_string()),
+        );
+    } else {
+        let mut object = Map::new();
+        object.insert(
+            "$schema".to_string(),
+            Value::String(THEME_SCHEMA_URL.to_string()),
+        );
+        object.insert("themes".to_string(), value);
+        value = Value::Object(object);
+    }
+
+    serde_json::to_vec_pretty(&value).map_err(|err| format!("Encode theme failed: {err}"))
+}
+
+fn push_builtin_theme_entries(mode: ThemeMode, entries: &mut Vec<ThemeCatalogEntry>, cx: &App) {
+    let config = if mode.is_dark() {
+        ThemeRegistry::global(cx).default_dark_theme().clone()
+    } else {
+        ThemeRegistry::global(cx).default_light_theme().clone()
+    };
+    entries.push(ThemeCatalogEntry {
+        key: builtin_theme_key(config.mode, &config.name),
+        name: config.name.clone(),
+        collection: ThemeCollection::Builtin,
+        source_label: "default".into(),
+        config,
+    });
+}
+
+fn push_curated_theme_entries(mode: ThemeMode, entries: &mut Vec<ThemeCatalogEntry>) {
+    for file in BUNDLED_THEME_FILES {
+        if let Ok(theme_set) = serde_json::from_str::<ThemeSet>(file.contents) {
+            push_theme_set_entries(
+                &theme_set,
+                mode,
+                ThemeCollection::Curated,
+                file.file_name,
+                entries,
+            );
+        }
+    }
+}
+
+fn push_custom_theme_entries(
+    mode: ThemeMode,
+    storage: Option<&StoragePaths>,
+    entries: &mut Vec<ThemeCatalogEntry>,
+) {
+    let Some(storage) = storage else {
+        return;
+    };
+    let themes_dir = themes_dir(storage);
+    let Ok(read_dir) = std::fs::read_dir(&themes_dir) else {
+        return;
+    };
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json")
+            || BUNDLED_THEME_FILE_NAMES.contains(file_name)
+        {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(theme_set) = serde_json::from_str::<ThemeSet>(&contents) else {
+            continue;
+        };
+        push_theme_set_entries(
+            &theme_set,
+            mode,
+            ThemeCollection::Custom,
+            file_name,
+            entries,
+        );
+    }
+}
+
+fn push_theme_set_entries(
+    theme_set: &ThemeSet,
+    mode: ThemeMode,
+    collection: ThemeCollection,
+    file_name: &str,
+    entries: &mut Vec<ThemeCatalogEntry>,
+) {
+    for theme in theme_set.themes.iter().filter(|theme| theme.mode == mode) {
+        entries.push(ThemeCatalogEntry {
+            key: file_theme_key(collection, file_name, theme.mode, &theme.name),
+            name: theme.name.clone(),
+            collection,
+            source_label: file_name.to_string().into(),
+            config: Rc::new(theme.clone()),
+        });
+    }
+}
+
+fn default_theme_entry(mode: ThemeMode, cx: &App) -> ThemeCatalogEntry {
+    available_themes(mode, None, cx)
+        .into_iter()
+        .find(|entry| entry.collection == ThemeCollection::Builtin)
+        .unwrap_or_else(|| {
+            let config = if mode.is_dark() {
+                ThemeRegistry::global(cx).default_dark_theme().clone()
+            } else {
+                ThemeRegistry::global(cx).default_light_theme().clone()
+            };
+            ThemeCatalogEntry {
+                key: builtin_theme_key(config.mode, &config.name),
+                name: config.name.clone(),
+                collection: ThemeCollection::Builtin,
+                source_label: "default".into(),
+                config,
+            }
+        })
+}
+
+fn builtin_theme_key(mode: ThemeMode, name: &str) -> SharedString {
+    format!("builtin:{}#{}", theme_mode_key(mode), sanitize_key(name)).into()
+}
+
+fn file_theme_key(
+    collection: ThemeCollection,
+    file_name: &str,
+    mode: ThemeMode,
+    name: &str,
+) -> SharedString {
+    format!(
+        "{}:{}#{}",
+        match collection {
+            ThemeCollection::Builtin => "builtin",
+            ThemeCollection::Curated => "curated",
+            ThemeCollection::Custom => "custom",
+        },
+        sanitize_key(file_name),
+        format!("{}-{}", theme_mode_key(mode), sanitize_key(name))
+    )
+    .into()
+}
+
+fn sanitize_key(value: &str) -> String {
+    let value = value.trim().to_lowercase();
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else if ch == '-' || ch == '_' || ch == '.' {
+            out.push(ch);
+        } else {
+            out.push('-');
+        }
+    }
+    while out.contains("--") {
+        out = out.replace("--", "-");
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn theme_mode_key(mode: ThemeMode) -> &'static str {
+    match mode {
+        ThemeMode::Light => "light",
+        ThemeMode::Dark => "dark",
+    }
+}
+
+fn theme_mode_label(mode: ThemeMode) -> &'static str {
+    match mode {
+        ThemeMode::Light => "Light",
+        ThemeMode::Dark => "Dark",
+    }
+}
+
+fn unique_theme_file_path(themes_dir: &Path, file_stem: &str) -> PathBuf {
+    let file_stem = sanitize_file_stem(file_stem);
+    let direct = themes_dir.join(format!("{file_stem}.json"));
+    if !direct.exists() {
+        return direct;
+    }
+
+    for index in 2..10_000 {
+        let candidate = themes_dir.join(format!("{file_stem}-{index}.json"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    themes_dir.join(format!("{file_stem}-copy.json"))
 }
 
 fn sync_bundled_theme_files(themes_dir: &Path) -> Result<(), String> {
@@ -176,10 +659,4 @@ fn remove_if_exists(path: &Path) -> Result<(), std::io::Error> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
     }
-}
-
-fn parse_theme_file(file_name: &str, contents: &str) -> Vec<ThemeConfig> {
-    serde_json::from_str::<ThemeSet>(contents)
-        .unwrap_or_else(|err| panic!("bundled theme {file_name} should parse: {err}"))
-        .themes
 }

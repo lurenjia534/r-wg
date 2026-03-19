@@ -16,7 +16,7 @@ use super::chart::{format_avg_bytes, TrafficAvgLine};
 use super::common::{card_title, vertical_rule};
 
 pub(super) fn traffic_trend_card(trend: &TrafficTrendData, cx: &mut Context<WgApp>) -> GroupBox {
-    let avg_color: Hsla = rgb(0xf59e0b).into();
+    let avg_color = cx.theme().chart_4;
     let avg_line_color = avg_color.alpha(if cx.theme().is_dark() { 0.55 } else { 0.45 });
     let bar_color =
         cx.theme()
@@ -24,7 +24,7 @@ pub(super) fn traffic_trend_card(trend: &TrafficTrendData, cx: &mut Context<WgAp
             .alpha(if cx.theme().is_dark() { 0.16 } else { 0.12 });
     let bar_highlight = cx
         .theme()
-        .accent
+        .chart_3
         .alpha(if cx.theme().is_dark() { 0.32 } else { 0.24 });
     let avg_text = format_avg_bytes(trend.average_bytes);
 
@@ -85,9 +85,9 @@ pub(super) fn traffic_trend_card(trend: &TrafficTrendData, cx: &mut Context<WgAp
 
 pub(super) fn traffic_summary_card(overview: &OverviewData, cx: &mut Context<WgApp>) -> GroupBox {
     let summary = &overview.traffic_summary;
-    let upload_color: Hsla = rgb(0x818cf8).into();
-    let download_color: Hsla = rgb(0x34d399).into();
-    let rank_color: Hsla = rgb(0xa78bfa).into();
+    let upload_color = cx.theme().chart_1;
+    let download_color = cx.theme().chart_2;
+    let rank_color = cx.theme().chart_3;
 
     let total_bytes = summary.total_rx.saturating_add(summary.total_tx);
     let total_text = format_bytes(total_bytes);

@@ -546,7 +546,7 @@ fn render_library_row(
         cx.theme().background.alpha(0.0)
     };
     let accent = if is_selected {
-        cx.theme().accent
+        cx.theme().list_active_border
     } else {
         cx.theme().background.alpha(0.0)
     };
@@ -651,7 +651,7 @@ fn render_editor_panel(
             .px_1()
             .py_1()
             .border_b_1()
-            .border_color(cx.theme().accent.alpha(0.55))
+            .border_color(cx.theme().ring.alpha(0.55))
             .child(
                 Input::new(name_input)
                     .appearance(false)
@@ -880,11 +880,9 @@ fn render_inspector_panel(
                 None,
                 "Config parses successfully.".to_string(),
             ),
-            DraftValidationState::Invalid { line, message, .. } => (
-                "Invalid".to_string(),
-                *line,
-                message.to_string(),
-            ),
+            DraftValidationState::Invalid { line, message, .. } => {
+                ("Invalid".to_string(), *line, message.to_string())
+            }
         };
         let save_state = if data.shared.draft_dirty {
             "Unsaved changes".to_string()
@@ -948,7 +946,10 @@ fn render_inspector_panel(
             ))
             .child(inspector_activity_row(
                 "Handshake",
-                activity_value_or_fallback(&data.shared.last_handshake, "No handshake recorded yet."),
+                activity_value_or_fallback(
+                    &data.shared.last_handshake,
+                    "No handshake recorded yet.",
+                ),
                 cx,
             )),
         cx,
@@ -1114,48 +1115,48 @@ fn inspector_tab_button(
 fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<ConfigsWorkspace>) -> Div {
     let (tone_bg, tone_border, tone_bar, title, detail, icon, line_tag) =
         match &data.draft.validation {
-        DraftValidationState::Idle => (
-            cx.theme().secondary.alpha(0.45),
-            cx.theme().border.alpha(0.45),
-            cx.theme().muted_foreground.alpha(0.5),
-            "Draft not validated".to_string(),
-            "Start editing to validate this config.".to_string(),
-            IconName::Info,
-            None,
-        ),
-        DraftValidationState::Valid { .. } => (
-            cx.theme().accent.alpha(0.12),
-            cx.theme().accent.alpha(0.3),
-            cx.theme().accent,
-            if data.shared.draft_dirty {
-                "Unsaved changes".to_string()
-            } else {
-                "Saved config".to_string()
-            },
-            if data.shared.needs_restart {
-                "Syntax looks good. Save and restart the running tunnel to apply the changes."
-                    .to_string()
-            } else if data.shared.draft_dirty {
-                "Syntax looks good. Save this draft to update the stored config.".to_string()
-            } else {
-                "WireGuard config parsed successfully.".to_string()
-            },
-            IconName::CircleCheck,
-            None,
-        ),
-        DraftValidationState::Invalid { line, message, .. } => (
-            cx.theme().danger.alpha(0.08),
-            cx.theme().danger.alpha(0.3),
-            cx.theme().danger,
-            "Validation error".to_string(),
-            match line {
-                Some(line) => format!("Line {line}: {message}"),
-                None => message.to_string(),
-            },
-            IconName::CircleX,
-            line.map(|line| format!("Line {line}")),
-        ),
-    };
+            DraftValidationState::Idle => (
+                cx.theme().secondary.alpha(0.45),
+                cx.theme().border.alpha(0.45),
+                cx.theme().muted_foreground.alpha(0.5),
+                "Draft not validated".to_string(),
+                "Start editing to validate this config.".to_string(),
+                IconName::Info,
+                None,
+            ),
+            DraftValidationState::Valid { .. } => (
+                cx.theme().success.alpha(0.12),
+                cx.theme().success.alpha(0.28),
+                cx.theme().success,
+                if data.shared.draft_dirty {
+                    "Unsaved changes".to_string()
+                } else {
+                    "Saved config".to_string()
+                },
+                if data.shared.needs_restart {
+                    "Syntax looks good. Save and restart the running tunnel to apply the changes."
+                        .to_string()
+                } else if data.shared.draft_dirty {
+                    "Syntax looks good. Save this draft to update the stored config.".to_string()
+                } else {
+                    "WireGuard config parsed successfully.".to_string()
+                },
+                IconName::CircleCheck,
+                None,
+            ),
+            DraftValidationState::Invalid { line, message, .. } => (
+                cx.theme().danger.alpha(0.08),
+                cx.theme().danger.alpha(0.3),
+                cx.theme().danger,
+                "Validation error".to_string(),
+                match line {
+                    Some(line) => format!("Line {line}: {message}"),
+                    None => message.to_string(),
+                },
+                IconName::CircleX,
+                line.map(|line| format!("Line {line}")),
+            ),
+        };
 
     div()
         .flex()

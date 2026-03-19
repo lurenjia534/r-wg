@@ -274,11 +274,15 @@ mod tests {
 
     use super::*;
     use crate::ui::state::{ConfigSource, EndpointFamily, TunnelConfig, RESTART_COOLDOWN};
+    use crate::ui::themes::AppearancePolicy;
 
     fn make_app() -> WgApp {
         WgApp::new(
             r_wg::backend::wg::Engine::new(),
+            AppearancePolicy::Dark,
             ThemeMode::Dark,
+            None,
+            None,
             None,
             None,
         )

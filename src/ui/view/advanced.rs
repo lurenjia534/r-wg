@@ -21,10 +21,11 @@ use gpui_component::{
 use r_wg::backend::wg::PrivilegedServiceAction;
 use r_wg::dns::{DnsMode, DnsPreset};
 
+use super::super::persistence;
 use super::super::state::{
     BackendDiagnostic, BackendHealth, ConfigInspectorTab, SidebarItem, TrafficPeriod, WgApp,
 };
-use super::super::themes;
+use super::super::themes::{self, AppearancePolicy};
 use super::widgets::backend_status_tag;
 
 pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
@@ -37,12 +38,13 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
             SettingGroup::new()
                 .title("Appearance")
                 .description(
-                    "Keep mode switching fast while storing a separate palette for light and dark.",
+                    "Separate the appearance policy from the light and dark palettes it resolves to.",
                 )
                 .item(theme_mode_item(app_handle.clone()))
                 .item(theme_palette_item(app_handle.clone(), ThemeMode::Light))
                 .item(theme_palette_item(app_handle.clone(), ThemeMode::Dark))
                 .item(reset_theme_item(app_handle.clone()))
+                .item(theme_file_workflow_item(app_handle.clone()))
                 .item(theme_preview_item(app_handle.clone())),
         )
         .group(
@@ -158,9 +160,10 @@ fn settings_sidebar_style(cx: &mut Context<WgApp>) -> gpui::StyleRefinement {
 
 fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
-        "Theme Mode",
+        "Appearance Policy",
         SettingField::render(move |_, _window, cx| {
-            let current = app.read(cx).ui_prefs.theme_mode;
+            let current = app.read(cx).ui_prefs.appearance_policy;
+            let system_handle = app.clone();
             let light_handle = app.clone();
             let dark_handle = app.clone();
 
@@ -170,29 +173,51 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                     .small()
                     .compact()
                     .child(
+                        Button::new("advanced-theme-system")
+                            .label("Follow System")
+                            .selected(current == AppearancePolicy::System)
+                            .on_click(move |_, _, cx| {
+                                let _ = system_handle.update(cx, |app, cx| {
+                                    app.set_appearance_policy_pref(
+                                        AppearancePolicy::System,
+                                        None,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+                    .child(
                         Button::new("advanced-theme-light")
                             .label("Light")
-                            .selected(current == ThemeMode::Light)
+                            .selected(current == AppearancePolicy::Light)
                             .on_click(move |_, _, cx| {
                                 let _ = light_handle.update(cx, |app, cx| {
-                                    app.set_theme_mode_pref(ThemeMode::Light, None, cx);
+                                    app.set_appearance_policy_pref(
+                                        AppearancePolicy::Light,
+                                        None,
+                                        cx,
+                                    );
                                 });
                             }),
                     )
                     .child(
                         Button::new("advanced-theme-dark")
                             .label("Dark")
-                            .selected(current == ThemeMode::Dark)
+                            .selected(current == AppearancePolicy::Dark)
                             .on_click(move |_, _, cx| {
                                 let _ = dark_handle.update(cx, |app, cx| {
-                                    app.set_theme_mode_pref(ThemeMode::Dark, None, cx);
+                                    app.set_appearance_policy_pref(
+                                        AppearancePolicy::Dark,
+                                        None,
+                                        cx,
+                                    );
                                 });
                             }),
                     ),
             )
         }),
     )
-    .description("Keep theme selection aligned with the toolbar controls.")
+    .description("Choose whether the app follows the OS, or stays pinned to light or dark.")
 }
 
 fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
@@ -201,8 +226,8 @@ fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
         ThemeMode::Dark => "Dark Palette",
     };
     let description = match mode {
-        ThemeMode::Light => "Used when the quick toggle or app state returns to light mode.",
-        ThemeMode::Dark => "Used when the quick toggle or app state returns to dark mode.",
+        ThemeMode::Light => "Used whenever the appearance policy resolves to light.",
+        ThemeMode::Dark => "Used whenever the appearance policy resolves to dark.",
     };
 
     SettingItem::new(
@@ -238,6 +263,17 @@ fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
     .description("Clear stored palette names and fall back to the registry defaults for each mode.")
 }
 
+fn theme_file_workflow_item(app: Entity<WgApp>) -> SettingItem {
+    SettingItem::new(
+        "Theme Files",
+        SettingField::render(move |_, _window, cx| {
+            render_theme_file_workflow_field(app.clone(), cx)
+        }),
+    )
+    .layout(Axis::Vertical)
+    .description("File-based workflow for importing, templating, and restoring curated themes.")
+}
+
 fn theme_preview_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Preview",
@@ -245,19 +281,32 @@ fn theme_preview_item(app: Entity<WgApp>) -> SettingItem {
     )
     .layout(Axis::Vertical)
     .description(
-        "Preview the currently stored light and dark palettes without leaving Preferences.",
+        "Preview the current light and dark palettes as product tokens, not just surface swatches.",
     )
 }
 
 fn render_theme_palette_field(app: Entity<WgApp>, mode: ThemeMode, cx: &mut gpui::App) -> Div {
-    let preferred_name = app
-        .read(cx)
-        .ui_prefs
-        .theme_palette_name(mode)
-        .map(|name| name.to_string());
-    let current_label =
-        themes::resolved_theme_name(mode, preferred_name.as_deref(), cx).to_string();
-    let selected_name = preferred_name.clone();
+    let storage = persistence::ensure_storage_dirs().ok();
+    let (preferred_key, preferred_name) = {
+        let app = app.read(cx);
+        (
+            app.ui_prefs
+                .theme_palette_key(mode)
+                .map(|key| key.to_string()),
+            app.ui_prefs
+                .theme_palette_name(mode)
+                .map(|name| name.to_string()),
+        )
+    };
+    let resolved = themes::resolve_theme_preference(
+        mode,
+        preferred_key.as_deref(),
+        preferred_name.as_deref(),
+        storage.as_ref(),
+        cx,
+    );
+    let current_label = resolved.entry.name.to_string();
+    let selected_key = resolved.entry.key.to_string();
     let button_id = match mode {
         ThemeMode::Light => "advanced-theme-light-palette",
         ThemeMode::Dark => "advanced-theme-dark-palette",
@@ -272,37 +321,33 @@ fn render_theme_palette_field(app: Entity<WgApp>, mode: ThemeMode, cx: &mut gpui
             .compact()
             .dropdown_caret(true)
             .dropdown_menu_with_anchor(gpui::Corner::TopRight, move |menu: PopupMenu, _, cx| {
-                let menu =
-                    themes::available_themes(mode, cx)
-                        .into_iter()
-                        .fold(menu, |menu, theme| {
-                            let checked = selected_name
-                                .as_deref()
-                                .map(|selected| theme.name.eq_ignore_ascii_case(selected))
-                                .unwrap_or(false);
-                            menu.item(
-                                PopupMenuItem::new(theme.name.to_string())
-                                    .checked(checked)
-                                    .on_click({
-                                        let set_handle = set_handle.clone();
-                                        let name = theme.name.clone();
-                                        move |_, window, cx| {
-                                            let _ = set_handle.update(cx, |app, cx| {
-                                                app.set_theme_palette_pref(
-                                                    mode,
-                                                    Some(name.clone()),
-                                                    Some(window),
-                                                    cx,
-                                                );
-                                            });
-                                        }
-                                    }),
-                            )
-                        });
+                let menu = themes::available_themes(mode, storage.as_ref(), cx)
+                    .into_iter()
+                    .fold(menu, |menu, theme| {
+                        let checked = theme.key == selected_key;
+                        menu.item(
+                            PopupMenuItem::new(theme.menu_label().to_string())
+                                .checked(checked)
+                                .on_click({
+                                    let set_handle = set_handle.clone();
+                                    let key = theme.key.clone();
+                                    move |_, window, cx| {
+                                        let _ = set_handle.update(cx, |app, cx| {
+                                            app.set_theme_palette_pref(
+                                                mode,
+                                                Some(key.clone()),
+                                                Some(window),
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                        )
+                    });
 
                 menu.item(PopupMenuItem::separator()).item(
                     PopupMenuItem::new("Use Default")
-                        .checked(selected_name.is_none())
+                        .checked(selected_key.starts_with("builtin:"))
                         .on_click({
                             let set_handle = set_handle.clone();
                             move |_, window, cx| {
@@ -317,27 +362,46 @@ fn render_theme_palette_field(app: Entity<WgApp>, mode: ThemeMode, cx: &mut gpui
 }
 
 fn render_theme_preview_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
-    let (light_name, dark_name) = {
+    let storage = persistence::ensure_storage_dirs().ok();
+    let (light_key, light_name, dark_key, dark_name) = {
         let app = app.read(cx);
         (
             app.ui_prefs
+                .theme_palette_key(ThemeMode::Light)
+                .map(|key| key.to_string()),
+            app.ui_prefs
                 .theme_palette_name(ThemeMode::Light)
                 .map(|name| name.to_string()),
+            app.ui_prefs
+                .theme_palette_key(ThemeMode::Dark)
+                .map(|key| key.to_string()),
             app.ui_prefs
                 .theme_palette_name(ThemeMode::Dark)
                 .map(|name| name.to_string()),
         )
     };
-    let light_preview = theme_preview_tokens(themes::resolve_theme_config(
-        ThemeMode::Light,
-        light_name.as_deref(),
-        cx,
-    ));
-    let dark_preview = theme_preview_tokens(themes::resolve_theme_config(
-        ThemeMode::Dark,
-        dark_name.as_deref(),
-        cx,
-    ));
+    let light_preview = theme_preview_tokens(
+        themes::resolve_theme_preference(
+            ThemeMode::Light,
+            light_key.as_deref(),
+            light_name.as_deref(),
+            storage.as_ref(),
+            cx,
+        )
+        .entry
+        .config,
+    );
+    let dark_preview = theme_preview_tokens(
+        themes::resolve_theme_preference(
+            ThemeMode::Dark,
+            dark_key.as_deref(),
+            dark_name.as_deref(),
+            storage.as_ref(),
+            cx,
+        )
+        .entry
+        .config,
+    );
 
     v_flex()
         .w_full()
@@ -346,7 +410,7 @@ fn render_theme_preview_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
             div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child("Status colors stay semantic. Palettes only change the surrounding surfaces and emphasis."),
+                .child("Appearance policy picks the active side. Status, warnings, and chart series stay semantic across palettes."),
         )
         .child(
             h_flex()
@@ -355,6 +419,77 @@ fn render_theme_preview_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
                 .gap_3()
                 .child(render_theme_preview_card(&light_preview))
                 .child(render_theme_preview_card(&dark_preview)),
+        )
+}
+
+fn render_theme_file_workflow_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
+    let open_handle = app.clone();
+    let import_handle = app.clone();
+    let duplicate_handle = app.clone();
+    let restore_handle = app;
+
+    v_flex()
+        .w_full()
+        .gap_3()
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Custom imports are sanitized to colors and highlight only. Curated themes can be restored without affecting your config library."),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .flex_wrap()
+                .child(
+                    Button::new("advanced-theme-open-folder")
+                        .label("Open Themes Folder")
+                        .outline()
+                        .small()
+                        .compact()
+                        .on_click(move |_, window, cx| {
+                            let _ = open_handle.update(cx, |app, cx| {
+                                app.open_themes_folder(window, cx);
+                            });
+                        }),
+                )
+                .child(
+                    Button::new("advanced-theme-import-json")
+                        .label("Import Theme JSON")
+                        .outline()
+                        .small()
+                        .compact()
+                        .on_click(move |_, window, cx| {
+                            let _ = import_handle.update(cx, |app, cx| {
+                                app.handle_theme_import_click(window, cx);
+                            });
+                        }),
+                )
+                .child(
+                    Button::new("advanced-theme-duplicate-template")
+                        .label("Duplicate Current Theme")
+                        .outline()
+                        .small()
+                        .compact()
+                        .on_click(move |_, window, cx| {
+                            let _ = duplicate_handle.update(cx, |app, cx| {
+                                app.duplicate_current_theme_template(window, cx);
+                            });
+                        }),
+                )
+                .child(
+                    Button::new("advanced-theme-restore-curated")
+                        .label("Restore Curated Themes")
+                        .outline()
+                        .small()
+                        .compact()
+                        .on_click(move |_, window, cx| {
+                            let _ = restore_handle.update(cx, |app, cx| {
+                                app.restore_curated_theme_files(window, cx);
+                            });
+                        }),
+                ),
         )
 }
 
@@ -370,8 +505,17 @@ struct ThemePreviewTokens {
     accent_foreground: Hsla,
     success: Hsla,
     success_foreground: Hsla,
+    warning: Hsla,
+    warning_foreground: Hsla,
+    info: Hsla,
+    info_foreground: Hsla,
     danger: Hsla,
     danger_foreground: Hsla,
+    chart_1: Hsla,
+    chart_2: Hsla,
+    chart_3: Hsla,
+    chart_4: Hsla,
+    chart_5: Hsla,
     input_border: Hsla,
 }
 
@@ -391,8 +535,17 @@ fn theme_preview_tokens(config: std::rc::Rc<ThemeConfig>) -> ThemePreviewTokens 
         accent_foreground: theme.accent_foreground,
         success: theme.success,
         success_foreground: theme.success_foreground,
+        warning: theme.warning,
+        warning_foreground: theme.warning_foreground,
+        info: theme.info,
+        info_foreground: theme.info_foreground,
         danger: theme.danger,
         danger_foreground: theme.danger_foreground,
+        chart_1: theme.chart_1,
+        chart_2: theme.chart_2,
+        chart_3: theme.chart_3,
+        chart_4: theme.chart_4,
+        chart_5: theme.chart_5,
         input_border: theme.input,
     }
 }
@@ -524,6 +677,8 @@ fn render_theme_preview_card(preview: &ThemePreviewTokens) -> Div {
                                         .flex_wrap()
                                         .child(preview_color_chip("Accent", preview.accent, preview.accent_foreground))
                                         .child(preview_color_chip("Success", preview.success, preview.success_foreground))
+                                        .child(preview_color_chip("Warning", preview.warning, preview.warning_foreground))
+                                        .child(preview_color_chip("Info", preview.info, preview.info_foreground))
                                         .child(preview_color_chip("Danger", preview.danger, preview.danger_foreground)),
                                 )
                                 .child(
@@ -535,6 +690,17 @@ fn render_theme_preview_card(preview: &ThemePreviewTokens) -> Div {
                                         .child(preview_swatch("Panel", preview.panel, preview.foreground))
                                         .child(preview_swatch("Border", preview.border, preview.foreground))
                                         .child(preview_swatch("Input", preview.input_border, preview.foreground)),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .flex_wrap()
+                                        .child(preview_chart_chip("Chart 1", preview.chart_1))
+                                        .child(preview_chart_chip("Chart 2", preview.chart_2))
+                                        .child(preview_chart_chip("Chart 3", preview.chart_3))
+                                        .child(preview_chart_chip("Chart 4", preview.chart_4))
+                                        .child(preview_chart_chip("Chart 5", preview.chart_5)),
                                 ),
                         ),
                 ),
@@ -559,6 +725,23 @@ fn preview_swatch(label: &'static str, color: Hsla, text_color: Hsla) -> Div {
         .gap_2()
         .child(div().size(px(12.0)).rounded_full().bg(color))
         .child(div().text_xs().text_color(text_color).child(label))
+}
+
+fn preview_chart_chip(label: &'static str, color: Hsla) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded(px(8.0))
+        .bg(color.alpha(0.18))
+        .border_1()
+        .border_color(color.alpha(0.38))
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .child(div().size(px(8.0)).rounded_full().bg(color))
+                .child(div().text_xs().child(label)),
+        )
 }
 
 fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {

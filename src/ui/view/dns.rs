@@ -195,21 +195,21 @@ fn dns_card(
     let info = preset.info();
     let selected = app.ui_prefs.dns_preset == preset;
     let border_color = if selected && active {
-        cx.theme().accent
+        cx.theme().info
     } else if !active {
         cx.theme().border.alpha(0.72)
     } else {
         cx.theme().border
     };
     let background = if selected && active {
-        cx.theme().accent.alpha(0.14)
+        cx.theme().info.alpha(0.12)
     } else if !active {
         cx.theme().muted.alpha(0.6)
     } else {
         cx.theme().group_box
     };
     let title_color = if selected && active {
-        cx.theme().accent
+        cx.theme().info
     } else if !active {
         cx.theme().muted_foreground
     } else {
@@ -247,11 +247,11 @@ fn dns_card(
                     h_flex()
                         .items_center()
                         .gap_2()
-                        .child(Tag::success().small().child("Selected"))
+                        .child(Tag::info().small().child("Selected"))
                         .child(
                             Icon::new(IconName::CircleCheck)
                                 .size_4()
-                                .text_color(cx.theme().accent),
+                                .text_color(cx.theme().info),
                         )
                         .into_any_element()
                 } else if selected {
@@ -275,7 +275,7 @@ fn dns_card(
                 .left(px(0.0))
                 .w(px(3.0))
                 .rounded_md()
-                .bg(cx.theme().accent),
+                .bg(cx.theme().info),
         );
     }
 

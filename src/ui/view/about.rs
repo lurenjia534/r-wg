@@ -1,7 +1,6 @@
 use std::env::consts::{ARCH, OS};
 
 use gpui::*;
-use gpui_component::theme::ThemeMode;
 use gpui_component::{
     button::Button,
     description_list::DescriptionList,
@@ -13,6 +12,7 @@ use gpui_component::{
 };
 
 use super::super::state::WgApp;
+use super::super::themes::AppearancePolicy;
 use super::widgets::backend_status_badge;
 
 const BRAND_FONT: &str = "Plus Jakarta Sans";
@@ -33,7 +33,10 @@ pub(crate) fn render_about(app: &mut WgApp, window: &mut Window, cx: &mut Contex
     let platform_text = format!("{OS} / {ARCH}");
     let theme_text = format!(
         "{} · {}",
-        theme_mode_text(app.ui_prefs.theme_mode),
+        appearance_policy_text(
+            app.ui_prefs.appearance_policy,
+            app.ui_prefs.resolved_theme_mode
+        ),
         cx.theme().theme_name()
     );
     let (latest_version, latest_changes) = latest_release_notes();
@@ -320,7 +323,7 @@ fn render_readiness_strip(wide_layout: bool, cx: &mut Context<WgApp>) -> impl In
                     "Production ready",
                     "Routing, DNS, and privileged backend flows are the primary desktop path.",
                     Tag::success().small().rounded_full().child("Ready"),
-                    success_tone(cx),
+                    cx.theme().success,
                     true,
                     cx,
                 ),
@@ -332,7 +335,7 @@ fn render_readiness_strip(wide_layout: bool, cx: &mut Context<WgApp>) -> impl In
                     "Supported",
                     "Tunnel control and tray behavior are integrated, with desktop notifications wired in.",
                     Tag::info().small().rounded_full().child("Supported"),
-                    info_tone(cx),
+                    cx.theme().info,
                     true,
                     cx,
                 ),
@@ -344,7 +347,7 @@ fn render_readiness_strip(wide_layout: bool, cx: &mut Context<WgApp>) -> impl In
                     "Scaffold only",
                     "Platform scaffolding exists, but the runtime path is not yet a first-class desktop target.",
                     Tag::warning().small().rounded_full().child("Scaffold"),
-                    warning_tone(cx),
+                    cx.theme().warning,
                     false,
                     cx,
                 ),
@@ -360,7 +363,7 @@ fn render_readiness_strip(wide_layout: bool, cx: &mut Context<WgApp>) -> impl In
                     "Production ready",
                     "Routing, DNS, and privileged backend flows are the primary desktop path.",
                     Tag::success().small().rounded_full().child("Ready"),
-                    success_tone(cx),
+                    cx.theme().success,
                     false,
                     cx,
                 )
@@ -374,7 +377,7 @@ fn render_readiness_strip(wide_layout: bool, cx: &mut Context<WgApp>) -> impl In
                     "Supported",
                     "Tunnel control and tray behavior are integrated, with desktop notifications wired in.",
                     Tag::info().small().rounded_full().child("Supported"),
-                    info_tone(cx),
+                    cx.theme().info,
                     false,
                     cx,
                 )
@@ -388,7 +391,7 @@ fn render_readiness_strip(wide_layout: bool, cx: &mut Context<WgApp>) -> impl In
                     "Scaffold only",
                     "Platform scaffolding exists, but the runtime path is not yet a first-class desktop target.",
                     Tag::warning().small().rounded_full().child("Scaffold"),
-                    warning_tone(cx),
+                    cx.theme().warning,
                     false,
                     cx,
                 ),
@@ -465,21 +468,21 @@ fn render_capabilities(cx: &mut Context<WgApp>) -> impl IntoElement {
                 IconName::File,
                 "Config Compatibility",
                 "Parse WireGuard configuration files with wg-quick style fields and native persistence flow.",
-                info_tone(cx),
+                cx.theme().info,
                 cx,
             ))
             .child(feature_card(
                 IconName::CircleCheck,
                 "Tunnel Lifecycle",
                 "Start and stop tunnels with unified status, tray control, and desktop notification feedback.",
-                success_tone(cx),
+                cx.theme().success,
                 cx,
             ))
             .child(feature_card(
                 IconName::ChartPie,
                 "Observability",
                 "Track peer handshake timing, traffic summaries, and runtime diagnostics without leaving the app.",
-                accent_tone(cx),
+                cx.theme().chart_3,
                 cx,
             )),
     )
@@ -693,10 +696,17 @@ fn profile_badge(profile_text: &str) -> Tag {
     }
 }
 
-fn theme_mode_text(mode: ThemeMode) -> &'static str {
-    match mode {
-        ThemeMode::Light => "Light",
-        ThemeMode::Dark => "Dark",
+fn appearance_policy_text(
+    policy: AppearancePolicy,
+    resolved_mode: gpui_component::theme::ThemeMode,
+) -> &'static str {
+    match policy {
+        AppearancePolicy::System => match resolved_mode {
+            gpui_component::theme::ThemeMode::Light => "Follow System (Light)",
+            gpui_component::theme::ThemeMode::Dark => "Follow System (Dark)",
+        },
+        AppearancePolicy::Light => "Light",
+        AppearancePolicy::Dark => "Dark",
     }
 }
 
@@ -746,36 +756,4 @@ fn latest_release_notes() -> (String, Vec<String>) {
 
 fn sanitize_release_note(item: &str) -> String {
     item.replace('`', "")
-}
-
-fn success_tone(cx: &Context<WgApp>) -> Hsla {
-    if cx.theme().is_dark() {
-        hsla(142.0 / 360.0, 0.58, 0.62, 1.0)
-    } else {
-        hsla(142.0 / 360.0, 0.62, 0.36, 1.0)
-    }
-}
-
-fn info_tone(cx: &Context<WgApp>) -> Hsla {
-    if cx.theme().is_dark() {
-        hsla(210.0 / 360.0, 0.72, 0.68, 1.0)
-    } else {
-        hsla(210.0 / 360.0, 0.78, 0.44, 1.0)
-    }
-}
-
-fn warning_tone(cx: &Context<WgApp>) -> Hsla {
-    if cx.theme().is_dark() {
-        hsla(38.0 / 360.0, 0.82, 0.66, 1.0)
-    } else {
-        hsla(36.0 / 360.0, 0.86, 0.46, 1.0)
-    }
-}
-
-fn accent_tone(cx: &Context<WgApp>) -> Hsla {
-    if cx.theme().is_dark() {
-        hsla(196.0 / 360.0, 0.78, 0.68, 1.0)
-    } else {
-        hsla(192.0 / 360.0, 0.84, 0.38, 1.0)
-    }
 }

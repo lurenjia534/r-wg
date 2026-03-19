@@ -5,6 +5,7 @@ use gpui_component::{
 };
 
 use super::super::state::{SidebarItem, WgApp};
+use super::super::themes::AppearancePolicy;
 use super::data::ViewData;
 
 /// 顶部工具栏骨架：标题、配置切换、模式按钮、状态图标。
@@ -21,6 +22,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         && !app.runtime.busy;
     let can_stop = app.runtime.running && !app.runtime.busy;
 
+    let appearance_policy = app.ui_prefs.appearance_policy;
     let is_dark = cx.theme().is_dark();
     let chip_bg = if is_dark {
         cx.theme().background.alpha(0.45)
@@ -38,29 +40,30 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .compact()
         .small()
         .child(
+            Button::new("theme-system")
+                .label("Auto")
+                .selected(appearance_policy == AppearancePolicy::System)
+                .tooltip("Follow system appearance")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.set_appearance_policy_pref(AppearancePolicy::System, Some(window), cx);
+                })),
+        )
+        .child(
             Button::new("theme-light")
                 .icon(Icon::new(IconName::Sun).size_4())
-                .selected(!is_dark)
+                .selected(appearance_policy == AppearancePolicy::Light)
                 .tooltip("Switch to light mode")
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.set_theme_mode_pref(
-                        gpui_component::theme::ThemeMode::Light,
-                        Some(window),
-                        cx,
-                    );
+                    this.set_appearance_policy_pref(AppearancePolicy::Light, Some(window), cx);
                 })),
         )
         .child(
             Button::new("theme-dark")
                 .icon(Icon::new(IconName::Moon).size_4())
-                .selected(is_dark)
+                .selected(appearance_policy == AppearancePolicy::Dark)
                 .tooltip("Switch to dark mode")
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.set_theme_mode_pref(
-                        gpui_component::theme::ThemeMode::Dark,
-                        Some(window),
-                        cx,
-                    );
+                    this.set_appearance_policy_pref(AppearancePolicy::Dark, Some(window), cx);
                 })),
         );
 
@@ -108,10 +111,10 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         let (label, dot_color, text_color, bg, border) = if app.runtime.running {
             (
                 "Connected",
-                cx.theme().accent,
-                cx.theme().accent,
-                cx.theme().accent.alpha(0.18),
-                cx.theme().accent.alpha(0.35),
+                cx.theme().success,
+                cx.theme().success,
+                cx.theme().success.alpha(0.16),
+                cx.theme().success.alpha(0.3),
             )
         } else {
             (
@@ -178,13 +181,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .border_1()
                 .border_color(chip_border)
                 .bg(chip_bg)
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(icon_button("theme-palette", IconName::Palette))
-                        .child(theme_toggle),
-                )
+                .child(h_flex().items_center().gap_2().child(theme_toggle))
                 .child(vertical_divider(cx))
                 .child(
                     h_flex().items_center().gap_2().child(

@@ -15,6 +15,7 @@ use super::super::state::{
     StatsState, TrafficDay, TrafficDayStats, TrafficHour, TunnelConfig, UiPrefsState, WgApp,
     TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
 };
+use super::super::themes::{self, AppearancePolicy};
 
 impl WgApp {
     pub(crate) fn start_load_persisted_state(
@@ -47,7 +48,8 @@ impl WgApp {
                 let result = load_task.await;
                 view.update_in(cx, |this, window, cx| {
                     match result {
-                        Ok(Some(state)) => match PersistedStateRestore::decode(state, &storage) {
+                        Ok(Some(state)) => match PersistedStateRestore::decode(state, &storage, cx)
+                        {
                             Ok(restored) => {
                                 let summary = restored.apply(
                                     &mut this.configs,
@@ -72,11 +74,24 @@ impl WgApp {
                                 if let Some(selected_id) = summary.selected_id {
                                     this.load_config_into_inputs(selected_id, window, cx);
                                 }
+                                if let Some(theme_notice) = summary.theme_notice {
+                                    this.push_success_toast(theme_notice, window, cx);
+                                }
                                 if summary.missing_files > 0 {
                                     this.set_status(format!(
                                         "Loaded {} configs, {} missing",
                                         summary.loaded_count, summary.missing_files
                                     ));
+                                    this.persist_state_async(cx);
+                                } else if summary.theme_prefs_migrated {
+                                    if summary.loaded_count == 0 {
+                                        this.set_status("Ready");
+                                    } else {
+                                        this.set_status(format!(
+                                            "Loaded {} configs",
+                                            summary.loaded_count
+                                        ));
+                                    }
                                     this.persist_state_async(cx);
                                 } else if summary.loaded_count == 0 {
                                     this.set_status("Ready");
@@ -197,7 +212,18 @@ impl<'a> PersistedStateSnapshot<'a> {
             version: STATE_VERSION,
             next_id: self.configs.next_config_id,
             selected_id,
-            theme_mode: Some(self.ui_prefs.theme_mode),
+            theme_mode: Some(self.ui_prefs.resolved_theme_mode),
+            theme_policy: Some(self.ui_prefs.appearance_policy),
+            theme_light_key: self
+                .ui_prefs
+                .theme_light_key
+                .as_ref()
+                .map(ToString::to_string),
+            theme_dark_key: self
+                .ui_prefs
+                .theme_dark_key
+                .as_ref()
+                .map(ToString::to_string),
             theme_light_name: self
                 .ui_prefs
                 .theme_light_name
@@ -283,7 +309,10 @@ impl<'a> PersistedStateSnapshot<'a> {
 }
 
 struct PersistedStateRestore {
-    theme_mode: Option<ThemeMode>,
+    appearance_policy: Option<AppearancePolicy>,
+    resolved_theme_mode: Option<ThemeMode>,
+    theme_light_key: Option<SharedString>,
+    theme_dark_key: Option<SharedString>,
     theme_light_name: Option<SharedString>,
     theme_dark_name: Option<SharedString>,
     log_auto_follow: Option<bool>,
@@ -303,16 +332,24 @@ struct PersistedStateRestore {
     config_traffic_days: HashMap<u64, Vec<TrafficDayStats>>,
     config_traffic_hours: HashMap<u64, Vec<TrafficHour>>,
     missing_files: usize,
+    theme_notice: Option<SharedString>,
+    theme_prefs_migrated: bool,
 }
 
 struct PersistedStateSummary {
     selected_id: Option<u64>,
     loaded_count: usize,
     missing_files: usize,
+    theme_notice: Option<SharedString>,
+    theme_prefs_migrated: bool,
 }
 
 impl PersistedStateRestore {
-    fn decode(state: PersistedState, storage: &StoragePaths) -> Result<Self, String> {
+    fn decode(
+        state: PersistedState,
+        storage: &StoragePaths,
+        cx: &Context<WgApp>,
+    ) -> Result<Self, String> {
         if state.version != STATE_VERSION {
             return Err(format!("Unsupported state version: {}", state.version));
         }
@@ -353,11 +390,43 @@ impl PersistedStateRestore {
             .collect();
 
         let config_ids: HashSet<u64> = configs.iter().map(|cfg| cfg.id).collect();
+        let appearance_policy = state
+            .theme_policy
+            .or_else(|| state.theme_mode.map(Into::into));
+        let light = themes::resolve_theme_preference(
+            ThemeMode::Light,
+            state.theme_light_key.as_deref(),
+            state.theme_light_name.as_deref(),
+            Some(storage),
+            cx,
+        );
+        let dark = themes::resolve_theme_preference(
+            ThemeMode::Dark,
+            state.theme_dark_key.as_deref(),
+            state.theme_dark_name.as_deref(),
+            Some(storage),
+            cx,
+        );
+        let mut notices = Vec::new();
+        if let Some(notice) = light.notice.clone() {
+            notices.push(notice);
+        }
+        if let Some(notice) = dark.notice.clone() {
+            notices.push(notice);
+        }
+        let theme_notice = (!notices.is_empty()).then(|| notices.join(" • ").into());
+        let theme_prefs_migrated = light.migrated
+            || dark.migrated
+            || state.theme_light_key.is_none()
+            || state.theme_dark_key.is_none();
 
         Ok(Self {
-            theme_mode: state.theme_mode,
-            theme_light_name: state.theme_light_name.map(Into::into),
-            theme_dark_name: state.theme_dark_name.map(Into::into),
+            appearance_policy,
+            resolved_theme_mode: state.theme_mode,
+            theme_light_key: Some(light.entry.key.clone()),
+            theme_dark_key: Some(dark.entry.key.clone()),
+            theme_light_name: Some(light.entry.name.clone()),
+            theme_dark_name: Some(dark.entry.name.clone()),
             log_auto_follow: state.log_auto_follow,
             preferred_inspector_tab: state.preferred_inspector_tab,
             preferred_traffic_period: state.preferred_traffic_period,
@@ -375,6 +444,8 @@ impl PersistedStateRestore {
             config_traffic_hours: merge_config_hour_stats(state.config_traffic_hours, &config_ids),
             configs,
             missing_files,
+            theme_notice,
+            theme_prefs_migrated,
         })
     }
 
@@ -385,8 +456,17 @@ impl PersistedStateRestore {
         stats: &mut StatsState,
         ui_prefs: &mut UiPrefsState,
     ) -> PersistedStateSummary {
-        if let Some(theme_mode) = self.theme_mode {
-            ui_prefs.theme_mode = theme_mode;
+        if let Some(appearance_policy) = self.appearance_policy {
+            ui_prefs.appearance_policy = appearance_policy;
+        }
+        if let Some(resolved_theme_mode) = self.resolved_theme_mode {
+            ui_prefs.resolved_theme_mode = resolved_theme_mode;
+        }
+        if let Some(theme_light_key) = self.theme_light_key {
+            ui_prefs.theme_light_key = Some(theme_light_key);
+        }
+        if let Some(theme_dark_key) = self.theme_dark_key {
+            ui_prefs.theme_dark_key = Some(theme_dark_key);
         }
         if let Some(theme_light_name) = self.theme_light_name {
             ui_prefs.theme_light_name = Some(theme_light_name);
@@ -436,6 +516,8 @@ impl PersistedStateRestore {
             selected_id: selection.selected_id,
             loaded_count: configs.len(),
             missing_files: self.missing_files,
+            theme_notice: self.theme_notice,
+            theme_prefs_migrated: self.theme_prefs_migrated,
         }
     }
 }

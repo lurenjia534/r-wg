@@ -7,4 +7,5 @@ mod logs;
 mod persistence;
 mod stats;
 mod status;
+mod theme;
 mod tunnel;

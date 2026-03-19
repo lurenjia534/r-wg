@@ -108,7 +108,12 @@ fn sidebar_group(
             .icon(Icon::new(item.icon()).size_4())
             .active(active)
             .when(active, |this| {
-                this.suffix(div().size(px(6.0)).rounded_full().bg(cx.theme().accent))
+                this.suffix(
+                    div()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(cx.theme().sidebar_primary),
+                )
             })
             .on_click(cx.listener(move |this, _event, window, cx| {
                 this.request_sidebar_active(item, window, cx);

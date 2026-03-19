@@ -6,6 +6,7 @@ use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
 use super::state::{ConfigInspectorTab, ConfigSource, ProxiesViewMode, TrafficDay, TrafficPeriod};
+use super::themes::AppearancePolicy;
 
 pub(crate) const STATE_VERSION: u32 = 1;
 const STATE_FILE_NAME: &str = "state.json";
@@ -26,6 +27,12 @@ pub(crate) struct PersistedState {
     // 兼容旧版 state.json，字段可缺省。
     #[serde(default)]
     pub(crate) theme_mode: Option<ThemeMode>,
+    #[serde(default)]
+    pub(crate) theme_policy: Option<AppearancePolicy>,
+    #[serde(default)]
+    pub(crate) theme_light_key: Option<String>,
+    #[serde(default)]
+    pub(crate) theme_dark_key: Option<String>,
     #[serde(default)]
     pub(crate) theme_light_name: Option<String>,
     #[serde(default)]
@@ -235,6 +242,9 @@ mod tests {
             next_id: 42,
             selected_id: Some(7),
             theme_mode: Some(ThemeMode::Dark),
+            theme_policy: Some(AppearancePolicy::Dark),
+            theme_light_key: Some("curated:tokyonight.json#light-tokyo-day".to_string()),
+            theme_dark_key: Some("curated:tokyonight.json#dark-tokyo-night".to_string()),
             theme_light_name: Some("Signal Light".to_string()),
             theme_dark_name: Some("Network Dark".to_string()),
             log_auto_follow: Some(true),
@@ -302,6 +312,9 @@ mod tests {
         assert_eq!(loaded.next_id, state.next_id);
         assert_eq!(loaded.selected_id, state.selected_id);
         assert_eq!(loaded.theme_mode, state.theme_mode);
+        assert_eq!(loaded.theme_policy, state.theme_policy);
+        assert_eq!(loaded.theme_light_key, state.theme_light_key);
+        assert_eq!(loaded.theme_dark_key, state.theme_dark_key);
         assert_eq!(loaded.theme_light_name, state.theme_light_name);
         assert_eq!(loaded.theme_dark_name, state.theme_dark_name);
         assert_eq!(loaded.log_auto_follow, state.log_auto_follow);

@@ -829,12 +829,12 @@ fn proxy_list_header(cx: &mut Context<WgApp>) -> Div {
         .border_b_1()
         .border_color(cx.theme().border)
         .bg(cx.theme().secondary.alpha(0.55))
-        .child(column_label("Name").flex_1())
-        .child(column_label("Location").w(px(150.0)))
-        .child(column_label("Type").w(px(72.0)))
-        .child(column_label("Family").w(px(96.0)))
-        .child(column_label("Source").w(px(72.0)))
-        .child(column_label("Status").w(px(84.0)))
+        .child(column_label("Name", cx).flex_1())
+        .child(column_label("Location", cx).w(px(150.0)))
+        .child(column_label("Type", cx).w(px(72.0)))
+        .child(column_label("Family", cx).w(px(96.0)))
+        .child(column_label("Source", cx).w(px(72.0)))
+        .child(column_label("Status", cx).w(px(84.0)))
 }
 
 fn proxy_list_row(app: &WgApp, row: &ProxyRowData, cx: &mut Context<WgApp>) -> Stateful<Div> {
@@ -842,14 +842,16 @@ fn proxy_list_row(app: &WgApp, row: &ProxyRowData, cx: &mut Context<WgApp>) -> S
     let is_multi_selected =
         app.selection.proxy_select_mode && app.selection.proxy_selected_ids.contains(&row.id);
     let bg = if is_selected {
-        cx.theme().accent.alpha(0.16)
+        cx.theme().list_active
     } else if is_multi_selected {
-        cx.theme().accent.alpha(0.08)
+        cx.theme().info.alpha(0.08)
     } else {
         cx.theme().background
     };
     let border_color = if is_selected {
-        cx.theme().accent.alpha(0.55)
+        cx.theme().list_active_border
+    } else if is_multi_selected {
+        cx.theme().info.alpha(0.32)
     } else {
         cx.theme().border.alpha(0.35)
     };
@@ -925,16 +927,16 @@ fn proxy_gallery_card(app: &WgApp, row: &ProxyRowData, cx: &mut Context<WgApp>) 
     let is_multi_selected =
         app.selection.proxy_select_mode && app.selection.proxy_selected_ids.contains(&row.id);
     let bg = if is_selected {
-        cx.theme().accent.alpha(0.16)
+        cx.theme().list_active
     } else if is_multi_selected {
-        cx.theme().accent.alpha(0.08)
+        cx.theme().info.alpha(0.08)
     } else {
         cx.theme().secondary
     };
     let border_color = if is_selected {
-        cx.theme().accent_foreground
+        cx.theme().list_active_border
     } else if is_multi_selected {
-        cx.theme().accent.alpha(0.6)
+        cx.theme().info.alpha(0.45)
     } else if cx.theme().is_dark() {
         cx.theme().foreground.alpha(0.12)
     } else {
@@ -1209,11 +1211,11 @@ fn endpoint_family_tag(family: EndpointFamily) -> Option<Tag> {
     })
 }
 
-fn column_label(text: impl Into<SharedString>) -> Div {
+fn column_label(text: impl Into<SharedString>, cx: &Context<WgApp>) -> Div {
     div()
         .text_xs()
         .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(0x94a3b8))
+        .text_color(cx.theme().muted_foreground)
         .child(text.into())
 }
 

@@ -17,7 +17,7 @@ use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
 use super::persistence::{self, StoragePaths};
-use super::themes;
+use super::themes::{self, AppearancePolicy};
 
 /// 速度曲线采样点数量（固定窗口）。
 pub(crate) const SPARKLINE_SAMPLES: usize = 24;
@@ -1203,7 +1203,10 @@ pub(crate) struct UiPrefsState {
     pub(crate) configs_library_width: f32,
     pub(crate) configs_inspector_width: f32,
     pub(crate) proxies_view_mode: ProxiesViewMode,
-    pub(crate) theme_mode: ThemeMode,
+    pub(crate) appearance_policy: AppearancePolicy,
+    pub(crate) resolved_theme_mode: ThemeMode,
+    pub(crate) theme_light_key: Option<SharedString>,
+    pub(crate) theme_dark_key: Option<SharedString>,
     pub(crate) theme_light_name: Option<SharedString>,
     pub(crate) theme_dark_name: Option<SharedString>,
     pub(crate) dns_mode: DnsMode,
@@ -1212,7 +1215,10 @@ pub(crate) struct UiPrefsState {
 
 impl UiPrefsState {
     fn new(
-        theme_mode: ThemeMode,
+        appearance_policy: AppearancePolicy,
+        resolved_theme_mode: ThemeMode,
+        theme_light_key: Option<SharedString>,
+        theme_dark_key: Option<SharedString>,
         theme_light_name: Option<SharedString>,
         theme_dark_name: Option<SharedString>,
     ) -> Self {
@@ -1223,7 +1229,10 @@ impl UiPrefsState {
             configs_library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,
             configs_inspector_width: DEFAULT_CONFIGS_INSPECTOR_WIDTH,
             proxies_view_mode: ProxiesViewMode::List,
-            theme_mode,
+            appearance_policy,
+            resolved_theme_mode,
+            theme_light_key,
+            theme_dark_key,
             theme_light_name,
             theme_dark_name,
             dns_mode: DnsMode::FollowConfig,
@@ -1235,6 +1244,13 @@ impl UiPrefsState {
         match mode {
             ThemeMode::Light => self.theme_light_name.as_ref(),
             ThemeMode::Dark => self.theme_dark_name.as_ref(),
+        }
+    }
+
+    pub(crate) fn theme_palette_key(&self, mode: ThemeMode) -> Option<&SharedString> {
+        match mode {
+            ThemeMode::Light => self.theme_light_key.as_ref(),
+            ThemeMode::Dark => self.theme_dark_key.as_ref(),
         }
     }
 }
@@ -1296,6 +1312,7 @@ pub(crate) struct UiState {
     pub(crate) last_error: Option<SharedString>,
     pub(crate) backend: BackendDiagnostic,
     pub(crate) backend_last_error: Option<SharedString>,
+    pub(crate) theme_appearance_observer_ready: bool,
 }
 
 impl UiState {
@@ -1308,6 +1325,7 @@ impl UiState {
             last_error: None,
             backend: BackendDiagnostic::default_for_platform(),
             backend_last_error: None,
+            theme_appearance_observer_ready: false,
         }
     }
 
@@ -1367,11 +1385,21 @@ pub(crate) struct WgApp {
 impl WgApp {
     pub(crate) fn new(
         engine: Engine,
-        theme_mode: ThemeMode,
+        appearance_policy: AppearancePolicy,
+        resolved_theme_mode: ThemeMode,
+        theme_light_key: Option<SharedString>,
+        theme_dark_key: Option<SharedString>,
         theme_light_name: Option<SharedString>,
         theme_dark_name: Option<SharedString>,
     ) -> Self {
-        let ui_prefs = UiPrefsState::new(theme_mode, theme_light_name, theme_dark_name);
+        let ui_prefs = UiPrefsState::new(
+            appearance_policy,
+            resolved_theme_mode,
+            theme_light_key,
+            theme_dark_key,
+            theme_light_name,
+            theme_dark_name,
+        );
         Self {
             engine,
             configs: ConfigsState::new(),
@@ -1428,14 +1456,14 @@ impl WgApp {
         true
     }
 
-    pub(crate) fn set_theme_mode_pref(
+    pub(crate) fn set_appearance_policy_pref(
         &mut self,
-        value: ThemeMode,
+        value: AppearancePolicy,
         window: Option<&mut Window>,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.ui_prefs.theme_mode != value {
-            self.ui_prefs.theme_mode = value;
+        if self.ui_prefs.appearance_policy != value {
+            self.ui_prefs.appearance_policy = value;
             let refresh_all_windows = window.is_none();
             self.apply_theme_prefs(window, cx);
             if refresh_all_windows {
@@ -1454,14 +1482,18 @@ impl WgApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let slot = match mode {
-            ThemeMode::Light => &mut self.ui_prefs.theme_light_name,
-            ThemeMode::Dark => &mut self.ui_prefs.theme_dark_name,
+            ThemeMode::Light => &mut self.ui_prefs.theme_light_key,
+            ThemeMode::Dark => &mut self.ui_prefs.theme_dark_key,
         };
 
         if *slot != value {
             *slot = value;
+            match mode {
+                ThemeMode::Light => self.ui_prefs.theme_light_name = None,
+                ThemeMode::Dark => self.ui_prefs.theme_dark_name = None,
+            }
 
-            let active_mode_changed = self.ui_prefs.theme_mode == mode;
+            let active_mode_changed = self.ui_prefs.resolved_theme_mode == mode;
             let refresh_all_windows = active_mode_changed && window.is_none();
             self.apply_theme_prefs(if active_mode_changed { window } else { None }, cx);
             if refresh_all_windows {
@@ -1477,7 +1509,9 @@ impl WgApp {
         window: Option<&mut Window>,
         cx: &mut gpui::Context<Self>,
     ) {
-        let changed = self.ui_prefs.theme_light_name.take().is_some()
+        let changed = self.ui_prefs.theme_light_key.take().is_some()
+            || self.ui_prefs.theme_dark_key.take().is_some()
+            || self.ui_prefs.theme_light_name.take().is_some()
             || self.ui_prefs.theme_dark_name.take().is_some();
 
         if changed {
@@ -1496,13 +1530,32 @@ impl WgApp {
         window: Option<&mut Window>,
         cx: &mut gpui::Context<Self>,
     ) {
-        themes::apply_theme_preferences(
-            self.ui_prefs.theme_mode,
+        let storage = self.configs.ensure_storage().ok();
+        let light = themes::resolve_theme_preference(
+            ThemeMode::Light,
+            self.ui_prefs.theme_light_key.as_deref().map(|key| &**key),
             self.ui_prefs
                 .theme_light_name
                 .as_deref()
                 .map(|name| &**name),
+            storage.as_ref(),
+            cx,
+        );
+        let dark = themes::resolve_theme_preference(
+            ThemeMode::Dark,
+            self.ui_prefs.theme_dark_key.as_deref().map(|key| &**key),
             self.ui_prefs.theme_dark_name.as_deref().map(|name| &**name),
+            storage.as_ref(),
+            cx,
+        );
+        self.ui_prefs.theme_light_key = Some(light.entry.key.clone());
+        self.ui_prefs.theme_dark_key = Some(dark.entry.key.clone());
+        self.ui_prefs.theme_light_name = Some(light.entry.name.clone());
+        self.ui_prefs.theme_dark_name = Some(dark.entry.name.clone());
+        self.ui_prefs.resolved_theme_mode = themes::apply_resolved_theme_preferences(
+            self.ui_prefs.appearance_policy,
+            light.entry.config.clone(),
+            dark.entry.config.clone(),
             window,
             cx,
         );
