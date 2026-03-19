@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::LazyLock;
@@ -92,29 +92,170 @@ impl ThemeCollection {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) enum ThemeApproval {
+    Approved,
+    Experimental,
+}
+
+impl ThemeApproval {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Approved => "Approved",
+            Self::Experimental => "Experimental",
+        }
+    }
+
+    fn sort_rank(self) -> u8 {
+        match self {
+            Self::Approved => 0,
+            Self::Experimental => 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CuratedThemeProfile {
+    theme_name: &'static str,
+    approval: ThemeApproval,
+    tags: &'static [&'static str],
+}
+
+const CURATED_THEME_PROFILES: &[CuratedThemeProfile] = &[
+    CuratedThemeProfile {
+        theme_name: "Ayu Light",
+        approval: ThemeApproval::Approved,
+        tags: &["Balanced", "Warm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Ayu Dark",
+        approval: ThemeApproval::Experimental,
+        tags: &["High Contrast", "Warm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Catppuccin Latte",
+        approval: ThemeApproval::Experimental,
+        tags: &["Calm", "Warm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Catppuccin Frappe",
+        approval: ThemeApproval::Experimental,
+        tags: &["Calm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Catppuccin Macchiato",
+        approval: ThemeApproval::Experimental,
+        tags: &["Calm", "OLED-ish"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Catppuccin Mocha",
+        approval: ThemeApproval::Approved,
+        tags: &["Calm", "OLED-ish"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Flexoki Light",
+        approval: ThemeApproval::Approved,
+        tags: &["Balanced", "Warm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Flexoki Dark",
+        approval: ThemeApproval::Approved,
+        tags: &["Balanced", "Calm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Gruvbox Light",
+        approval: ThemeApproval::Experimental,
+        tags: &["Warm", "High Contrast"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Gruvbox Dark",
+        approval: ThemeApproval::Experimental,
+        tags: &["Warm", "High Contrast"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Solarized Light",
+        approval: ThemeApproval::Approved,
+        tags: &["Balanced", "Calm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Solarized Dark",
+        approval: ThemeApproval::Experimental,
+        tags: &["Calm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Tokyo Night",
+        approval: ThemeApproval::Approved,
+        tags: &["High Contrast", "OLED-ish"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Tokyo Storm",
+        approval: ThemeApproval::Experimental,
+        tags: &["Balanced", "Calm"],
+    },
+    CuratedThemeProfile {
+        theme_name: "Tokyo Moon",
+        approval: ThemeApproval::Experimental,
+        tags: &["OLED-ish"],
+    },
+];
+
 #[derive(Clone)]
 pub(crate) struct ThemeCatalogEntry {
     pub(crate) key: SharedString,
     pub(crate) name: SharedString,
     pub(crate) collection: ThemeCollection,
+    pub(crate) approval: Option<ThemeApproval>,
+    pub(crate) name_conflict: bool,
+    pub(crate) tags: Vec<SharedString>,
     pub(crate) source_label: SharedString,
     pub(crate) config: Rc<ThemeConfig>,
 }
 
 impl ThemeCatalogEntry {
-    pub(crate) fn menu_label(&self) -> SharedString {
+    pub(crate) fn badge_label(&self) -> Option<&'static str> {
+        self.approval.map(ThemeApproval::label)
+    }
+
+    pub(crate) fn conflict_label(&self) -> Option<&'static str> {
+        self.name_conflict.then_some("Name Conflict")
+    }
+
+    pub(crate) fn menu_group_label(&self) -> &'static str {
         match self.collection {
-            ThemeCollection::Builtin => {
-                format!("{} · {}", self.collection.label(), self.name).into()
+            ThemeCollection::Builtin => "Default",
+            ThemeCollection::Curated => {
+                if self.approval == Some(ThemeApproval::Approved) {
+                    "Recommended"
+                } else {
+                    "More Themes"
+                }
             }
-            ThemeCollection::Curated | ThemeCollection::Custom => format!(
-                "{} · {} ({})",
-                self.collection.label(),
-                self.name,
-                self.source_label
-            )
-            .into(),
+            ThemeCollection::Custom => "Custom",
         }
+    }
+
+    fn sort_rank(&self) -> (u8, u8) {
+        match self.collection {
+            ThemeCollection::Builtin => (0, 0),
+            ThemeCollection::Curated => (
+                1,
+                self.approval
+                    .map(ThemeApproval::sort_rank)
+                    .unwrap_or(ThemeApproval::Experimental.sort_rank()),
+            ),
+            ThemeCollection::Custom => (2, 0),
+        }
+    }
+
+    pub(crate) fn menu_label(&self) -> SharedString {
+        let mut parts = vec![self.name.to_string()];
+        if let Some(label) = self.conflict_label() {
+            parts.push(label.to_string());
+        }
+        if self.collection == ThemeCollection::Custom {
+            parts.push(self.source_label.to_string());
+        }
+        parts.join(" · ").into()
     }
 }
 
@@ -161,14 +302,20 @@ pub(crate) fn available_themes(
     storage: Option<&StoragePaths>,
     cx: &App,
 ) -> Vec<ThemeCatalogEntry> {
-    let mut themes = Vec::new();
-    push_builtin_theme_entries(mode, &mut themes, cx);
-    push_curated_theme_entries(mode, &mut themes);
-    push_custom_theme_entries(mode, storage, &mut themes);
+    let mut themes = collect_available_themes(mode, storage, cx);
+    let name_counts = theme_name_counts(storage, cx);
+
+    for theme in &mut themes {
+        theme.name_conflict = name_counts
+            .get(&theme_name_key(&theme.name))
+            .copied()
+            .unwrap_or_default()
+            > 1;
+    }
 
     themes.sort_by(|a, b| {
-        a.collection
-            .cmp(&b.collection)
+        a.sort_rank()
+            .cmp(&b.sort_rank())
             .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             .then(
                 a.source_label
@@ -239,17 +386,8 @@ pub(crate) fn resolve_theme_preference(
     }
 }
 
-pub(crate) fn theme_name_inventory(
-    storage: Option<&StoragePaths>,
-    cx: &App,
-) -> HashSet<(ThemeMode, String)> {
-    let mut names = HashSet::new();
-    for mode in [ThemeMode::Light, ThemeMode::Dark] {
-        for entry in available_themes(mode, storage, cx) {
-            names.insert((mode, entry.name.to_lowercase()));
-        }
-    }
-    names
+pub(crate) fn theme_name_inventory(storage: Option<&StoragePaths>, cx: &App) -> HashSet<String> {
+    theme_name_counts(storage, cx).into_keys().collect()
 }
 
 pub(crate) fn resolve_theme_config(
@@ -265,9 +403,10 @@ pub(crate) fn resolve_theme_config(
 }
 
 pub(crate) fn unique_theme_name(
-    mode: ThemeMode,
     preferred_name: &str,
-    names_in_use: &mut HashSet<(ThemeMode, String)>,
+    mode: ThemeMode,
+    prefer_mode_variant: bool,
+    names_in_use: &mut HashSet<String>,
 ) -> SharedString {
     let base = preferred_name.trim();
     let base = if base.is_empty() {
@@ -275,24 +414,44 @@ pub(crate) fn unique_theme_name(
     } else {
         base.to_string()
     };
+    let mode_variant = theme_name_with_mode(&base, mode);
+    let mut stems = Vec::new();
 
-    if names_in_use.insert((mode, base.to_lowercase())) {
-        return base.into();
-    }
-
-    let custom = format!("{base} (Custom)");
-    if names_in_use.insert((mode, custom.to_lowercase())) {
-        return custom.into();
-    }
-
-    for index in 2..10_000 {
-        let candidate = format!("{base} (Custom {index})");
-        if names_in_use.insert((mode, candidate.to_lowercase())) {
-            return candidate.into();
+    if prefer_mode_variant {
+        stems.push(mode_variant.clone());
+        if mode_variant != base {
+            stems.push(base.clone());
+        }
+    } else {
+        stems.push(base.clone());
+        if mode_variant != base {
+            stems.push(mode_variant.clone());
         }
     }
 
-    format!("{base} (Imported)").into()
+    for stem in &stems {
+        if names_in_use.insert(theme_name_key(stem)) {
+            return stem.clone().into();
+        }
+    }
+
+    for stem in &stems {
+        let custom = format!("{stem} (Custom)");
+        if names_in_use.insert(theme_name_key(&custom)) {
+            return custom.into();
+        }
+    }
+
+    for stem in &stems {
+        for index in 2..10_000 {
+            let candidate = format!("{stem} (Custom {index})");
+            if names_in_use.insert(theme_name_key(&candidate)) {
+                return candidate.into();
+            }
+        }
+    }
+
+    format!("{} (Imported)", stems[0]).into()
 }
 
 pub(crate) fn apply_resolved_theme_preferences(
@@ -338,8 +497,8 @@ pub(crate) fn restore_curated_themes(storage: &StoragePaths) -> Result<PathBuf, 
 pub(crate) fn import_theme_file(
     source_path: &Path,
     storage: &StoragePaths,
-    names_in_use: &mut HashSet<(ThemeMode, String)>,
-) -> Result<PathBuf, String> {
+    names_in_use: &mut HashSet<String>,
+) -> Result<ImportedThemeSet, String> {
     let contents = std::fs::read_to_string(source_path)
         .map_err(|err| format!("Read theme {} failed: {err}", source_path.display()))?;
     let theme_set = serde_json::from_str::<ThemeSet>(&contents)
@@ -356,11 +515,9 @@ pub(crate) fn import_theme_file(
         .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("custom-theme");
-    write_theme_set(
-        storage,
-        base_name,
-        &sanitize_theme_set_with_inventory(theme_set, names_in_use),
-    )
+    let theme_set = sanitize_theme_set_with_inventory(theme_set, names_in_use);
+    let path = write_theme_set(storage, base_name, &theme_set)?;
+    Ok(ImportedThemeSet { path, theme_set })
 }
 
 pub(crate) fn write_theme_set(
@@ -393,6 +550,11 @@ pub(crate) fn build_theme_template(
     }
 }
 
+pub(crate) struct ImportedThemeSet {
+    pub(crate) path: PathBuf,
+    pub(crate) theme_set: ThemeSet,
+}
+
 pub(crate) fn sanitize_theme_set(theme_set: ThemeSet) -> ThemeSet {
     ThemeSet {
         name: theme_set.name,
@@ -420,11 +582,23 @@ fn sanitize_theme_config(mut config: ThemeConfig) -> ThemeConfig {
 
 pub(crate) fn sanitize_theme_set_with_inventory(
     theme_set: ThemeSet,
-    names_in_use: &mut HashSet<(ThemeMode, String)>,
+    names_in_use: &mut HashSet<String>,
 ) -> ThemeSet {
     let mut theme_set = sanitize_theme_set(theme_set);
+    let duplicate_names = theme_set
+        .themes
+        .iter()
+        .fold(HashMap::new(), |mut counts, theme| {
+            *counts.entry(theme_name_key(&theme.name)).or_insert(0usize) += 1;
+            counts
+        });
     for theme in &mut theme_set.themes {
-        theme.name = unique_theme_name(theme.mode, &theme.name, names_in_use);
+        let prefer_mode_variant = duplicate_names
+            .get(&theme_name_key(&theme.name))
+            .copied()
+            .unwrap_or_default()
+            > 1;
+        theme.name = unique_theme_name(&theme.name, theme.mode, prefer_mode_variant, names_in_use);
     }
     theme_set
 }
@@ -460,6 +634,9 @@ fn push_builtin_theme_entries(mode: ThemeMode, entries: &mut Vec<ThemeCatalogEnt
         key: builtin_theme_key(config.mode, &config.name),
         name: config.name.clone(),
         collection: ThemeCollection::Builtin,
+        approval: None,
+        name_conflict: false,
+        tags: Vec::new(),
         source_label: "default".into(),
         config,
     });
@@ -529,10 +706,14 @@ fn push_theme_set_entries(
     entries: &mut Vec<ThemeCatalogEntry>,
 ) {
     for theme in theme_set.themes.iter().filter(|theme| theme.mode == mode) {
+        let (approval, tags) = theme_catalog_metadata(collection, &theme.name);
         entries.push(ThemeCatalogEntry {
             key: file_theme_key(collection, file_name, theme.mode, &theme.name),
             name: theme.name.clone(),
             collection,
+            approval,
+            name_conflict: false,
+            tags,
             source_label: file_name.to_string().into(),
             config: Rc::new(theme.clone()),
         });
@@ -553,10 +734,56 @@ fn default_theme_entry(mode: ThemeMode, cx: &App) -> ThemeCatalogEntry {
                 key: builtin_theme_key(config.mode, &config.name),
                 name: config.name.clone(),
                 collection: ThemeCollection::Builtin,
+                approval: None,
+                name_conflict: false,
+                tags: Vec::new(),
                 source_label: "default".into(),
                 config,
             }
         })
+}
+
+fn collect_available_themes(
+    mode: ThemeMode,
+    storage: Option<&StoragePaths>,
+    cx: &App,
+) -> Vec<ThemeCatalogEntry> {
+    let mut themes = Vec::new();
+    push_builtin_theme_entries(mode, &mut themes, cx);
+    push_curated_theme_entries(mode, &mut themes);
+    push_custom_theme_entries(mode, storage, &mut themes);
+    themes
+}
+
+fn theme_name_counts(storage: Option<&StoragePaths>, cx: &App) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for theme in collect_available_themes(mode, storage, cx) {
+            *counts.entry(theme_name_key(&theme.name)).or_insert(0usize) += 1;
+        }
+    }
+    counts
+}
+
+fn theme_catalog_metadata(
+    collection: ThemeCollection,
+    theme_name: &str,
+) -> (Option<ThemeApproval>, Vec<SharedString>) {
+    if collection != ThemeCollection::Curated {
+        return (None, Vec::new());
+    }
+
+    let Some(profile) = CURATED_THEME_PROFILES
+        .iter()
+        .find(|profile| profile.theme_name.eq_ignore_ascii_case(theme_name))
+    else {
+        return (Some(ThemeApproval::Experimental), Vec::new());
+    };
+
+    (
+        Some(profile.approval),
+        profile.tags.iter().map(|tag| (*tag).into()).collect(),
+    )
 }
 
 fn builtin_theme_key(mode: ThemeMode, name: &str) -> SharedString {
@@ -611,6 +838,23 @@ fn theme_mode_label(mode: ThemeMode) -> &'static str {
     match mode {
         ThemeMode::Light => "Light",
         ThemeMode::Dark => "Dark",
+    }
+}
+
+fn theme_name_key(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+fn theme_name_with_mode(name: &str, mode: ThemeMode) -> String {
+    let suffix = theme_mode_label(mode);
+    if name
+        .trim()
+        .to_lowercase()
+        .ends_with(&format!(" {}", suffix.to_lowercase()))
+    {
+        name.trim().to_string()
+    } else {
+        format!("{} {}", name.trim(), suffix)
     }
 }
 

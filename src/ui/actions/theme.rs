@@ -9,10 +9,16 @@ use gpui_component::{ActiveTheme as _, WindowExt};
 
 use super::super::format::sanitize_file_stem;
 use super::super::state::WgApp;
+use super::super::theme_lint::{self, ThemeLintCounts};
 use super::super::themes;
 
+struct ImportedThemeFile {
+    path: PathBuf,
+    lint_counts: ThemeLintCounts,
+}
+
 struct ThemeImportSummary {
-    imported: Vec<PathBuf>,
+    imported: Vec<ImportedThemeFile>,
     failed: Vec<(PathBuf, String)>,
 }
 
@@ -198,6 +204,7 @@ impl WgApp {
         let template = themes::build_theme_template(light_theme.as_ref(), dark_theme.as_ref());
         let mut names_in_use = themes::theme_name_inventory(Some(&storage), cx);
         let template = themes::sanitize_theme_set_with_inventory(template, &mut names_in_use);
+        let lint_counts = theme_lint::lint_theme_set(&template);
         let file_stem = sanitize_file_stem(&format!("{}-template", cx.theme().theme_name()));
 
         self.set_status("Writing theme template...");
@@ -219,12 +226,12 @@ impl WgApp {
                                 .file_name()
                                 .and_then(|name| name.to_str())
                                 .unwrap_or("theme-template.json");
-                            this.set_status(format!("Created theme template: {file_name}"));
-                            this.push_success_toast(
-                                format!("Theme template created: {file_name}"),
-                                window,
-                                cx,
+                            let message = format!(
+                                "Created theme template: {file_name} · {}",
+                                lint_counts.summary_label()
                             );
+                            this.set_status(message.clone());
+                            this.push_success_toast(message, window, cx);
                         }
                         Err(err) => {
                             this.set_error(err.clone());
@@ -258,6 +265,7 @@ impl WgApp {
         let view = cx.weak_entity();
         window
             .spawn(cx, async move |cx| {
+                let lint_storage = storage.clone();
                 let restore_task =
                     cx.background_spawn(async move { themes::restore_curated_themes(&storage) });
                 let result = restore_task.await;
@@ -265,8 +273,14 @@ impl WgApp {
                 view.update_in(cx, |this, window, cx| {
                     match result {
                         Ok(themes_dir) => {
-                            this.set_status("Curated themes restored");
-                            this.push_success_toast("Curated themes restored", window, cx);
+                            let lint_counts =
+                                lint_counts_for_active_palettes(this, &lint_storage, cx);
+                            let message = format!(
+                                "Curated themes restored · active palettes: {}",
+                                lint_counts.summary_label()
+                            );
+                            this.set_status(message.clone());
+                            this.push_success_toast(message, window, cx);
                             cx.reveal_path(&themes_dir);
                         }
                         Err(err) => {
@@ -285,14 +299,17 @@ impl WgApp {
 async fn import_theme_files(
     paths: Vec<PathBuf>,
     storage: super::super::persistence::StoragePaths,
-    mut names_in_use: std::collections::HashSet<(ThemeMode, String)>,
+    mut names_in_use: std::collections::HashSet<String>,
 ) -> ThemeImportSummary {
     let mut imported = Vec::new();
     let mut failed = Vec::new();
 
     for path in paths {
         match themes::import_theme_file(&path, &storage, &mut names_in_use) {
-            Ok(target) => imported.push(target),
+            Ok(imported_theme) => imported.push(ImportedThemeFile {
+                path: imported_theme.path,
+                lint_counts: theme_lint::lint_theme_set(&imported_theme.theme_set),
+            }),
             Err(err) => failed.push((path, err)),
         }
     }
@@ -308,15 +325,29 @@ fn finish_theme_import(
 ) {
     let imported_count = summary.imported.len();
     let failed_count = summary.failed.len();
+    let lint_counts =
+        summary
+            .imported
+            .iter()
+            .fold(ThemeLintCounts::default(), |mut counts, imported| {
+                counts.add_counts(imported.lint_counts);
+                counts
+            });
 
     if imported_count > 0 {
-        if let Some(first_path) = summary.imported.first() {
-            cx.reveal_path(first_path);
+        if let Some(first_import) = summary.imported.first() {
+            cx.reveal_path(&first_import.path);
         }
         let message = if failed_count == 0 {
-            format!("Imported {imported_count} theme file(s)")
+            format!(
+                "Imported {imported_count} theme file(s) · {}",
+                lint_counts.summary_label()
+            )
         } else {
-            format!("Imported {imported_count} theme file(s), {failed_count} failed")
+            format!(
+                "Imported {imported_count} theme file(s), {failed_count} failed · {}",
+                lint_counts.summary_label()
+            )
         };
         app.set_status(message.clone());
         app.push_success_toast(message, window, cx);
@@ -338,6 +369,34 @@ fn finish_theme_import(
     }
 
     cx.notify();
+}
+
+fn lint_counts_for_active_palettes(
+    app: &WgApp,
+    storage: &super::super::persistence::StoragePaths,
+    cx: &Context<WgApp>,
+) -> ThemeLintCounts {
+    let light_theme = themes::resolve_theme_config(
+        ThemeMode::Light,
+        app.ui_prefs.theme_light_key.as_deref().map(|key| &**key),
+        app.ui_prefs.theme_light_name.as_deref().map(|name| &**name),
+        Some(storage),
+        cx,
+    );
+    let dark_theme = themes::resolve_theme_config(
+        ThemeMode::Dark,
+        app.ui_prefs.theme_dark_key.as_deref().map(|key| &**key),
+        app.ui_prefs.theme_dark_name.as_deref().map(|name| &**name),
+        Some(storage),
+        cx,
+    );
+
+    let mut counts = ThemeLintCounts::default();
+    let light_items = theme_lint::lint_theme_config(light_theme.as_ref());
+    counts.add_items(light_items.iter());
+    let dark_items = theme_lint::lint_theme_config(dark_theme.as_ref());
+    counts.add_items(dark_items.iter());
+    counts
 }
 
 fn portal_missing_message(message: &str) -> bool {

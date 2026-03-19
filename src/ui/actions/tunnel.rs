@@ -187,9 +187,7 @@ impl WgApp {
         cx.spawn(async move |view, cx| {
             // 冷却等待：在后台 sleep，不阻塞 UI。
             if let Some(delay) = delay {
-                let delay_task =
-                    cx.background_spawn(async move { tokio::time::sleep(delay).await });
-                let _ = delay_task.await;
+                cx.background_executor().timer(delay).await;
             }
 
             // 如果文本不存在，需要异步读取文件；读取失败直接返回错误。
