@@ -7,6 +7,7 @@ use gpui_component::{
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     scroll::Scrollbar,
+    theme::ThemeMode,
     v_flex, ActiveTheme as _, Icon, StyledExt as _,
 };
 
@@ -19,6 +20,16 @@ use super::{empty_group, status_chip};
 
 const ROUTE_LIST_SCROLL_STATE_ID: &str = "route-map-routes-scroll";
 const ROUTE_ROW_HEIGHT: f32 = 48.0;
+
+#[derive(Clone, Copy)]
+struct FlowStepPalette {
+    icon_foreground: Hsla,
+    icon_background: Hsla,
+    icon_border: Hsla,
+    card_border: Hsla,
+    connector_base: Hsla,
+    connector_glow: Hsla,
+}
 
 pub(super) fn render_graph(
     model: &RouteMapData,
@@ -172,33 +183,36 @@ fn animated_connector(
     step: &RouteMapGraphStep,
     cx: &mut Context<WgApp>,
 ) -> Div {
-    let connector_color = step_kind_palette(step.kind, cx).2;
-    let glow = connector_color.alpha(0.72);
-    let base = connector_color.alpha(0.26);
+    let palette = step_kind_palette(step.kind, cx);
 
-    div().relative().w_full().h_full().bg(base).child(
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .bg(glow)
-            .with_animation(
-                animation_id,
-                Animation::new(Duration::from_secs(2)).repeat(),
-                move |this, delta| {
-                    let pulse = 0.18 + (0.42 * (1.0 - ((delta as f32 * 2.0) - 1.0).abs()));
-                    this.opacity(pulse)
-                        .when(vertical, |this| this.rounded_full())
-                        .when(!vertical, |this| this.rounded_full())
-                },
-            ),
-    )
+    div()
+        .relative()
+        .w_full()
+        .h_full()
+        .bg(palette.connector_base)
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(palette.connector_glow)
+                .with_animation(
+                    animation_id,
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    move |this, delta| {
+                        let pulse = 0.18 + (0.42 * (1.0 - ((delta as f32 * 2.0) - 1.0).abs()));
+                        this.opacity(pulse)
+                            .when(vertical, |this| this.rounded_full())
+                            .when(!vertical, |this| this.rounded_full())
+                    },
+                ),
+        )
 }
 
 fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
-    let (icon_color, icon_background, card_border) = step_kind_palette(step.kind, cx);
+    let palette = step_kind_palette(step.kind, cx);
 
     div()
         .flex()
@@ -210,11 +224,17 @@ fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
             div()
                 .size(px(28.0))
                 .rounded_full()
-                .bg(icon_background)
+                .border_1()
+                .border_color(palette.icon_border)
+                .bg(palette.icon_background)
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(step.icon.clone()).size_4().text_color(icon_color)),
+                .child(
+                    Icon::new(step.icon.clone())
+                        .size_4()
+                        .text_color(palette.icon_foreground),
+                ),
         )
         .child(
             div()
@@ -226,7 +246,7 @@ fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
                 .flex_1()
                 .rounded_lg()
                 .border_1()
-                .border_color(card_border)
+                .border_color(palette.card_border)
                 .bg(cx.theme().group_box)
                 .child(
                     div()
@@ -248,7 +268,7 @@ fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
 }
 
 fn render_flow_card(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
-    let (icon_color, icon_background, card_border) = step_kind_palette(step.kind, cx);
+    let palette = step_kind_palette(step.kind, cx);
 
     div()
         .flex()
@@ -260,11 +280,17 @@ fn render_flow_card(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
             div()
                 .size(px(32.0))
                 .rounded_full()
-                .bg(icon_background)
+                .border_1()
+                .border_color(palette.icon_border)
+                .bg(palette.icon_background)
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(step.icon.clone()).size_4().text_color(icon_color)),
+                .child(
+                    Icon::new(step.icon.clone())
+                        .size_4()
+                        .text_color(palette.icon_foreground),
+                ),
         )
         .child(
             div()
@@ -274,7 +300,7 @@ fn render_flow_card(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
                 .p_3()
                 .rounded_lg()
                 .border_1()
-                .border_color(card_border)
+                .border_color(palette.card_border)
                 .bg(cx.theme().group_box)
                 .child(
                     div()
@@ -491,37 +517,81 @@ fn selected_summary(selected: &RouteMapInventoryItem) -> SharedString {
     parts.join(" · ").into()
 }
 
-fn step_kind_palette(kind: RouteMapGraphStepKind, cx: &mut Context<WgApp>) -> (Hsla, Hsla, Hsla) {
+fn step_kind_palette(kind: RouteMapGraphStepKind, cx: &mut Context<WgApp>) -> FlowStepPalette {
+    let is_light = cx.theme().mode == ThemeMode::Light;
+
+    let connector_strength = if is_light { 0.5 } else { 0.34 };
+    let connector_glow = if is_light { 0.82 } else { 0.62 };
+    let neutral_border = if is_light {
+        cx.theme().list_active_border
+    } else {
+        cx.theme().border.alpha(0.92)
+    };
+
     match kind {
-        RouteMapGraphStepKind::Interface => (
-            cx.theme().accent,
-            cx.theme().accent.alpha(0.12),
-            cx.theme().accent.alpha(0.28),
-        ),
-        RouteMapGraphStepKind::Dns => (
-            cx.theme().info,
-            cx.theme().info.alpha(0.12),
-            cx.theme().info.alpha(0.24),
-        ),
-        RouteMapGraphStepKind::Policy => (
-            cx.theme().accent.alpha(0.84),
-            cx.theme().accent.alpha(0.08),
-            cx.theme().accent.alpha(0.22),
-        ),
-        RouteMapGraphStepKind::Peer | RouteMapGraphStepKind::Endpoint => (
-            cx.theme().foreground.alpha(0.72),
-            cx.theme().secondary.alpha(0.6),
-            cx.theme().border,
-        ),
-        RouteMapGraphStepKind::Guardrail => (
-            cx.theme().warning,
-            cx.theme().warning.alpha(0.12),
-            cx.theme().warning.alpha(0.24),
-        ),
-        RouteMapGraphStepKind::Destination => (
-            cx.theme().muted_foreground,
-            cx.theme().secondary.alpha(0.52),
-            cx.theme().border,
-        ),
+        RouteMapGraphStepKind::Interface => FlowStepPalette {
+            icon_foreground: cx.theme().accent_foreground,
+            icon_background: cx.theme().accent,
+            icon_border: cx.theme().accent.alpha(if is_light { 0.92 } else { 0.72 }),
+            card_border: cx.theme().accent.alpha(if is_light { 0.56 } else { 0.38 }),
+            connector_base: cx.theme().accent.alpha(connector_strength),
+            connector_glow: cx.theme().accent.alpha(connector_glow),
+        },
+        RouteMapGraphStepKind::Dns => FlowStepPalette {
+            icon_foreground: cx.theme().info_foreground,
+            icon_background: cx.theme().info,
+            icon_border: cx.theme().info.alpha(if is_light { 0.94 } else { 0.74 }),
+            card_border: cx.theme().info.alpha(if is_light { 0.6 } else { 0.42 }),
+            connector_base: cx.theme().info.alpha(connector_strength),
+            connector_glow: cx.theme().info.alpha(connector_glow),
+        },
+        RouteMapGraphStepKind::Policy => FlowStepPalette {
+            icon_foreground: cx.theme().primary_foreground,
+            icon_background: cx.theme().blue,
+            icon_border: cx.theme().blue.alpha(if is_light { 0.9 } else { 0.7 }),
+            card_border: cx.theme().blue.alpha(if is_light { 0.58 } else { 0.4 }),
+            connector_base: cx.theme().blue.alpha(connector_strength),
+            connector_glow: cx.theme().blue.alpha(connector_glow),
+        },
+        RouteMapGraphStepKind::Peer | RouteMapGraphStepKind::Endpoint => FlowStepPalette {
+            icon_foreground: cx.theme().secondary_foreground,
+            icon_background: cx.theme().secondary,
+            icon_border: neutral_border,
+            card_border: neutral_border,
+            connector_base: cx.theme().secondary_foreground.alpha(if is_light {
+                0.34
+            } else {
+                0.24
+            }),
+            connector_glow: cx.theme().secondary_foreground.alpha(if is_light {
+                0.6
+            } else {
+                0.44
+            }),
+        },
+        RouteMapGraphStepKind::Guardrail => FlowStepPalette {
+            icon_foreground: cx.theme().warning_foreground,
+            icon_background: cx.theme().warning,
+            icon_border: cx.theme().warning.alpha(if is_light { 0.96 } else { 0.78 }),
+            card_border: cx.theme().warning.alpha(if is_light { 0.62 } else { 0.44 }),
+            connector_base: cx.theme().warning.alpha(connector_strength),
+            connector_glow: cx.theme().warning.alpha(connector_glow),
+        },
+        RouteMapGraphStepKind::Destination => FlowStepPalette {
+            icon_foreground: cx.theme().secondary_foreground,
+            icon_background: cx.theme().muted,
+            icon_border: neutral_border,
+            card_border: neutral_border,
+            connector_base: cx.theme().secondary_foreground.alpha(if is_light {
+                0.3
+            } else {
+                0.22
+            }),
+            connector_glow: cx.theme().secondary_foreground.alpha(if is_light {
+                0.52
+            } else {
+                0.38
+            }),
+        },
     }
 }

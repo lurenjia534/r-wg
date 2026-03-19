@@ -57,8 +57,13 @@ impl PageShellHeader {
     }
 }
 
+enum PageShellHeaderKind {
+    Standard(PageShellHeader),
+    Custom(AnyElement),
+}
+
 pub(crate) struct PageShell {
-    header: PageShellHeader,
+    header: PageShellHeaderKind,
     toolbar: Option<AnyElement>,
     body: AnyElement,
 }
@@ -66,13 +71,20 @@ pub(crate) struct PageShell {
 impl PageShell {
     pub(crate) fn new(header: PageShellHeader, body: impl IntoElement) -> Self {
         Self {
-            header,
+            header: PageShellHeaderKind::Standard(header),
             toolbar: None,
             body: body.into_any_element(),
         }
     }
 
-    #[allow(dead_code)]
+    pub(crate) fn custom_header(header: impl IntoElement, body: impl IntoElement) -> Self {
+        Self {
+            header: PageShellHeaderKind::Custom(header.into_any_element()),
+            toolbar: None,
+            body: body.into_any_element(),
+        }
+    }
+
     pub(crate) fn toolbar(mut self, toolbar: impl IntoElement) -> Self {
         self.toolbar = Some(toolbar.into_any_element());
         self
@@ -89,7 +101,12 @@ impl PageShell {
             .border_color(cx.theme().border)
             .bg(cx.theme().tiles)
             .overflow_hidden()
-            .child(render_page_shell_header(self.header, cx))
+            .child(match self.header {
+                PageShellHeaderKind::Standard(header) => {
+                    render_page_shell_header(header, cx).into_any_element()
+                }
+                PageShellHeaderKind::Custom(header) => header,
+            })
             .when_some(self.toolbar, |this, toolbar| this.child(toolbar))
             .child(self.body)
     }

@@ -4,6 +4,7 @@ use super::super::state::{
     ConfigSource, EndpointFamily, ProxiesViewMode, ProxyRunningFilter, TunnelConfig, WgApp,
 };
 use super::proxies_grid::{proxy_grid, ProxyGridMetrics};
+use super::widgets::{PageShell, PageShellHeader};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{uniform_list, InteractiveElement as _, StatefulInteractiveElement as _, *};
 use gpui_component::{
@@ -110,6 +111,7 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
     let selected_count = app.selection.proxy_selected_ids.len();
     let compact_layout = window.viewport_size().width < px(PROXIES_SPLIT_BREAKPOINT);
     let app_handle = cx.entity();
+    let active_filters = proxy_active_filter_count(app, &search_input, cx);
     let visible_ids = model
         .filtered_rows
         .iter()
@@ -127,8 +129,44 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
         format!("{filtered_nodes}/{total_nodes} nodes")
     };
 
-    let toolbar =
-        render_proxies_toolbar(app, &search_input, &model, nodes_text, selected_count, cx);
+    let header_actions = h_flex()
+        .items_center()
+        .gap_2()
+        .flex_wrap()
+        .child(
+            Tag::secondary()
+                .small()
+                .rounded_full()
+                .child(nodes_text.clone()),
+        )
+        .when(active_filters > 0, |this| {
+            this.child(
+                Tag::warning()
+                    .small()
+                    .rounded_full()
+                    .child(format!("{active_filters} filters")),
+            )
+        })
+        .when(selected_count > 0, |this| {
+            this.child(
+                Tag::info()
+                    .small()
+                    .rounded_full()
+                    .child(format!("{selected_count} selected")),
+            )
+        })
+        .when(
+            app.selection.selected_id.is_some() && !model.selected_visible,
+            |this| {
+                this.child(
+                    Tag::secondary()
+                        .small()
+                        .rounded_full()
+                        .child("Selection hidden by filters"),
+                )
+            },
+        );
+    let toolbar = render_proxies_toolbar(app, &search_input, active_filters, cx);
     let filters = render_proxy_filters(app, &search_input, &model, app_handle.clone(), cx);
     let bulk_bar = render_proxy_bulk_bar(app, visible_ids, selected_count, cx);
 
@@ -199,43 +237,35 @@ pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Cont
         }
     };
 
-    div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .flex_grow()
-        .w_full()
-        .min_h(px(0.0))
-        .p_3()
-        .rounded_lg()
-        .bg(cx.theme().tiles)
-        .border_1()
-        .border_color(cx.theme().border)
-        .child(toolbar)
-        .child(filters)
-        .when(app.selection.proxy_select_mode, |this| this.child(bulk_bar))
-        .child(content)
+    PageShell::new(
+        PageShellHeader::new(
+            "LIBRARY",
+            "Proxies",
+            "Browse saved configs and current tunnel selection.",
+        )
+        .actions(header_actions),
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .flex_grow()
+            .w_full()
+            .min_h(px(0.0))
+            .p_3()
+            .child(filters)
+            .when(app.selection.proxy_select_mode, |this| this.child(bulk_bar))
+            .child(content),
+    )
+    .toolbar(toolbar)
+    .render(cx)
 }
 
 fn render_proxies_toolbar(
     app: &mut WgApp,
     search_input: &Entity<gpui_component::input::InputState>,
-    model: &ProxiesViewModel,
-    nodes_text: String,
-    selected_count: usize,
+    active_filters: usize,
     cx: &mut Context<WgApp>,
 ) -> Div {
-    let active_filters = [
-        app.selection.proxy_country_filter.is_some(),
-        app.selection.proxy_city_filter.is_some(),
-        app.selection.proxy_protocol_filter.is_some(),
-        app.selection.proxy_running_filter != ProxyRunningFilter::All,
-        !search_input.read(cx).value().as_ref().trim().is_empty(),
-    ]
-    .into_iter()
-    .filter(|active| *active)
-    .count();
-
     let view_mode = ButtonGroup::new("proxy-view-mode")
         .outline()
         .compact()
@@ -259,39 +289,9 @@ fn render_proxies_toolbar(
 
     h_flex()
         .items_center()
-        .justify_between()
+        .justify_end()
+        .flex_wrap()
         .gap_3()
-        .child(
-            h_flex()
-                .items_center()
-                .gap_2()
-                .child(div().text_lg().child("Tunnels"))
-                .child(Tag::secondary().small().child(nodes_text))
-                .when(active_filters > 0, |this| {
-                    this.child(
-                        Tag::warning()
-                            .small()
-                            .child(format!("{active_filters} filters")),
-                    )
-                })
-                .when(selected_count > 0, |this| {
-                    this.child(
-                        Tag::info()
-                            .small()
-                            .child(format!("{selected_count} selected")),
-                    )
-                })
-                .when(
-                    app.selection.selected_id.is_some() && !model.selected_visible,
-                    |this| {
-                        this.child(
-                            Tag::secondary()
-                                .small()
-                                .child("Selection hidden by filters"),
-                        )
-                    },
-                ),
-        )
         .child(
             h_flex()
                 .items_center()
@@ -352,6 +352,23 @@ fn render_proxies_toolbar(
                         })),
                 ),
         )
+}
+
+fn proxy_active_filter_count(
+    app: &WgApp,
+    search_input: &Entity<gpui_component::input::InputState>,
+    cx: &mut Context<WgApp>,
+) -> usize {
+    [
+        app.selection.proxy_country_filter.is_some(),
+        app.selection.proxy_city_filter.is_some(),
+        app.selection.proxy_protocol_filter.is_some(),
+        app.selection.proxy_running_filter != ProxyRunningFilter::All,
+        !search_input.read(cx).value().as_ref().trim().is_empty(),
+    ]
+    .into_iter()
+    .filter(|active| *active)
+    .count()
 }
 
 fn render_proxy_filters(

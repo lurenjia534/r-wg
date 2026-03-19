@@ -81,6 +81,7 @@ pub(crate) struct OverviewData {
 pub(crate) struct OverviewRuntimeData {
     pub(crate) is_running: bool,
     pub(crate) running_name_text: String,
+    pub(crate) last_updated_text: String,
     pub(crate) uptime_text: String,
     pub(crate) memory_text: String,
     pub(crate) rx_total_text: String,
@@ -273,6 +274,7 @@ impl OverviewData {
                     .running_name
                     .clone()
                     .unwrap_or_else(|| "-".to_string()),
+                last_updated_text: format_last_updated(app.stats.last_stats_at),
                 uptime_text: format_uptime(app.stats.started_at),
                 memory_text: format_process_memory(app.stats.process_rss_bytes),
                 rx_total_text: format_bytes(peer_summary.rx_bytes),
@@ -579,6 +581,19 @@ fn format_speed(bytes_per_sec: f64) -> String {
         format!("{:.1} KB/s", bytes_per_sec / KB)
     } else {
         format!("{:.0} B/s", bytes_per_sec)
+    }
+}
+
+fn format_last_updated(last_stats_at: Option<std::time::Instant>) -> String {
+    let Some(last_stats_at) = last_stats_at else {
+        return "Waiting".to_string();
+    };
+    let secs = last_stats_at.elapsed().as_secs();
+    match secs {
+        0..=4 => "Just now".to_string(),
+        5..=59 => format!("{secs}s ago"),
+        60..=3599 => format!("{}m ago", secs / 60),
+        _ => format!("{}h ago", secs / 3600),
     }
 }
 

@@ -18,6 +18,7 @@ use gpui_component::{
 
 use crate::ui::state::{RouteFamilyFilter, RouteMapMode, WgApp};
 use crate::ui::view::data::ViewData;
+use crate::ui::view::widgets::PageShell;
 
 use self::data::{
     EffectiveRoutePlan, RouteMapChip, RouteMapData, RouteMapEvidence, RouteMapItemStatus,
@@ -83,60 +84,44 @@ pub(crate) fn render_route_map(
     let key_explain_match_id = model.explain_match_id.clone();
     let key_selected_item_id = model.selected_item_id.clone();
 
-    div()
-        .id("route-map-root")
-        .key_context("RouteMap")
-        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-            handle_route_map_keydown(
-                this,
-                key_explain_match_id.as_ref(),
-                key_selected_item_id.as_ref(),
-                &key_search_input,
-                event,
-                window,
-                cx,
-            );
-        }))
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_h(px(0.0))
-        .rounded_lg()
-        .border_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().tiles)
-        .overflow_hidden()
-        .child(render_header(&model, cx))
-        .child(render_toolbar(app, &search_input, cx))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .w_full()
-                .min_h(px(0.0))
-                .child(if mode == RouteMapMode::Events {
-                    render_events_layout(
-                        app,
-                        &model,
-                        inventory_width,
-                        app_handle.clone(),
-                        window,
-                        cx,
-                    )
-                } else {
-                    render_standard_layout(
-                        app,
-                        &model,
-                        inventory_width,
-                        inspector_width,
-                        mode,
-                        app_handle.clone(),
-                        window,
-                        cx,
-                    )
-                }),
-        )
+    PageShell::custom_header(
+        render_header(&model, cx),
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .w_full()
+            .min_h(px(0.0))
+            .child(if mode == RouteMapMode::Events {
+                render_events_layout(app, &model, inventory_width, app_handle.clone(), window, cx)
+            } else {
+                render_standard_layout(
+                    app,
+                    &model,
+                    inventory_width,
+                    inspector_width,
+                    mode,
+                    app_handle.clone(),
+                    window,
+                    cx,
+                )
+            }),
+    )
+    .toolbar(render_toolbar(app, &search_input, cx))
+    .render(cx)
+    .id("route-map-root")
+    .key_context("RouteMap")
+    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+        handle_route_map_keydown(
+            this,
+            key_explain_match_id.as_ref(),
+            key_selected_item_id.as_ref(),
+            &key_search_input,
+            event,
+            window,
+            cx,
+        );
+    }))
 }
 
 fn render_standard_layout(

@@ -12,6 +12,7 @@ use gpui::*;
 use gpui_component::{
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
+    scroll::ScrollableElement as _,
     tag::Tag,
     ActiveTheme as _, Sizable as _,
 };
@@ -139,21 +140,17 @@ fn render_overview_snapshot<T>(
         .items_center()
         .flex_wrap()
         .gap_2()
-        .child(if runtime.is_running {
-            Tag::success().small().rounded_full().child("Running")
-        } else {
-            Tag::secondary().small().rounded_full().child("Idle")
-        })
         .child(
             Tag::secondary()
-                .small()
+                .xsmall()
                 .rounded_full()
-                .child(format!("Tunnel {}", runtime.running_name_text)),
+                .child(format!("Updated {}", runtime.last_updated_text)),
         )
         .when(preview.has_selection, |this| {
             this.child(
-                Tag::info()
-                    .small()
+                Tag::secondary()
+                    .outline()
+                    .xsmall()
                     .rounded_full()
                     .child(format!("Selected {}", preview.selected_name_text)),
             )
@@ -163,41 +160,55 @@ fn render_overview_snapshot<T>(
         PageShellHeader::new(
             "DASHBOARD",
             "Overview",
-            "Runtime health, traffic, and selected config context at a glance.",
+            "Runtime health, traffic, and selected config context in one place.",
         )
         .actions(header_actions),
         div()
             .flex()
             .flex_col()
-            .gap_3()
-            .p_4()
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scrollbar()
+            .px_5()
+            .py_3()
             .child(
-                h_flex()
-                    .items_start()
+                div()
+                    .flex()
+                    .flex_col()
                     .gap_3()
-                    .flex_wrap()
-                    .when(stacked, |this| this.flex_col())
-                    .child(running_status_card(overview, cx).min_w(px(320.0)).flex_1())
-                    .child(network_status_card(overview, cx).min_w(px(320.0)).flex_1()),
-            )
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap_3()
-                    .flex_wrap()
-                    .when(stacked, |this| this.flex_col())
+                    .w_full()
                     .child(
-                        traffic_stats_card(overview, cx)
-                            .min_w(px(if compact { 320.0 } else { 420.0 }))
-                            .flex_1(),
+                        h_flex()
+                            .items_start()
+                            .gap_3()
+                            .flex_wrap()
+                            .when(stacked, |this| this.flex_col())
+                            .child(running_status_card(overview, cx).min_w(px(320.0)).flex_1())
+                            .child(
+                                network_status_card(app, overview, cx)
+                                    .min_w(px(320.0))
+                                    .flex_1(),
+                            ),
                     )
                     .child(
-                        traffic_trend_card(&overview.traffic_trend, cx)
-                            .min_w(px(if compact { 320.0 } else { 360.0 }))
-                            .flex_1(),
-                    ),
-            )
-            .child(traffic_summary_card(app, overview, cx)),
+                        h_flex()
+                            .items_start()
+                            .gap_3()
+                            .flex_wrap()
+                            .when(stacked, |this| this.flex_col())
+                            .child(
+                                traffic_stats_card(overview, cx)
+                                    .min_w(px(if compact { 320.0 } else { 420.0 }))
+                                    .flex_1(),
+                            )
+                            .child(
+                                traffic_trend_card(&overview.traffic_trend, cx)
+                                    .min_w(px(if compact { 320.0 } else { 360.0 }))
+                                    .flex_1(),
+                            ),
+                    )
+                    .child(traffic_summary_card(app, overview, cx)),
+            ),
     )
     .render(cx)
 }
