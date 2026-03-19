@@ -3,286 +3,35 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{uniform_list, InteractiveElement as _, StatefulInteractiveElement as _, *};
 use gpui_component::{
-    button::ButtonGroup,
     button::{Button, ButtonVariants},
     description_list::DescriptionList,
-    group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     input::{Input, InputState},
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel, ResizableState},
     scroll::{ScrollableElement, Scrollbar},
     tag::Tag,
-    v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, PixelsExt, Selectable as _,
-    Sizable as _, StyledExt as _,
+    v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, PixelsExt, Sizable as _,
+    StyledExt as _,
 };
 
 use super::super::format::{format_addresses, format_allowed_ips, format_dns, format_route_table};
 use super::super::state::{
     ConfigInspectorTab, ConfigSource, ConfigsLibraryRow, ConfigsWorkspace, DraftValidationState,
-    EndpointFamily, SidebarItem, WgApp,
+    EndpointFamily, WgApp,
 };
 use super::data::ConfigsViewData;
 use super::widgets::status_badge;
 
 const CONFIGS_COMPACT_BREAKPOINT: f32 = 1260.0;
-const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 86.0;
+const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 70.0;
 const CONFIGS_LIBRARY_SCROLL_STATE_ID: &str = "configs-library-scroll";
 
 struct ConfigsRuntimeView {
-    running: bool,
-    busy: bool,
     selected_id: Option<u64>,
     latest_status: String,
     last_error: String,
     running_name: String,
-}
-
-fn configs_vertical_divider(cx: &mut Context<ConfigsWorkspace>) -> Div {
-    let color = if cx.theme().is_dark() {
-        cx.theme().foreground.alpha(0.12)
-    } else {
-        cx.theme().border
-    };
-    div().w(px(1.0)).h(px(22.0)).bg(color)
-}
-
-fn configs_icon_button(id: &'static str, icon: IconName) -> Button {
-    Button::new(id).ghost().icon(Icon::new(icon).size_5())
-}
-
-fn render_configs_top_bar(
-    runtime: &ConfigsRuntimeView,
-    app_handle: &Entity<WgApp>,
-    data: &super::data::ViewData,
-    cx: &mut Context<ConfigsWorkspace>,
-) -> Div {
-    let ui_font = "Plus Jakarta Sans";
-
-    let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
-    let can_start = config_valid
-        && data.has_saved_source
-        && !data.draft_dirty
-        && !runtime.running
-        && !runtime.busy;
-    let can_stop = runtime.running && !runtime.busy;
-
-    let is_dark = cx.theme().is_dark();
-    let chip_bg = if is_dark {
-        cx.theme().background.alpha(0.45)
-    } else {
-        cx.theme().secondary
-    };
-    let chip_border = if is_dark {
-        cx.theme().foreground.alpha(0.12)
-    } else {
-        cx.theme().border
-    };
-
-    let theme_toggle = ButtonGroup::new("theme-group")
-        .outline()
-        .compact()
-        .small()
-        .child(
-            Button::new("theme-light")
-                .icon(Icon::new(IconName::Sun).size_4())
-                .selected(!is_dark)
-                .tooltip("Switch to light mode")
-                .on_click({
-                    let app = app_handle.clone();
-                    move |_, window, cx| {
-                        let _ = app.update(cx, |this, cx| {
-                            this.set_theme_mode_pref(
-                                gpui_component::theme::ThemeMode::Light,
-                                Some(window),
-                                cx,
-                            );
-                        });
-                    }
-                }),
-        )
-        .child(
-            Button::new("theme-dark")
-                .icon(Icon::new(IconName::Moon).size_4())
-                .selected(is_dark)
-                .tooltip("Switch to dark mode")
-                .on_click({
-                    let app = app_handle.clone();
-                    move |_, window, cx| {
-                        let _ = app.update(cx, |this, cx| {
-                            this.set_theme_mode_pref(
-                                gpui_component::theme::ThemeMode::Dark,
-                                Some(window),
-                                cx,
-                            );
-                        });
-                    }
-                }),
-        );
-
-    let on_tooltip = if !data.has_saved_source {
-        "Save this draft before starting"
-    } else if data.draft_dirty {
-        "Save changes before starting"
-    } else if config_valid {
-        "Start tunnel"
-    } else {
-        "Select a valid config first"
-    };
-    let off_tooltip = if runtime.running {
-        "Stop tunnel"
-    } else {
-        "Tunnel is not running"
-    };
-
-    let modes = ButtonGroup::new("mode-group")
-        .outline()
-        .compact()
-        .small()
-        .child(
-            Button::new("mode-on")
-                .label("On")
-                .selected(runtime.running)
-                .disabled(!can_start)
-                .tooltip(on_tooltip)
-                .on_click({
-                    let app = app_handle.clone();
-                    move |_, window, cx| {
-                        let _ = app.update(cx, |this, cx| {
-                            this.handle_start_stop(window, cx);
-                        });
-                    }
-                }),
-        )
-        .child(
-            Button::new("mode-off")
-                .label("Off")
-                .selected(!runtime.running)
-                .disabled(!can_stop)
-                .tooltip(off_tooltip)
-                .on_click({
-                    let app = app_handle.clone();
-                    move |_, window, cx| {
-                        let _ = app.update(cx, |this, cx| {
-                            this.handle_start_stop(window, cx);
-                        });
-                    }
-                }),
-        );
-
-    let status_chip = {
-        let (label, dot_color, text_color, bg, border) = if runtime.running {
-            (
-                "Connected",
-                cx.theme().accent,
-                cx.theme().accent,
-                cx.theme().accent.alpha(0.18),
-                cx.theme().accent.alpha(0.35),
-            )
-        } else {
-            (
-                "Idle",
-                cx.theme().muted_foreground,
-                cx.theme().muted_foreground,
-                chip_bg,
-                chip_border,
-            )
-        };
-
-        h_flex()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_1()
-            .rounded_full()
-            .border_1()
-            .border_color(border)
-            .bg(bg)
-            .child(div().size(px(6.0)).rounded_full().bg(dot_color))
-            .child(
-                div()
-                    .text_xs()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(text_color)
-                    .child(label),
-            )
-    };
-
-    let settings_button = Button::new("settings")
-        .ghost()
-        .icon(Icon::new(IconName::Settings).size_5())
-        .tooltip("Open preferences")
-        .on_click({
-            let app = app_handle.clone();
-            move |_, window, cx| {
-                let _ = app.update(cx, |this, cx| {
-                    this.request_sidebar_active(SidebarItem::Advanced, window, cx);
-                });
-            }
-        });
-
-    let tools = h_flex()
-        .items_center()
-        .gap_2()
-        .px_2()
-        .py_1()
-        .rounded_full()
-        .border_1()
-        .border_color(chip_border)
-        .bg(chip_bg)
-        .child(configs_icon_button("notif", IconName::Bell))
-        .child(configs_icon_button("health", IconName::CircleCheck))
-        .child(settings_button);
-
-    h_flex()
-        .items_center()
-        .justify_between()
-        .gap_6()
-        .child(div())
-        .child(
-            h_flex()
-                .items_center()
-                .gap_3()
-                .px_3()
-                .py_2()
-                .rounded_full()
-                .border_1()
-                .border_color(chip_border)
-                .bg(chip_bg)
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_family(ui_font)
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Theme"),
-                        )
-                        .child(theme_toggle),
-                )
-                .child(configs_vertical_divider(cx))
-                .child(
-                    h_flex().items_center().gap_2().child(
-                        div()
-                            .text_xs()
-                            .font_family(ui_font)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Tunnel"),
-                    ),
-                )
-                .child(modes),
-        )
-        .child(
-            h_flex()
-                .items_center()
-                .gap_2()
-                .child(status_chip)
-                .child(tools),
-        )
 }
 
 impl WgApp {
@@ -316,8 +65,6 @@ impl Render for ConfigsWorkspace {
                     self.has_selection,
                 ),
                 ConfigsRuntimeView {
-                    running: app.runtime.running,
-                    busy: app.runtime.busy,
                     selected_id: app.selection.selected_id,
                     latest_status: app.ui.status.to_string(),
                     last_error: app
@@ -338,6 +85,10 @@ impl Render for ConfigsWorkspace {
             .name_input
             .clone()
             .expect("name input should be initialized");
+        let library_search_input = self
+            .library_search_input
+            .clone()
+            .expect("library search input should be initialized");
         let config_input = self
             .config_input
             .clone()
@@ -346,16 +97,15 @@ impl Render for ConfigsWorkspace {
         div()
             .flex()
             .flex_col()
-            .gap_3()
             .flex_1()
             .min_h(px(0.0))
-            .child(render_configs_top_bar(&runtime, &app_handle, &data.shared, cx))
             .child(render_configs_page(
                 &app_handle,
                 &workspace_handle,
                 &runtime,
                 self.inspector_tab,
                 &self.library_rows,
+                &library_search_input,
                 self.library_width,
                 self.inspector_width,
                 &data,
@@ -373,6 +123,7 @@ fn render_configs_page(
     runtime: &ConfigsRuntimeView,
     inspector_tab: ConfigInspectorTab,
     library_rows: &Arc<Vec<ConfigsLibraryRow>>,
+    library_search_input: &Entity<InputState>,
     library_width: f32,
     inspector_width: f32,
     data: &ConfigsViewData,
@@ -396,6 +147,7 @@ fn render_configs_page(
                 data,
                 workspace,
                 library_rows,
+                library_search_input,
                 window,
                 cx,
             ))
@@ -454,6 +206,7 @@ fn render_configs_page(
                                 data,
                                 workspace,
                                 library_rows,
+                                library_search_input,
                                 window,
                                 cx,
                             ))),
@@ -505,14 +258,15 @@ fn render_configs_shell_header(
     let selected_name = data.title.clone();
 
     div()
-        .px_5()
-        .py_4()
+        .px_6()
+        .py_5()
+        .min_h(px(84.0))
         .border_b_1()
         .border_color(cx.theme().border)
         .bg(linear_gradient(
             135.0,
-            linear_color_stop(cx.theme().background, 0.0),
-            linear_color_stop(cx.theme().muted.alpha(0.9), 1.0),
+            linear_color_stop(cx.theme().background.alpha(0.98), 0.0),
+            linear_color_stop(cx.theme().muted.alpha(0.72), 1.0),
         ))
         .child(
             h_flex()
@@ -542,7 +296,7 @@ fn render_configs_shell_header(
                 )
                 .child(
                     h_flex()
-                        .items_center()
+                        .items_start()
                         .flex_wrap()
                         .gap_2()
                         .child(Tag::secondary().small().rounded_full().child(selected_name))
@@ -566,11 +320,38 @@ fn render_library_panel(
     data: &ConfigsViewData,
     _workspace: &Entity<ConfigsWorkspace>,
     rows: &Arc<Vec<ConfigsLibraryRow>>,
+    search_input: &Entity<InputState>,
     window: &mut Window,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
-    let count = rows.len();
+    let query = search_input.read(cx).value().trim().to_lowercase();
+    let total_count = rows.len();
+    let filtered_indices = Arc::new(
+        rows.iter()
+            .enumerate()
+            .filter_map(|(ix, row)| {
+                let family_label = match row.endpoint_family {
+                    EndpointFamily::V4 => "ipv4",
+                    EndpointFamily::V6 => "ipv6",
+                    EndpointFamily::Dual => "dual",
+                    EndpointFamily::Unknown => "unknown",
+                };
+                let source_label = match row.source {
+                    ConfigSource::File { .. } => "imported",
+                    ConfigSource::Paste => "saved",
+                };
+                let matches_query = query.is_empty()
+                    || row.name.to_lowercase().contains(&query)
+                    || row.subtitle.to_lowercase().contains(&query)
+                    || family_label.contains(&query)
+                    || source_label.contains(&query);
+                matches_query.then_some(ix)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let count = filtered_indices.len();
     let rows_for_list = rows.clone();
+    let visible_indices = filtered_indices.clone();
     let app_for_list = app_handle.clone();
     let scroll_handle = window
         .use_keyed_state(CONFIGS_LIBRARY_SCROLL_STATE_ID, cx, |_, _| {
@@ -580,11 +361,12 @@ fn render_library_panel(
         .clone();
     let list = uniform_list(
         "configs-library-list",
-        rows_for_list.len(),
+        visible_indices.len(),
         move |visible_range, _window, cx| {
             visible_range
                 .map(|ix| {
-                    render_library_row(&app_for_list, selected_id, &rows_for_list[ix], cx)
+                    let row_ix = visible_indices[ix];
+                    render_library_row(&app_for_list, selected_id, &rows_for_list[row_ix], cx)
                 })
                 .collect::<Vec<_>>()
         },
@@ -596,28 +378,55 @@ fn render_library_panel(
     div()
         .flex()
         .flex_col()
-        .gap_3()
         .h_full()
         .min_h(px(0.0))
         .rounded_lg()
         .border_1()
         .border_color(cx.theme().border)
-        .bg(cx.theme().background.alpha(0.72))
+        .bg(cx.theme().background.alpha(0.76))
         .child(
             div()
                 .px_4()
-                .py_3()
+                .py_4()
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .child(
                     v_flex()
-                        .gap_3()
+                        .gap_2()
                         .child(
                             h_flex()
                                 .items_center()
                                 .justify_between()
                                 .child(div().text_lg().font_semibold().child("Library"))
-                                .child(Tag::secondary().small().child(format!("{count} configs"))),
+                                .child(
+                                    Tag::secondary().small().child(if query.is_empty() {
+                                        format!("{count} configs")
+                                    } else {
+                                        format!("{count}/{total_count} configs")
+                                    }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Saved and imported tunnel profiles."),
+                        )
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .bg(cx.theme().secondary.alpha(0.88))
+                                .child(Icon::new(IconName::Search).size_4())
+                                .child(
+                                    Input::new(search_input)
+                                        .appearance(false)
+                                        .bordered(false)
+                                        .cleanable(true),
+                                ),
                         )
                         .child(
                             h_flex()
@@ -717,7 +526,8 @@ fn render_library_panel(
                         .flex_col()
                         .flex_1()
                         .min_h(px(0.0))
-                        .p_2()
+                        .px_2()
+                        .py_1()
                         .child(list)
                         .child(Scrollbar::vertical(&scroll_handle))
                         .into_any_element()
@@ -734,14 +544,14 @@ fn render_library_row(
     let is_selected = selected_id == Some(row.id);
 
     let bg = if is_selected {
-        cx.theme().accent.alpha(0.14)
+        cx.theme().accent.alpha(0.10)
     } else {
-        cx.theme().background
+        cx.theme().background.alpha(0.0)
     };
-    let border = if is_selected {
-        cx.theme().accent.alpha(0.5)
+    let accent = if is_selected {
+        cx.theme().accent
     } else {
-        cx.theme().border.alpha(0.35)
+        cx.theme().background.alpha(0.0)
     };
 
     let config_id = row.id;
@@ -749,48 +559,63 @@ fn render_library_row(
     div()
         .id(("configs-library-row", config_id))
         .flex()
-        .flex_col()
-        .gap_2()
-        .p_3()
+        .items_start()
+        .gap_3()
+        .px_2()
+        .py_1()
         .h(px(CONFIGS_LIBRARY_ROW_HEIGHT))
-        .rounded_lg()
-        .border_1()
-        .border_color(border)
+        .rounded_md()
         .bg(bg)
         .cursor_pointer()
-        .child(
-            h_flex()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_semibold()
-                        .truncate()
-                        .child(row.name.clone()),
-                )
-                .when(row.is_running, |this| {
-                    this.child(Tag::success().small().child("Running"))
-                }),
-        )
+        .child(div().w(px(3.0)).h_full().rounded_full().bg(accent))
         .child(
             div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .truncate()
-                .child(row.subtitle.clone()),
-        )
-        .child(
-            h_flex()
-                .items_center()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .justify_center()
                 .gap_1()
-                .flex_wrap()
-                .child(source_tag(&row.source))
-                .child(endpoint_family_tag(row.endpoint_family))
-                .when(row.is_dirty, |this| {
-                    this.child(Tag::warning().small().child("Dirty"))
-                }),
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_semibold()
+                                .truncate()
+                                .child(row.name.clone()),
+                        )
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .when(row.is_running, |this| {
+                                    this.child(Tag::success().small().child("Running"))
+                                })
+                                .when(row.is_dirty, |this| {
+                                    this.child(Tag::warning().small().child("Dirty"))
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .truncate()
+                        .child(row.subtitle.clone()),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_1()
+                        .flex_wrap()
+                        .child(source_tag(&row.source))
+                        .when(row.endpoint_family != EndpointFamily::Unknown, |this| {
+                            this.child(endpoint_family_tag(row.endpoint_family))
+                        }),
+                ),
         )
         .on_click({
             let app = app_handle.clone();
@@ -815,42 +640,69 @@ fn render_editor_panel(
     div()
         .flex()
         .flex_col()
-        .gap_3()
         .h_full()
         .min_h(px(0.0))
         .rounded_lg()
         .border_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().background.alpha(0.72))
+        .border_color(cx.theme().border.alpha(0.9))
+        .bg(cx.theme().background.alpha(0.82))
         .child(
             div()
-                .px_4()
-                .py_3()
+                .px_6()
+                .py_5()
                 .border_b_1()
-                .border_color(cx.theme().border)
+                .border_color(cx.theme().border.alpha(0.7))
                 .child(
                     v_flex()
-                        .gap_3()
+                        .gap_4()
                         .child(
                             h_flex()
                                 .items_start()
                                 .justify_between()
                                 .flex_wrap()
-                                .gap_3()
+                                .gap_4()
                                 .child(
                                     v_flex()
-                                        .gap_1()
+                                        .gap_2()
                                         .child(
                                             div()
-                                                .text_lg()
+                                                .text_xs()
                                                 .font_semibold()
-                                                .child(data.title.clone()),
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child("CONFIG FILE"),
                                         )
                                         .child(
                                             div()
-                                                .text_sm()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(data.source_summary.clone()),
+                                                .max_w_full()
+                                                .px_4()
+                                                .py_3()
+                                                .rounded_xl()
+                                                .border_1()
+                                                .border_color(cx.theme().border.alpha(0.45))
+                                                .bg(cx.theme().background.alpha(0.72))
+                                                .child(
+                                                    Input::new(name_input)
+                                                        .appearance(false)
+                                                        .bordered(false),
+                                                ),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_3()
+                                                .flex_wrap()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(data.source_summary.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(data.runtime_note.clone()),
+                                                ),
                                         ),
                                 )
                                 .child(editor_action_bar(data, app_handle, cx)),
@@ -858,15 +710,13 @@ fn render_editor_panel(
                         .child(
                             h_flex()
                                 .items_center()
-                                .gap_2()
+                                .gap_1()
                                 .flex_wrap()
-                                .child(Tag::secondary().small().rounded_full().child(
-                                    if data.has_saved_source {
-                                        "Saved config"
-                                    } else {
-                                        "Unsaved draft"
-                                    },
-                                ))
+                                .when(!data.has_saved_source, |this| {
+                                    this.child(
+                                        Tag::secondary().small().rounded_full().child("Unsaved draft"),
+                                    )
+                                })
                                 .child(if data.shared.draft_dirty {
                                     Tag::warning().small().rounded_full().child("Dirty")
                                 } else {
@@ -879,25 +729,25 @@ fn render_editor_panel(
                                     DraftValidationState::Invalid { .. } => {
                                         Tag::danger().small().rounded_full().child("Invalid")
                                     }
-                                    DraftValidationState::Idle => {
-                                        Tag::secondary().small().rounded_full().child("Draft")
-                                    }
+                                    DraftValidationState::Idle => Tag::secondary()
+                                        .small()
+                                        .rounded_full()
+                                        .child("Draft"),
                                 })
                                 .when(data.shared.needs_restart, |this| {
                                     this.child(
                                         Tag::warning()
                                             .small()
                                             .rounded_full()
-                                            .child("Restart required"),
+                                            .child("Needs restart"),
+                                    )
+                                })
+                                .when(data.is_running_draft, |this| {
+                                    this.child(
+                                        Tag::success().small().rounded_full().child("Running"),
                                     )
                                 }),
                         )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(data.runtime_note.clone()),
-                        ),
                 ),
         )
         .child(
@@ -907,39 +757,33 @@ fn render_editor_panel(
                 .gap_3()
                 .flex_1()
                 .min_h(px(0.0))
-                .p_3()
+                .p_5()
                 .child(render_diagnostics_strip(data, cx))
                 .child(
-                    GroupBox::new().fill().title("Tunnel Name").child(
-                        div()
-                            .w_full()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(cx.theme().secondary)
-                            .child(Input::new(name_input).appearance(false).bordered(false)),
-                    ),
+                    div()
+                        .px_1()
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("CONFIG"),
                 )
                 .child(
-                    GroupBox::new()
-                        .fill()
-                        .title("Config")
+                    div()
+                        .w_full()
+                        .flex_grow()
+                        .min_h(px(460.0))
+                        .rounded_2xl()
+                        .border_1()
+                        .border_color(cx.theme().border.alpha(0.85))
+                        .bg(cx.theme().background.alpha(0.94))
+                        .p_3()
+                        .shadow_sm()
                         .child(
-                            div()
-                                .w_full()
-                                .flex_grow()
-                                .min_h(px(420.0))
-                                .p_2()
-                                .rounded_md()
-                                .bg(cx.theme().secondary)
-                                .child(
-                                    Input::new(config_input)
-                                        .appearance(false)
-                                        .bordered(false)
-                                        .h_full(),
-                                ),
-                        )
-                        .flex_grow(),
+                            Input::new(config_input)
+                                .appearance(false)
+                                .bordered(false)
+                                .h_full(),
+                        ),
                 ),
         )
 }
@@ -985,7 +829,9 @@ fn render_inspector_panel(
             .unwrap_or_else(|| "0".to_string());
         let source = data.source_summary.clone();
 
-        GroupBox::new().fill().title("Preview").child(
+        inspector_card(
+            "Preview",
+            "Parsed config summary",
             DescriptionList::new()
                 .columns(1)
                 .item("Source", source, 1)
@@ -994,6 +840,7 @@ fn render_inspector_panel(
                 .item("Route Table", route_table, 1)
                 .item("Allowed IPs", routes, 1)
                 .item("Peers", peers, 1),
+            cx,
         )
     };
 
@@ -1017,42 +864,74 @@ fn render_inspector_panel(
             ),
         };
 
-        GroupBox::new().fill().title("Diagnostics").child(
-            DescriptionList::new()
-                .columns(1)
-                .item("Validation", state, 1)
-                .item("Line", line, 1)
-                .item("Message", message, 1)
-                .item(
-                    "Save State",
-                    if data.shared.draft_dirty {
-                        "Unsaved changes"
-                    } else {
-                        "Saved"
-                    },
-                    1,
+        inspector_card(
+            "Diagnostics",
+            "Validation and save state",
+            v_flex()
+                .gap_3()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(div().text_sm().font_semibold().child(state))
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .when(data.shared.draft_dirty, |this| {
+                                    this.child(Tag::warning().small().child("Unsaved"))
+                                })
+                                .when(data.shared.needs_restart, |this| {
+                                    this.child(Tag::warning().small().child("Restart"))
+                                })
+                                .when(data.is_running_draft, |this| {
+                                    this.child(Tag::success().small().child("Running"))
+                                }),
+                        ),
                 )
-                .item(
-                    "Runtime",
-                    if data.shared.needs_restart {
-                        "Restart required after save".to_string()
-                    } else if data.is_running_draft {
-                        "Running".to_string()
-                    } else {
-                        "Idle".to_string()
-                    },
-                    1,
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(message),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(Tag::secondary().small().child(format!("Line {line}")))
+                        .child(
+                            Tag::secondary().small().child(if data.shared.draft_dirty {
+                                "Unsaved changes"
+                            } else {
+                                "Saved"
+                            }),
+                        ),
                 ),
+            cx,
         )
     };
 
-    let activity_card = GroupBox::new().fill().title("Activity").child(
-        DescriptionList::new()
-            .columns(1)
-            .item("Latest Status", runtime.latest_status.clone(), 1)
-            .item("Last Error", runtime.last_error.clone(), 1)
-            .item("Running Tunnel", runtime.running_name.clone(), 1)
-            .item("Handshake", data.shared.last_handshake.clone(), 1),
+    let activity_card = inspector_card(
+        "Activity",
+        "Recent runtime notes",
+        v_flex()
+            .gap_3()
+            .child(inspector_activity_row("Latest Status", runtime.latest_status.clone(), cx))
+            .child(inspector_activity_row("Last Error", runtime.last_error.clone(), cx))
+            .child(inspector_activity_row(
+                "Running Tunnel",
+                runtime.running_name.clone(),
+                cx,
+            ))
+            .child(inspector_activity_row(
+                "Handshake",
+                data.shared.last_handshake.clone(),
+                cx,
+            )),
+        cx,
     );
 
     let inspector_tabs = inspector_tab_row(workspace, inspector_tab, cx);
@@ -1080,11 +959,11 @@ fn render_inspector_panel(
         .rounded_lg()
         .border_1()
         .border_color(cx.theme().border)
-        .bg(cx.theme().background.alpha(0.72))
+        .bg(cx.theme().background.alpha(0.76))
         .child(
             div()
                 .px_4()
-                .py_3()
+                .py_4()
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .child(
@@ -1116,101 +995,111 @@ fn render_inspector_panel(
 fn inspector_tab_row(
     workspace: &Entity<ConfigsWorkspace>,
     inspector_tab: ConfigInspectorTab,
-    _cx: &mut Context<ConfigsWorkspace>,
+    cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     h_flex()
+        .items_end()
+        .gap_4()
+        .w_full()
+        .border_b_1()
+        .border_color(cx.theme().border.alpha(0.6))
+        .child(inspector_tab_button(
+            "inspector-preview",
+            "Preview",
+            ConfigInspectorTab::Preview,
+            inspector_tab,
+            workspace,
+            cx,
+        ))
+        .child(inspector_tab_button(
+            "inspector-diagnostics",
+            "Diagnostics",
+            ConfigInspectorTab::Diagnostics,
+            inspector_tab,
+            workspace,
+            cx,
+        ))
+        .child(inspector_tab_button(
+            "inspector-activity",
+            "Activity",
+            ConfigInspectorTab::Activity,
+            inspector_tab,
+            workspace,
+            cx,
+        ))
+}
+
+fn inspector_tab_button(
+    id: &'static str,
+    label: &'static str,
+    value: ConfigInspectorTab,
+    current: ConfigInspectorTab,
+    workspace: &Entity<ConfigsWorkspace>,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Stateful<Div> {
+    let selected = current == value;
+    let text_color = if selected {
+        cx.theme().foreground
+    } else {
+        cx.theme().muted_foreground
+    };
+    let underline = if selected {
+        cx.theme().accent
+    } else {
+        cx.theme().background.alpha(0.0)
+    };
+
+    div()
+        .id(id)
+        .flex()
+        .flex_col()
         .items_center()
         .gap_2()
-        .flex_wrap()
+        .pt_1()
+        .pb_0p5()
+        .cursor_pointer()
         .child(
-            Button::new("inspector-preview")
-                .label("Preview")
-                .outline()
-                .small()
-                .compact()
-                .selected(inspector_tab == ConfigInspectorTab::Preview)
-                .on_click({
-                    let workspace = workspace.clone();
-                    move |_, _, cx| {
-                        let _ = workspace.update(cx, |workspace, cx| {
-                            let changed = workspace.set_inspector_tab(ConfigInspectorTab::Preview);
-                            let _ = workspace.app.update(cx, |app, cx| {
-                                app.persist_preferred_inspector_tab(
-                                    ConfigInspectorTab::Preview,
-                                    cx,
-                                );
-                            });
-                            if changed {
-                                cx.notify();
-                            }
-                        });
-                    }
-                }),
+            div()
+                .text_sm()
+                .font_weight(if selected {
+                    FontWeight::SEMIBOLD
+                } else {
+                    FontWeight::MEDIUM
+                })
+                .text_color(text_color)
+                .child(label),
         )
-        .child(
-            Button::new("inspector-diagnostics")
-                .label("Diagnostics")
-                .outline()
-                .small()
-                .compact()
-                .selected(inspector_tab == ConfigInspectorTab::Diagnostics)
-                .on_click({
-                    let workspace = workspace.clone();
-                    move |_, _, cx| {
-                        let _ = workspace.update(cx, |workspace, cx| {
-                            let changed =
-                                workspace.set_inspector_tab(ConfigInspectorTab::Diagnostics);
-                            let _ = workspace.app.update(cx, |app, cx| {
-                                app.persist_preferred_inspector_tab(
-                                    ConfigInspectorTab::Diagnostics,
-                                    cx,
-                                );
-                            });
-                            if changed {
-                                cx.notify();
-                            }
-                        });
+        .child(div().w_full().h(px(2.0)).rounded_full().bg(underline))
+        .on_click({
+            let workspace = workspace.clone();
+            move |_, _, cx| {
+                let _ = workspace.update(cx, |workspace, cx| {
+                    let changed = workspace.set_inspector_tab(value);
+                    let _ = workspace.app.update(cx, |app, cx| {
+                        app.persist_preferred_inspector_tab(value, cx);
+                    });
+                    if changed {
+                        cx.notify();
                     }
-                }),
-        )
-        .child(
-            Button::new("inspector-activity")
-                .label("Activity")
-                .outline()
-                .small()
-                .compact()
-                .selected(inspector_tab == ConfigInspectorTab::Activity)
-                .on_click({
-                    let workspace = workspace.clone();
-                    move |_, _, cx| {
-                        let _ = workspace.update(cx, |workspace, cx| {
-                            let changed = workspace.set_inspector_tab(ConfigInspectorTab::Activity);
-                            let _ = workspace.app.update(cx, |app, cx| {
-                                app.persist_preferred_inspector_tab(
-                                    ConfigInspectorTab::Activity,
-                                    cx,
-                                );
-                            });
-                            if changed {
-                                cx.notify();
-                            }
-                        });
-                    }
-                }),
-        )
+                });
+            }
+        })
 }
 
 fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<ConfigsWorkspace>) -> Div {
-    let (tone_bg, tone_border, title, detail) = match &data.draft.validation {
+    let (tone_bg, tone_border, tone_bar, title, detail, icon) = match &data.draft.validation {
         DraftValidationState::Idle => (
             cx.theme().secondary.alpha(0.45),
             cx.theme().border.alpha(0.45),
+            cx.theme().muted_foreground.alpha(0.5),
             "Draft idle".to_string(),
             "Start editing to validate this config.".to_string(),
+            IconName::Info,
         ),
         DraftValidationState::Valid { .. } => (
             cx.theme().accent.alpha(0.12),
             cx.theme().accent.alpha(0.3),
+            cx.theme().accent,
             if data.shared.draft_dirty {
                 "Valid draft".to_string()
             } else {
@@ -1218,56 +1107,81 @@ fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<ConfigsWork
             },
             if data.shared.needs_restart {
                 "Saved changes require a tunnel restart to take effect.".to_string()
+            } else if data.shared.draft_dirty {
+                "No syntax issues. Save this draft to apply the changes.".to_string()
             } else {
                 "WireGuard config parsed successfully.".to_string()
             },
+            IconName::CircleCheck,
         ),
         DraftValidationState::Invalid { line, message, .. } => (
             cx.theme().danger.alpha(0.08),
             cx.theme().danger.alpha(0.3),
+            cx.theme().danger,
             "Validation error".to_string(),
             match line {
                 Some(line) => format!("Line {line}: {message}"),
                 None => message.to_string(),
             },
+            IconName::CircleX,
         ),
     };
 
     div()
         .flex()
         .items_start()
-        .justify_between()
         .gap_3()
-        .px_3()
-        .py_2()
+        .px_0()
+        .py_0()
         .rounded_lg()
         .border_1()
         .border_color(tone_border)
         .bg(tone_bg)
-        .child(
-            v_flex()
-                .gap_1()
-                .child(div().text_xs().font_semibold().child(title))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(detail),
-                ),
-        )
+        .child(div().w(px(3.0)).h_full().rounded_lg().bg(tone_bar))
         .child(
             h_flex()
-                .items_center()
-                .gap_2()
-                .when(data.shared.draft_dirty, |this| {
-                    this.child(Tag::warning().small().child("Unsaved"))
-                })
-                .when(data.shared.needs_restart, |this| {
-                    this.child(Tag::warning().small().child("Restart required"))
-                })
-                .when(
-                    matches!(data.draft.validation, DraftValidationState::Valid { .. }),
-                    |this| this.child(Tag::success().small().child("Ready")),
+                .items_start()
+                .justify_between()
+                .gap_3()
+                .flex_1()
+                .px_3()
+                .py_3()
+                .child(
+                    h_flex()
+                        .items_start()
+                        .gap_3()
+                        .child(
+                            div()
+                                .mt(px(1.0))
+                                .child(Icon::new(icon).size_4().text_color(tone_bar)),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(div().text_xs().font_semibold().child(title))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(detail),
+                                ),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_wrap()
+                        .when(data.shared.draft_dirty, |this| {
+                            this.child(Tag::warning().small().child("Unsaved"))
+                        })
+                        .when(data.shared.needs_restart, |this| {
+                            this.child(Tag::warning().small().child("Restart"))
+                        })
+                        .when(
+                            matches!(data.draft.validation, DraftValidationState::Valid { .. }),
+                            |this| this.child(Tag::success().small().child("Ready")),
+                        )
                 ),
         )
 }
@@ -1281,7 +1195,7 @@ fn editor_action_bar(
         Button::new("cfg-manage")
             .icon(Icon::new(IconName::Menu).size_3())
             .label("Manage")
-            .outline()
+            .ghost()
             .small()
             .compact()
             .disabled(true)
@@ -1291,7 +1205,7 @@ fn editor_action_bar(
         Button::new("cfg-manage")
             .icon(Icon::new(IconName::Menu).size_3())
             .label("Manage")
-            .outline()
+            .ghost()
             .small()
             .compact()
             .dropdown_caret(true)
@@ -1357,8 +1271,8 @@ fn editor_action_bar(
         .child(
             Button::new("cfg-save-as")
                 .icon(Icon::new(IconName::Copy).size_3())
-                .label("Save As New")
-                .outline()
+                .label("Save as new")
+                .ghost()
                 .small()
                 .compact()
                 .disabled(data.is_busy)
@@ -1376,7 +1290,7 @@ fn editor_action_bar(
                 Button::new("cfg-save-restart")
                     .icon(Icon::new(IconName::Redo2).size_3())
                     .label("Save & Restart")
-                    .outline()
+                    .ghost()
                     .small()
                     .compact()
                     .on_click({
@@ -1392,9 +1306,67 @@ fn editor_action_bar(
         .child(manage_button)
 }
 
+fn inspector_card<T: IntoElement>(
+    title: &'static str,
+    subtitle: &'static str,
+    body: T,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(cx.theme().border.alpha(0.5))
+        .bg(cx.theme().background.alpha(0.52))
+        .p_3()
+        .child(
+            v_flex()
+                .gap_1()
+                .child(div().text_sm().font_semibold().child(title))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(subtitle),
+                ),
+        )
+        .child(body)
+}
+
+fn inspector_activity_row(
+    label: &'static str,
+    value: String,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Div {
+    div()
+        .flex()
+        .items_start()
+        .justify_between()
+        .gap_3()
+        .pb_3()
+        .border_b_1()
+        .border_color(cx.theme().border.alpha(0.5))
+        .child(
+            div()
+                .text_xs()
+                .font_semibold()
+                .text_color(cx.theme().muted_foreground)
+                .child(label),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_right()
+                .max_w(px(180.0))
+                .child(value),
+        )
+}
+
 fn source_tag(source: &ConfigSource) -> Tag {
     match source {
-        ConfigSource::File { .. } => Tag::info().small().child("Imported"),
+        ConfigSource::File { .. } => Tag::secondary().small().child("Imported"),
         ConfigSource::Paste => Tag::secondary().small().child("Saved"),
     }
 }
@@ -1402,8 +1374,8 @@ fn source_tag(source: &ConfigSource) -> Tag {
 fn endpoint_family_tag(family: EndpointFamily) -> Tag {
     match family {
         EndpointFamily::V4 => Tag::secondary().small().child("IPv4"),
-        EndpointFamily::V6 => Tag::info().small().child("IPv6"),
-        EndpointFamily::Dual => Tag::warning().small().child("Dual"),
+        EndpointFamily::V6 => Tag::secondary().small().child("IPv6"),
+        EndpointFamily::Dual => Tag::secondary().small().child("Dual"),
         EndpointFamily::Unknown => Tag::secondary().small().child("Unknown"),
     }
 }

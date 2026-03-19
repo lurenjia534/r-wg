@@ -275,6 +275,20 @@ impl ConfigsWorkspace {
     }
 
     pub(crate) fn ensure_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.library_search_input.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search configs"));
+            let subscription = cx.subscribe(
+                &input,
+                |_, _, event: &InputEvent, cx: &mut Context<Self>| {
+                    if matches!(event, InputEvent::Change) {
+                        cx.notify();
+                    }
+                },
+            );
+            self.library_search_input = Some(input);
+            self.library_search_subscription = Some(subscription);
+        }
+
         if self.name_input.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Tunnel name"));
             let subscription = cx.subscribe(

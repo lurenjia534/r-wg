@@ -163,8 +163,10 @@ pub(crate) struct ConfigsWorkspace {
     pub(crate) library_rows: Arc<Vec<ConfigsLibraryRow>>,
     pub(crate) library_width: f32,
     pub(crate) inspector_width: f32,
+    pub(crate) library_search_input: Option<Entity<InputState>>,
     pub(crate) name_input: Option<Entity<InputState>>,
     pub(crate) config_input: Option<Entity<InputState>>,
+    pub(crate) library_search_subscription: Option<Subscription>,
     pub(crate) name_input_subscription: Option<Subscription>,
     pub(crate) config_input_subscription: Option<Subscription>,
     initialized: bool,
@@ -183,8 +185,10 @@ impl ConfigsWorkspace {
             library_rows: Arc::new(Vec::new()),
             library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,
             inspector_width: DEFAULT_CONFIGS_INSPECTOR_WIDTH,
+            library_search_input: None,
             name_input: None,
             config_input: None,
+            library_search_subscription: None,
             name_input_subscription: None,
             config_input_subscription: None,
             initialized: false,
@@ -371,7 +375,7 @@ impl ConfigsWorkspace {
     }
 
     pub(crate) fn has_inputs(&self) -> bool {
-        self.name_input.is_some() && self.config_input.is_some()
+        self.library_search_input.is_some() && self.name_input.is_some() && self.config_input.is_some()
     }
 
     pub(crate) fn set_panel_widths(&mut self, library_width: f32, inspector_width: f32) -> bool {
