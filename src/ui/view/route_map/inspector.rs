@@ -18,7 +18,7 @@ pub(super) fn render_inspector(model: &RouteMapData, cx: &mut Context<WgApp>) ->
             cx,
         ));
     };
-    let content_style = StyleRefinement::default().flex_grow().min_h(px(0.0));
+    let content_style = StyleRefinement::default().flex_1().min_h_0();
 
     div()
         .flex()
@@ -30,7 +30,8 @@ pub(super) fn render_inspector(model: &RouteMapData, cx: &mut Context<WgApp>) ->
         .child(
             GroupBox::new()
                 .fill()
-                .flex_grow()
+                .flex_1()
+                .min_h_0()
                 .content_style(content_style)
                 .title("Inspector")
                 .child(
@@ -42,106 +43,112 @@ pub(super) fn render_inspector(model: &RouteMapData, cx: &mut Context<WgApp>) ->
                         .min_h(px(0.0))
                         .overflow_hidden()
                         .child(
-                            v_flex()
-                                .gap_3()
+                            div()
                                 .w_full()
-                                .min_h(px(0.0))
+                                .flex_1()
+                                .min_h_0()
                                 .overflow_y_scrollbar()
                                 .child(
                                     v_flex()
-                                        .gap_2()
+                                        .gap_3()
+                                        .w_full()
                                         .child(
-                                            div()
-                                                .flex()
-                                                .flex_row()
-                                                .items_center()
-                                                .justify_between()
-                                                .gap_3()
+                                            v_flex()
+                                                .gap_2()
                                                 .child(
                                                     div()
-                                                        .text_lg()
-                                                        .font_semibold()
-                                                        .child(selected.inspector.title.clone()),
+                                                        .flex()
+                                                        .flex_row()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .gap_3()
+                                                        .child(
+                                                            div().text_lg().font_semibold().child(
+                                                                selected.inspector.title.clone(),
+                                                            ),
+                                                        )
+                                                        .child(status_chip(selected.status)),
                                                 )
-                                                .child(status_chip(selected.status)),
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(selected.inspector.subtitle.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_row()
+                                                        .gap_1()
+                                                        .flex_wrap()
+                                                        .children(
+                                                            selected.chips.iter().map(summary_chip),
+                                                        ),
+                                                ),
                                         )
                                         .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(selected.inspector.subtitle.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .flex_row()
-                                                .gap_1()
-                                                .flex_wrap()
-                                                .children(selected.chips.iter().map(summary_chip)),
+                                            if selected.status == RouteMapItemStatus::Warning
+                                                || selected.status == RouteMapItemStatus::Failed
+                                            {
+                                                v_flex()
+                                                    .gap_3()
+                                                    .child(render_card_section(
+                                                        "Risk Assessment",
+                                                        &selected.inspector.risk_assessment,
+                                                        true,
+                                                        cx,
+                                                    ))
+                                                    .child(render_plain_section(
+                                                        "Why It Matches",
+                                                        &selected.inspector.why_match,
+                                                        cx,
+                                                    ))
+                                                    .child(render_plain_section(
+                                                        "Platform Details",
+                                                        &selected.inspector.platform_details,
+                                                        cx,
+                                                    ))
+                                                    .child(render_glossary_section(
+                                                        &selected.graph_steps,
+                                                        cx,
+                                                    ))
+                                                    .child(render_card_section(
+                                                        "Runtime Evidence",
+                                                        &selected.inspector.runtime_evidence,
+                                                        false,
+                                                        cx,
+                                                    ))
+                                            } else {
+                                                v_flex()
+                                                    .gap_3()
+                                                    .child(render_plain_section(
+                                                        "Why It Matches",
+                                                        &selected.inspector.why_match,
+                                                        cx,
+                                                    ))
+                                                    .child(render_plain_section(
+                                                        "Platform Details",
+                                                        &selected.inspector.platform_details,
+                                                        cx,
+                                                    ))
+                                                    .child(render_glossary_section(
+                                                        &selected.graph_steps,
+                                                        cx,
+                                                    ))
+                                                    .child(render_card_section(
+                                                        "Runtime Evidence",
+                                                        &selected.inspector.runtime_evidence,
+                                                        false,
+                                                        cx,
+                                                    ))
+                                                    .child(render_card_section(
+                                                        "Risk Assessment",
+                                                        &selected.inspector.risk_assessment,
+                                                        false,
+                                                        cx,
+                                                    ))
+                                            },
                                         ),
-                                )
-                                .child(
-                                    if selected.status == RouteMapItemStatus::Warning
-                                        || selected.status == RouteMapItemStatus::Failed
-                                    {
-                                        v_flex()
-                                            .gap_3()
-                                            .child(render_card_section(
-                                                "Risk Assessment",
-                                                &selected.inspector.risk_assessment,
-                                                true,
-                                                cx,
-                                            ))
-                                            .child(render_plain_section(
-                                                "Why It Matches",
-                                                &selected.inspector.why_match,
-                                                cx,
-                                            ))
-                                            .child(render_plain_section(
-                                                "Platform Details",
-                                                &selected.inspector.platform_details,
-                                                cx,
-                                            ))
-                                            .child(render_glossary_section(
-                                                &selected.graph_steps,
-                                                cx,
-                                            ))
-                                            .child(render_card_section(
-                                                "Runtime Evidence",
-                                                &selected.inspector.runtime_evidence,
-                                                false,
-                                                cx,
-                                            ))
-                                    } else {
-                                        v_flex()
-                                            .gap_3()
-                                            .child(render_plain_section(
-                                                "Why It Matches",
-                                                &selected.inspector.why_match,
-                                                cx,
-                                            ))
-                                            .child(render_plain_section(
-                                                "Platform Details",
-                                                &selected.inspector.platform_details,
-                                                cx,
-                                            ))
-                                            .child(render_glossary_section(
-                                                &selected.graph_steps,
-                                                cx,
-                                            ))
-                                            .child(render_card_section(
-                                                "Runtime Evidence",
-                                                &selected.inspector.runtime_evidence,
-                                                false,
-                                                cx,
-                                            ))
-                                            .child(render_card_section(
-                                                "Risk Assessment",
-                                                &selected.inspector.risk_assessment,
-                                                false,
-                                                cx,
-                                            ))
-                                    },
                                 ),
                         ),
                 ),
