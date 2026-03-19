@@ -301,14 +301,14 @@ impl ConfigsWorkspace {
                         let Some(config_input) = this.config_input.as_ref() else {
                             return;
                         };
-                    let name = name_input.read(cx).value();
-                    let text = config_input.read(cx).value();
-                    let running_id = this.app.read(cx).runtime.running_id;
-                    let has_selection = this.app.read(cx).selection.selected_id.is_some();
-                    this.sync_draft_from_values(name, text, running_id);
-                    this.has_selection = has_selection;
-                    this.schedule_draft_validation(cx);
-                    cx.notify();
+                        let name = name_input.read(cx).value();
+                        let text = config_input.read(cx).value();
+                        let running_id = this.app.read(cx).runtime.running_id;
+                        let has_selection = this.app.read(cx).selection.selected_id.is_some();
+                        this.sync_draft_from_values(name, text, running_id);
+                        this.has_selection = has_selection;
+                        this.schedule_draft_validation(cx);
+                        cx.notify();
                     }
                 },
             );
@@ -334,14 +334,14 @@ impl ConfigsWorkspace {
                         let Some(config_input) = this.config_input.as_ref() else {
                             return;
                         };
-                    let name = name_input.read(cx).value();
-                    let text = config_input.read(cx).value();
-                    let running_id = this.app.read(cx).runtime.running_id;
-                    let has_selection = this.app.read(cx).selection.selected_id.is_some();
-                    this.sync_draft_from_values(name, text, running_id);
-                    this.has_selection = has_selection;
-                    this.schedule_draft_validation(cx);
-                    cx.notify();
+                        let name = name_input.read(cx).value();
+                        let text = config_input.read(cx).value();
+                        let running_id = this.app.read(cx).runtime.running_id;
+                        let has_selection = this.app.read(cx).selection.selected_id.is_some();
+                        this.sync_draft_from_values(name, text, running_id);
+                        this.has_selection = has_selection;
+                        this.schedule_draft_validation(cx);
+                        cx.notify();
                     }
                 },
             );
