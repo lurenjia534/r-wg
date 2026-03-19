@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use gpui::SharedString;
@@ -12,7 +14,7 @@ use crate::ui::view::data::ViewData;
 
 const LINUX_POLICY_TABLE: u32 = 200;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RouteMapItemStatus {
     Planned,
     Applied,
@@ -37,8 +39,18 @@ impl RouteMapItemStatus {
 pub(crate) enum RouteMapTone {
     Secondary,
     Info,
-    Success,
     Warning,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RouteMapGraphStepKind {
+    Interface,
+    Dns,
+    Policy,
+    Peer,
+    Endpoint,
+    Guardrail,
+    Destination,
 }
 
 #[derive(Clone)]
@@ -49,6 +61,7 @@ pub(crate) struct RouteMapChip {
 
 #[derive(Clone)]
 pub(crate) struct RouteMapGraphStep {
+    pub(crate) kind: RouteMapGraphStepKind,
     pub(crate) icon: IconName,
     pub(crate) label: SharedString,
     pub(crate) value: SharedString,
@@ -89,7 +102,9 @@ pub(crate) struct RouteMapInventoryItem {
     pub(crate) title: SharedString,
     pub(crate) subtitle: SharedString,
     pub(crate) family: Option<RouteFamilyFilter>,
+    pub(crate) static_status: Option<RouteMapItemStatus>,
     pub(crate) status: RouteMapItemStatus,
+    pub(crate) event_patterns: Vec<String>,
     pub(crate) chips: Vec<RouteMapChip>,
     pub(crate) inspector: RouteMapInspector,
     pub(crate) graph_steps: Vec<RouteMapGraphStep>,
@@ -117,6 +132,25 @@ pub(crate) struct RouteMapExplainResult {
     pub(crate) matched_item_id: Option<SharedString>,
 }
 
+#[derive(Clone)]
+pub(crate) struct EffectiveRoutePlan {
+    pub(crate) cache_key: u64,
+    pub(crate) has_plan: bool,
+    pub(crate) plan_status: SharedString,
+    pub(crate) source_label: SharedString,
+    pub(crate) platform_label: SharedString,
+    pub(crate) summary_chips: Vec<RouteMapChip>,
+    pub(crate) parse_error: Option<SharedString>,
+    pub(crate) inventory_groups: Vec<RouteMapInventoryGroup>,
+}
+
+#[derive(Clone)]
+pub(crate) struct RouteMapEvidence {
+    pub(crate) cache_key: u64,
+    pub(crate) net_events_raw: Vec<String>,
+    pub(crate) net_events: Vec<SharedString>,
+}
+
 pub(crate) struct RouteMapData {
     pub(crate) has_plan: bool,
     pub(crate) plan_status: SharedString,
@@ -128,20 +162,26 @@ pub(crate) struct RouteMapData {
     pub(crate) route_rows: Vec<RouteMapRouteRow>,
     pub(crate) net_events: Vec<SharedString>,
     pub(crate) explain: Option<RouteMapExplainResult>,
+    pub(crate) explain_match_id: Option<SharedString>,
     pub(crate) selected_item_id: Option<SharedString>,
     pub(crate) selected_item: Option<RouteMapInventoryItem>,
 }
 
 impl RouteMapData {
-    pub(crate) fn new(app: &WgApp, data: &ViewData, search_query: &str) -> Self {
+    pub(crate) fn plan_key(app: &WgApp, data: &ViewData) -> u64 {
         let source_label = current_source_label(app, data);
         let platform_label: SharedString = platform_label().into();
-        let net_events_raw = recent_net_events();
-        let net_events = net_events_raw.iter().cloned().map(Into::into).collect();
-        let search_query = search_query.trim().to_string();
+        plan_cache_key(app, data, &source_label, &platform_label)
+    }
+
+    pub(crate) fn build_plan(app: &WgApp, data: &ViewData) -> EffectiveRoutePlan {
+        let source_label = current_source_label(app, data);
+        let platform_label: SharedString = platform_label().into();
+        let cache_key = plan_cache_key(app, data, &source_label, &platform_label);
 
         let Some(parsed) = data.parsed_config.as_ref() else {
-            return Self {
+            return EffectiveRoutePlan {
+                cache_key,
                 has_plan: false,
                 plan_status: if let Some(parse_error) = data.parse_error.as_ref() {
                     format!("Config invalid: {parse_error}").into()
@@ -156,11 +196,6 @@ impl RouteMapData {
                 ],
                 parse_error: data.parse_error.clone().map(Into::into),
                 inventory_groups: Vec::new(),
-                route_rows: Vec::new(),
-                net_events,
-                explain: build_empty_explain(&search_query),
-                selected_item_id: None,
-                selected_item: None,
             };
         };
 
@@ -170,29 +205,12 @@ impl RouteMapData {
         let full_tunnel = full_v4 || full_v6;
         let table_off = parsed.interface.table == Some(RouteTable::Off);
         let dns_guard_text = dns_guard_label(full_tunnel, parsed.interface.dns_servers.is_empty());
-        let mut groups = build_inventory_groups(parsed, &routes, &net_events_raw);
-
-        apply_filters(
-            &mut groups,
-            app.ui_session.route_map_family_filter,
-            search_query.as_str(),
-        );
-
-        let route_rows = groups
+        let groups = build_inventory_groups(parsed, &routes);
+        let warning_count = groups
             .iter()
-            .flat_map(|group| group.items.iter())
-            .filter_map(|item| item.route_row.clone())
-            .collect::<Vec<_>>();
-
-        let explain = build_explain(&groups, &search_query);
-        let selected_item = resolve_selected_item(
-            &groups,
-            app.ui_session.route_map_selected_item.as_ref(),
-            explain
-                .as_ref()
-                .and_then(|value| value.matched_item_id.as_ref()),
-        );
-        let selected_item_id = selected_item.as_ref().map(|item| item.id.clone());
+            .find(|group| group.id.as_ref() == "group-warnings")
+            .map(|group| group.items.len())
+            .unwrap_or(0);
 
         let mut summary_chips = vec![
             chip(
@@ -201,32 +219,30 @@ impl RouteMapData {
                 } else {
                     "Split Tunnel"
                 },
-                if full_tunnel {
-                    RouteMapTone::Success
-                } else {
-                    RouteMapTone::Info
-                },
+                RouteMapTone::Info,
             ),
             chip(
                 if full_v4 { "IPv4 Full" } else { "IPv4 Split" },
-                if full_v4 {
-                    RouteMapTone::Success
-                } else {
-                    RouteMapTone::Secondary
-                },
+                RouteMapTone::Secondary,
             ),
             chip(
                 if full_v6 { "IPv6 Full" } else { "IPv6 Split" },
-                if full_v6 {
-                    RouteMapTone::Success
+                RouteMapTone::Secondary,
+            ),
+            chip(
+                dns_guard_text,
+                if parsed.interface.dns_servers.is_empty() {
+                    RouteMapTone::Warning
+                } else if full_tunnel {
+                    RouteMapTone::Info
                 } else {
                     RouteMapTone::Secondary
                 },
             ),
             chip(
-                dns_guard_text,
-                if full_tunnel {
-                    RouteMapTone::Info
+                format!("Guardrails {warning_count}"),
+                if warning_count > 0 {
+                    RouteMapTone::Warning
                 } else {
                     RouteMapTone::Secondary
                 },
@@ -240,40 +256,117 @@ impl RouteMapData {
                 },
             ),
             chip(format!("Table {route_table_text}"), RouteMapTone::Secondary),
-            chip(
-                format!("Applied {}", net_events_raw.len()),
-                if net_events_raw.is_empty() {
-                    RouteMapTone::Secondary
-                } else {
-                    RouteMapTone::Info
-                },
-            ),
-            chip(
-                format!("Routes {}", route_rows.len()),
-                RouteMapTone::Secondary,
-            ),
         ];
         if table_off {
             summary_chips.insert(1, chip("Table Off", RouteMapTone::Warning));
         }
 
-        Self {
+        EffectiveRoutePlan {
+            cache_key,
             has_plan: true,
             plan_status: if table_off {
                 "Plan generated, but route apply is disabled by Table=Off.".into()
             } else if full_tunnel {
-                "Planned view combines effective routes, full-tunnel guardrails, and runtime evidence.".into()
+                "Decision Path combines effective routes, full-tunnel guardrails, and recent runtime evidence.".into()
             } else {
-                "Planned view combines effective routes and runtime evidence for the current config.".into()
+                "Decision Path combines effective routes and recent runtime evidence for the current config.".into()
             },
             source_label,
             platform_label,
             summary_chips,
             parse_error: data.parse_error.clone().map(Into::into),
             inventory_groups: groups,
+        }
+    }
+
+    pub(crate) fn build_evidence() -> RouteMapEvidence {
+        let net_events_raw = recent_net_events();
+        let cache_key = evidence_cache_key(&net_events_raw);
+
+        RouteMapEvidence {
+            cache_key,
+            net_events: net_events_raw.iter().cloned().map(Into::into).collect(),
+            net_events_raw,
+        }
+    }
+
+    pub(crate) fn from_cached(
+        app: &WgApp,
+        search_query: &str,
+        plan: &EffectiveRoutePlan,
+        evidence: &RouteMapEvidence,
+    ) -> Self {
+        let search_query = search_query.trim().to_string();
+
+        if !plan.has_plan {
+            return Self {
+                has_plan: false,
+                plan_status: plan.plan_status.clone(),
+                source_label: plan.source_label.clone(),
+                platform_label: plan.platform_label.clone(),
+                summary_chips: plan.summary_chips.clone(),
+                parse_error: plan.parse_error.clone(),
+                inventory_groups: Vec::new(),
+                route_rows: Vec::new(),
+                net_events: evidence.net_events.clone(),
+                explain: build_empty_explain(&search_query),
+                explain_match_id: None,
+                selected_item_id: None,
+                selected_item: None,
+            };
+        }
+
+        let mut groups = plan.inventory_groups.clone();
+        apply_event_overlay(&mut groups, &evidence.net_events_raw);
+        apply_filters(
+            &mut groups,
+            app.ui_session.route_map_family_filter,
+            search_query.as_str(),
+        );
+
+        let route_rows = groups
+            .iter()
+            .flat_map(|group| group.items.iter())
+            .filter_map(|item| item.route_row.clone())
+            .collect::<Vec<_>>();
+
+        let explain = build_explain(&groups, &search_query);
+        let explain_match_id = explain
+            .as_ref()
+            .and_then(|value| value.matched_item_id.as_ref())
+            .cloned();
+        let selected_item = resolve_selected_item(
+            &groups,
+            app.ui_session.route_map_selected_item.as_ref(),
+            explain_match_id.as_ref(),
+        );
+        let selected_item_id = selected_item.as_ref().map(|item| item.id.clone());
+        let mut summary_chips = plan.summary_chips.clone();
+        summary_chips.push(chip(
+            format!("Evidence {}", evidence.net_events_raw.len()),
+            if evidence.net_events_raw.is_empty() {
+                RouteMapTone::Secondary
+            } else {
+                RouteMapTone::Info
+            },
+        ));
+        summary_chips.push(chip(
+            format!("Routes {}", route_rows.len()),
+            RouteMapTone::Secondary,
+        ));
+
+        Self {
+            has_plan: true,
+            plan_status: plan.plan_status.clone(),
+            source_label: plan.source_label.clone(),
+            platform_label: plan.platform_label.clone(),
+            summary_chips,
+            parse_error: plan.parse_error.clone(),
+            inventory_groups: groups,
             route_rows,
-            net_events,
+            net_events: evidence.net_events.clone(),
             explain,
+            explain_match_id,
             selected_item_id,
             selected_item,
         }
@@ -283,7 +376,6 @@ impl RouteMapData {
 fn build_inventory_groups(
     parsed: &r_wg::backend::wg::config::WireGuardConfig,
     routes: &[AllowedIp],
-    net_events: &[String],
 ) -> Vec<RouteMapInventoryGroup> {
     let (full_v4, full_v6) = detect_full_tunnel(routes);
     let table_off = parsed.interface.table == Some(RouteTable::Off);
@@ -318,9 +410,8 @@ fn build_inventory_groups(
             let status = if table_off {
                 RouteMapItemStatus::Skipped
             } else {
-                status_from_events(net_events, &patterns)
+                RouteMapItemStatus::Planned
             };
-            let runtime_evidence = matching_events(net_events, &patterns);
             let route_kind = if is_full {
                 "allowed / full tunnel"
             } else {
@@ -339,7 +430,9 @@ fn build_inventory_groups(
                 title: route_text.clone().into(),
                 subtitle: format!("{peer_label} via {endpoint_text}").into(),
                 family,
+                static_status: table_off.then_some(RouteMapItemStatus::Skipped),
                 status,
+                event_patterns: patterns,
                 chips: vec![
                     chip(
                         if is_full {
@@ -348,9 +441,9 @@ fn build_inventory_groups(
                             "Split Route"
                         },
                         if is_full {
-                            RouteMapTone::Success
-                        } else {
                             RouteMapTone::Info
+                        } else {
+                            RouteMapTone::Secondary
                         },
                     ),
                     chip(family_filter.label(), RouteMapTone::Secondary),
@@ -371,7 +464,7 @@ fn build_inventory_groups(
                         full_v4,
                         full_v6,
                     ),
-                    runtime_evidence,
+                    runtime_evidence: Vec::new(),
                     risk_assessment: allowed_risks(parsed, allowed, is_full),
                 },
                 graph_steps: allowed_graph_steps(
@@ -411,9 +504,9 @@ fn build_inventory_groups(
         }
     }
 
-    let endpoint_bypass_items = build_endpoint_bypass_items(parsed, full_v4, full_v6, net_events);
-    let dns_route_items = build_dns_route_items(parsed, full_v4, full_v6, net_events);
-    let policy_items = build_policy_items(parsed, full_v4, full_v6, table_off, net_events);
+    let endpoint_bypass_items = build_endpoint_bypass_items(parsed, full_v4, full_v6);
+    let dns_route_items = build_dns_route_items(parsed, full_v4, full_v6);
+    let policy_items = build_policy_items(parsed, full_v4, full_v6, table_off);
     let warning_items = build_warning_items(parsed, routes, full_v4, full_v6);
 
     vec![
@@ -476,7 +569,6 @@ fn build_endpoint_bypass_items(
     parsed: &r_wg::backend::wg::config::WireGuardConfig,
     full_v4: bool,
     full_v6: bool,
-    net_events: &[String],
 ) -> Vec<RouteMapInventoryItem> {
     if !cfg!(target_os = "windows") || !(full_v4 || full_v6) {
         return Vec::new();
@@ -508,14 +600,14 @@ fn build_endpoint_bypass_items(
                     format!("bypass route add: {}", ip),
                     route_text.clone(),
                 ];
-                let status = status_from_events(net_events, &patterns);
-                let runtime_evidence = matching_events(net_events, &patterns);
                 items.push(RouteMapInventoryItem {
                     id: item_id("bypass", &endpoint.host),
                     title: endpoint.host.clone().into(),
                     subtitle: format!("{peer_label} endpoint bypass").into(),
                     family: Some(family_from_ip(ip)),
-                    status,
+                    static_status: None,
+                    status: RouteMapItemStatus::Planned,
+                    event_patterns: patterns,
                     chips: vec![
                         chip("Bypass", RouteMapTone::Info),
                         chip(family_from_ip(ip).label(), RouteMapTone::Secondary),
@@ -532,31 +624,40 @@ fn build_endpoint_bypass_items(
                             "Windows resolves or reuses endpoint IPs before installing bypass routes.".into(),
                             "The bypass route follows the system best route instead of the tunnel adapter.".into(),
                         ],
-                        runtime_evidence,
+                        runtime_evidence: Vec::new(),
                         risk_assessment: vec![
                             "If this bypass route cannot be installed, full-tunnel apply aborts to avoid leaks.".into(),
                         ],
                     },
                     graph_steps: vec![
                         graph_step(
+                            RouteMapGraphStepKind::Interface,
                             IconName::LayoutDashboard,
                             "Local Interface",
                             &interface_label,
                             None,
                         ),
                         graph_step(
+                            RouteMapGraphStepKind::Guardrail,
                             IconName::CircleCheck,
                             "Guardrail",
                             "Full tunnel requires endpoint escape",
                             Some("The endpoint must not recurse into the tunnel."),
                         ),
                         graph_step(
+                            RouteMapGraphStepKind::Destination,
                             IconName::ArrowRight,
                             "Bypass Route",
                             &route_text,
                             Some("Uses the current system best route."),
                         ),
-                        graph_step(IconName::Globe, "Endpoint", &endpoint_text, None),
+                        graph_step(
+                            RouteMapGraphStepKind::Endpoint,
+                            IconName::Globe,
+                            "Endpoint",
+                            &endpoint_text,
+                            None,
+                        ),
                     ],
                     route_row: Some(RouteMapRouteRow {
                         destination: route_text.clone().into(),
@@ -565,7 +666,7 @@ fn build_endpoint_bypass_items(
                         peer: peer_label.clone().into(),
                         endpoint: endpoint_text.clone().into(),
                         table: "system route".into(),
-                        status: status.label().into(),
+                        status: RouteMapItemStatus::Planned.label().into(),
                         note: "Host route keeps the endpoint outside the tunnel.".into(),
                     }),
                     match_target: Some(RouteMapMatchTarget {
@@ -581,7 +682,9 @@ fn build_endpoint_bypass_items(
                     title: endpoint.host.clone().into(),
                     subtitle: format!("{peer_label} endpoint hostname").into(),
                     family: None,
+                    static_status: Some(RouteMapItemStatus::Warning),
                     status: RouteMapItemStatus::Warning,
+                    event_patterns: vec![endpoint.host.clone()],
                     chips: vec![
                         chip("Bypass Pending", RouteMapTone::Warning),
                         chip(peer_label.clone(), RouteMapTone::Secondary),
@@ -596,7 +699,7 @@ fn build_endpoint_bypass_items(
                             "Windows resolves endpoint hostnames inside the privileged backend during apply.".into(),
                             "The UI keeps this item visible so the user can verify the leak guard path.".into(),
                         ],
-                        runtime_evidence: matching_events(net_events, &[endpoint.host.clone()]),
+                        runtime_evidence: Vec::new(),
                         risk_assessment: vec![
                             "Until endpoint resolution succeeds, the bypass route is not concrete.".into(),
                             "The backend will abort full-tunnel apply if resolution/bypass fails.".into(),
@@ -604,18 +707,26 @@ fn build_endpoint_bypass_items(
                     },
                     graph_steps: vec![
                         graph_step(
+                            RouteMapGraphStepKind::Interface,
                             IconName::LayoutDashboard,
                             "Local Interface",
                             &interface_label,
                             None,
                         ),
                         graph_step(
-                            IconName::CircleX,
+                            RouteMapGraphStepKind::Guardrail,
+                            IconName::TriangleAlert,
                             "Guardrail",
                             "Endpoint bypass pending",
                             Some("Runtime DNS resolution is required first."),
                         ),
-                        graph_step(IconName::Globe, "Endpoint Host", &endpoint_text, None),
+                        graph_step(
+                            RouteMapGraphStepKind::Endpoint,
+                            IconName::Globe,
+                            "Endpoint Host",
+                            &endpoint_text,
+                            None,
+                        ),
                     ],
                     route_row: None,
                     match_target: None,
@@ -631,7 +742,6 @@ fn build_dns_route_items(
     parsed: &r_wg::backend::wg::config::WireGuardConfig,
     full_v4: bool,
     full_v6: bool,
-    net_events: &[String],
 ) -> Vec<RouteMapInventoryItem> {
     if !cfg!(target_os = "windows") || parsed.interface.table == Some(RouteTable::Off) {
         return Vec::new();
@@ -651,13 +761,14 @@ fn build_dns_route_items(
             format!("dns route add: {}", route_text),
             dns_server.to_string(),
         ];
-        let status = status_from_events(net_events, &patterns);
         items.push(RouteMapInventoryItem {
             id: item_id("dns-route", &dns_server.to_string()),
             title: dns_server.to_string().into(),
             subtitle: "Tunnel DNS host route".into(),
             family: Some(family_from_ip(*dns_server)),
-            status,
+            static_status: None,
+            status: RouteMapItemStatus::Planned,
+            event_patterns: patterns,
             chips: vec![
                 chip("DNS Route", RouteMapTone::Info),
                 chip(family_from_ip(*dns_server).label(), RouteMapTone::Secondary),
@@ -672,25 +783,28 @@ fn build_dns_route_items(
                 platform_details: vec![
                     "The host route points back to the tunnel adapter with tunnel metric.".into(),
                 ],
-                runtime_evidence: matching_events(net_events, &patterns),
+                runtime_evidence: Vec::new(),
                 risk_assessment: vec![
                     "Without the host route, a more specific underlay route could bypass tunnel DNS.".into(),
                 ],
             },
             graph_steps: vec![
                 graph_step(
+                    RouteMapGraphStepKind::Interface,
                     IconName::LayoutDashboard,
                     "Local Interface",
                     &interface_label,
                     None,
                 ),
                 graph_step(
+                    RouteMapGraphStepKind::Dns,
                     IconName::Search,
                     "Tunnel DNS",
                     &dns_server.to_string(),
                     Some("Pinned with a host route under full tunnel."),
                 ),
                 graph_step(
+                    RouteMapGraphStepKind::Destination,
                     IconName::ArrowRight,
                     "Route",
                     &route_text,
@@ -704,7 +818,7 @@ fn build_dns_route_items(
                 peer: "Interface DNS".into(),
                 endpoint: "-".into(),
                 table: "tunnel adapter".into(),
-                status: status.label().into(),
+                status: RouteMapItemStatus::Planned.label().into(),
                 note: "Host route protects tunnel DNS reachability.".into(),
             }),
             match_target: Some(RouteMapMatchTarget {
@@ -722,7 +836,6 @@ fn build_policy_items(
     full_v4: bool,
     full_v6: bool,
     table_off: bool,
-    net_events: &[String],
 ) -> Vec<RouteMapInventoryItem> {
     let route_table_text = format_route_table(parsed.interface.table);
     let mut items = Vec::new();
@@ -739,11 +852,13 @@ fn build_policy_items(
                 title: "IPv4 policy routing".into(),
                 subtitle: format!("fwmark -> main, not fwmark -> table {table_id}").into(),
                 family: Some(RouteFamilyFilter::Ipv4),
+                static_status: table_off.then_some(RouteMapItemStatus::Skipped),
                 status: if table_off {
                     RouteMapItemStatus::Skipped
                 } else {
-                    status_from_events(net_events, &patterns)
+                    RouteMapItemStatus::Planned
                 },
+                event_patterns: patterns,
                 chips: vec![
                     chip("Policy", RouteMapTone::Info),
                     chip("IPv4", RouteMapTone::Secondary),
@@ -765,32 +880,36 @@ fn build_policy_items(
                         .into(),
                         "A suppress-main rule prevents business traffic from falling back to the default route.".into(),
                     ],
-                    runtime_evidence: matching_events(net_events, &patterns),
+                    runtime_evidence: Vec::new(),
                     risk_assessment: vec![
                         "Missing fwmark or failed rule install would make full-tunnel routing unsafe.".into(),
                     ],
                 },
                 graph_steps: vec![
                     graph_step(
+                        RouteMapGraphStepKind::Interface,
                         IconName::LayoutDashboard,
                         "Local Interface",
                         &interface_label(parsed),
                         None,
                     ),
                     graph_step(
+                        RouteMapGraphStepKind::Guardrail,
                         IconName::CircleCheck,
                         "fwmark",
                         &format!("0x{:x}", parsed.interface.fwmark.unwrap_or_default()),
                         Some("Engine traffic stays on main."),
                     ),
                     graph_step(
+                        RouteMapGraphStepKind::Policy,
                         IconName::Map,
                         "Policy Table",
                         &format!("table {table_id}"),
                         Some("Business traffic enters the tunnel table."),
                     ),
                     graph_step(
-                        IconName::CircleX,
+                        RouteMapGraphStepKind::Guardrail,
+                        IconName::Check,
                         "Suppress Main",
                         "pref rule",
                         Some("Prevents unmarked traffic from falling back to main."),
@@ -809,11 +928,13 @@ fn build_policy_items(
                 title: "IPv6 policy routing".into(),
                 subtitle: format!("fwmark -> main, not fwmark -> table {table_id}").into(),
                 family: Some(RouteFamilyFilter::Ipv6),
+                static_status: table_off.then_some(RouteMapItemStatus::Skipped),
                 status: if table_off {
                     RouteMapItemStatus::Skipped
                 } else {
-                    status_from_events(net_events, &patterns)
+                    RouteMapItemStatus::Planned
                 },
+                event_patterns: patterns,
                 chips: vec![
                     chip("Policy", RouteMapTone::Info),
                     chip("IPv6", RouteMapTone::Secondary),
@@ -835,32 +956,36 @@ fn build_policy_items(
                         .into(),
                         "A suppress-main rule prevents business traffic from falling back to the default route.".into(),
                     ],
-                    runtime_evidence: matching_events(net_events, &patterns),
+                    runtime_evidence: Vec::new(),
                     risk_assessment: vec![
                         "Missing fwmark or failed rule install would make full-tunnel routing unsafe.".into(),
                     ],
                 },
                 graph_steps: vec![
                     graph_step(
+                        RouteMapGraphStepKind::Interface,
                         IconName::LayoutDashboard,
                         "Local Interface",
                         &interface_label(parsed),
                         None,
                     ),
                     graph_step(
+                        RouteMapGraphStepKind::Guardrail,
                         IconName::CircleCheck,
                         "fwmark",
                         &format!("0x{:x}", parsed.interface.fwmark.unwrap_or_default()),
                         Some("Engine traffic stays on main."),
                     ),
                     graph_step(
+                        RouteMapGraphStepKind::Policy,
                         IconName::Map,
                         "Policy Table",
                         &format!("table {table_id}"),
                         Some("Business traffic enters the tunnel table."),
                     ),
                     graph_step(
-                        IconName::CircleX,
+                        RouteMapGraphStepKind::Guardrail,
+                        IconName::Check,
                         "Suppress Main",
                         "pref rule",
                         Some("Prevents unmarked traffic from falling back to main."),
@@ -879,11 +1004,13 @@ fn build_policy_items(
                 title: "IPv4 full-tunnel metric".into(),
                 subtitle: "Windows lowers interface metric for the tunnel".into(),
                 family: Some(RouteFamilyFilter::Ipv4),
+                static_status: table_off.then_some(RouteMapItemStatus::Skipped),
                 status: if table_off {
                     RouteMapItemStatus::Skipped
                 } else {
-                    status_from_events(net_events, &patterns)
+                    RouteMapItemStatus::Planned
                 },
+                event_patterns: patterns,
                 chips: vec![
                     chip("Metric", RouteMapTone::Info),
                     chip("IPv4", RouteMapTone::Secondary),
@@ -899,25 +1026,33 @@ fn build_policy_items(
                         "The tunnel adapter metric is lowered so 0.0.0.0/0 prefers the tunnel.".into(),
                         "Endpoint and DNS exceptions are handled with host routes.".into(),
                     ],
-                    runtime_evidence: matching_events(net_events, &patterns),
+                    runtime_evidence: Vec::new(),
                     risk_assessment: vec![
                         "If metric programming fails, apply aborts rather than leaving a half-configured full tunnel.".into(),
                     ],
                 },
                 graph_steps: vec![
                     graph_step(
+                        RouteMapGraphStepKind::Interface,
                         IconName::LayoutDashboard,
                         "Local Interface",
                         &interface_label(parsed),
                         None,
                     ),
                     graph_step(
+                        RouteMapGraphStepKind::Policy,
                         IconName::SortAscending,
                         "Interface Metric",
                         "50",
                         Some("Lower metric makes full tunnel preferred."),
                     ),
-                    graph_step(IconName::Map, "Config Table", &route_table_text, Some("RouteTable IDs are ignored on Windows.")),
+                    graph_step(
+                        RouteMapGraphStepKind::Policy,
+                        IconName::Map,
+                        "Config Table",
+                        &route_table_text,
+                        Some("RouteTable IDs are ignored on Windows."),
+                    ),
                 ],
                 route_row: None,
                 match_target: None,
@@ -932,11 +1067,13 @@ fn build_policy_items(
                 title: "IPv6 full-tunnel metric".into(),
                 subtitle: "Windows lowers interface metric for the tunnel".into(),
                 family: Some(RouteFamilyFilter::Ipv6),
+                static_status: table_off.then_some(RouteMapItemStatus::Skipped),
                 status: if table_off {
                     RouteMapItemStatus::Skipped
                 } else {
-                    status_from_events(net_events, &patterns)
+                    RouteMapItemStatus::Planned
                 },
+                event_patterns: patterns,
                 chips: vec![
                     chip("Metric", RouteMapTone::Info),
                     chip("IPv6", RouteMapTone::Secondary),
@@ -952,25 +1089,33 @@ fn build_policy_items(
                         "The tunnel adapter metric is lowered so ::/0 prefers the tunnel.".into(),
                         "Endpoint and DNS exceptions are handled with host routes.".into(),
                     ],
-                    runtime_evidence: matching_events(net_events, &patterns),
+                    runtime_evidence: Vec::new(),
                     risk_assessment: vec![
                         "If metric programming fails, apply aborts rather than leaving a half-configured full tunnel.".into(),
                     ],
                 },
                 graph_steps: vec![
                     graph_step(
+                        RouteMapGraphStepKind::Interface,
                         IconName::LayoutDashboard,
                         "Local Interface",
                         &interface_label(parsed),
                         None,
                     ),
                     graph_step(
+                        RouteMapGraphStepKind::Policy,
                         IconName::SortAscending,
                         "Interface Metric",
                         "50",
                         Some("Lower metric makes full tunnel preferred."),
                     ),
-                    graph_step(IconName::Map, "Config Table", &route_table_text, Some("RouteTable IDs are ignored on Windows.")),
+                    graph_step(
+                        RouteMapGraphStepKind::Policy,
+                        IconName::Map,
+                        "Config Table",
+                        &route_table_text,
+                        Some("RouteTable IDs are ignored on Windows."),
+                    ),
                 ],
                 route_row: None,
                 match_target: None,
@@ -1053,7 +1198,9 @@ fn warning_item(
         title: title.to_string().into(),
         subtitle: subtitle.to_string().into(),
         family: None,
+        static_status: Some(RouteMapItemStatus::Warning),
         status: RouteMapItemStatus::Warning,
+        event_patterns: Vec::new(),
         chips: vec![chip("Guardrail", RouteMapTone::Warning)],
         inspector: RouteMapInspector {
             title: title.to_string().into(),
@@ -1068,7 +1215,8 @@ fn warning_item(
             risk_assessment,
         },
         graph_steps: vec![graph_step(
-            IconName::CircleX,
+            RouteMapGraphStepKind::Guardrail,
+            IconName::TriangleAlert,
             "Guardrail",
             title,
             Some(subtitle),
@@ -1089,9 +1237,26 @@ fn group(
     RouteMapInventoryGroup {
         id: id.to_string().into(),
         label: label.to_string().into(),
-        summary: format!("{count} items").into(),
+        summary: count.to_string().into(),
         empty_note: empty_note.to_string().into(),
         items,
+    }
+}
+
+fn apply_event_overlay(groups: &mut [RouteMapInventoryGroup], net_events: &[String]) {
+    for group in groups {
+        for item in &mut group.items {
+            let status = item
+                .static_status
+                .unwrap_or_else(|| status_from_events(net_events, &item.event_patterns));
+            item.status = status;
+            if !item.event_patterns.is_empty() {
+                item.inspector.runtime_evidence = matching_events(net_events, &item.event_patterns);
+            }
+            if let Some(route_row) = item.route_row.as_mut() {
+                route_row.status = status.label().into();
+            }
+        }
     }
 }
 
@@ -1104,7 +1269,7 @@ fn apply_filters(
         group
             .items
             .retain(|item| item_matches(item, family_filter, search_query));
-        group.summary = format!("{} items", group.items.len()).into();
+        group.summary = group.items.len().to_string().into();
     }
 }
 
@@ -1300,12 +1465,14 @@ fn allowed_graph_steps(
 ) -> Vec<RouteMapGraphStep> {
     vec![
         graph_step(
+            RouteMapGraphStepKind::Interface,
             IconName::LayoutDashboard,
             "Local Interface",
             interface_label,
             None,
         ),
         graph_step(
+            RouteMapGraphStepKind::Dns,
             IconName::Search,
             "DNS / Guard",
             dns_label,
@@ -1316,6 +1483,7 @@ fn allowed_graph_steps(
             },
         ),
         graph_step(
+            RouteMapGraphStepKind::Policy,
             IconName::Map,
             "Route Table",
             route_table_text,
@@ -1326,12 +1494,19 @@ fn allowed_graph_steps(
             },
         ),
         graph_step(
+            RouteMapGraphStepKind::Peer,
             IconName::CircleUser,
             "Peer",
             peer_label,
             Some(endpoint_text),
         ),
-        graph_step(IconName::Map, "Destination Prefix", route_text, None),
+        graph_step(
+            RouteMapGraphStepKind::Destination,
+            IconName::Map,
+            "Destination Prefix",
+            route_text,
+            None,
+        ),
     ]
 }
 
@@ -1415,6 +1590,61 @@ fn current_source_label(app: &WgApp, data: &ViewData) -> SharedString {
     } else {
         name.into()
     }
+}
+
+fn plan_cache_key(
+    app: &WgApp,
+    data: &ViewData,
+    source_label: &SharedString,
+    platform_label: &SharedString,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    source_label.hash(&mut hasher);
+    platform_label.hash(&mut hasher);
+    data.parse_error.hash(&mut hasher);
+    data.has_saved_source.hash(&mut hasher);
+    data.draft_dirty.hash(&mut hasher);
+    app.selection.selected_id.hash(&mut hasher);
+
+    if let Some(parsed) = data.parsed_config.as_ref() {
+        match parsed.interface.table {
+            Some(RouteTable::Auto) => 0u8.hash(&mut hasher),
+            Some(RouteTable::Off) => 1u8.hash(&mut hasher),
+            Some(RouteTable::Id(id)) => {
+                2u8.hash(&mut hasher);
+                id.hash(&mut hasher);
+            }
+            None => 3u8.hash(&mut hasher),
+        }
+        parsed.interface.fwmark.hash(&mut hasher);
+        for address in &parsed.interface.addresses {
+            address.addr.hash(&mut hasher);
+            address.cidr.hash(&mut hasher);
+        }
+        for dns in &parsed.interface.dns_servers {
+            dns.hash(&mut hasher);
+        }
+        for peer in &parsed.peers {
+            peer.endpoint
+                .as_ref()
+                .map(|endpoint| (&endpoint.host, endpoint.port))
+                .hash(&mut hasher);
+            for allowed in &peer.allowed_ips {
+                allowed.addr.hash(&mut hasher);
+                allowed.cidr.hash(&mut hasher);
+            }
+        }
+    }
+
+    hasher.finish()
+}
+
+fn evidence_cache_key(net_events: &[String]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for event in net_events {
+        event.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn recent_net_events() -> Vec<String> {
@@ -1650,8 +1880,15 @@ fn cidr_contains(network: IpAddr, cidr: u8, value: IpAddr) -> bool {
     }
 }
 
-fn graph_step(icon: IconName, label: &str, value: &str, note: Option<&str>) -> RouteMapGraphStep {
+fn graph_step(
+    kind: RouteMapGraphStepKind,
+    icon: IconName,
+    label: &str,
+    value: &str,
+    note: Option<&str>,
+) -> RouteMapGraphStep {
     RouteMapGraphStep {
+        kind,
         icon,
         label: label.to_string().into(),
         value: value.to_string().into(),

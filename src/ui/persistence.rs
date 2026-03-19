@@ -48,6 +48,10 @@ pub(crate) struct PersistedState {
     #[serde(default)]
     pub(crate) configs_inspector_width: Option<f32>,
     #[serde(default)]
+    pub(crate) route_map_inventory_width: Option<f32>,
+    #[serde(default)]
+    pub(crate) route_map_inspector_width: Option<f32>,
+    #[serde(default)]
     pub(crate) proxies_view_mode: Option<ProxiesViewMode>,
     #[serde(default)]
     pub(crate) dns_mode: Option<DnsMode>,
@@ -252,6 +256,8 @@ mod tests {
             preferred_traffic_period: Some(TrafficPeriod::Today),
             configs_library_width: Some(300.0),
             configs_inspector_width: Some(332.0),
+            route_map_inventory_width: Some(280.0),
+            route_map_inspector_width: Some(340.0),
             proxies_view_mode: Some(ProxiesViewMode::List),
             dns_mode: Some(DnsMode::FollowConfig),
             dns_preset: Some(DnsPreset::CloudflareStandard),

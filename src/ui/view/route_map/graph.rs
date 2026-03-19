@@ -1,52 +1,53 @@
+use std::time::Duration;
+
 use gpui::prelude::FluentBuilder as _;
-use gpui::*;
+use gpui::AnimationExt as _;
+use gpui::{uniform_list, *};
 use gpui_component::{
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
-    scroll::ScrollableElement as _,
+    scroll::Scrollbar,
     v_flex, ActiveTheme as _, Icon, StyledExt as _,
 };
 
 use crate::ui::state::{RouteMapMode, WgApp};
 
-use super::data::{RouteMapData, RouteMapGraphStep, RouteMapRouteRow};
+use super::data::{
+    RouteMapData, RouteMapGraphStep, RouteMapGraphStepKind, RouteMapInventoryItem, RouteMapRouteRow,
+};
 use super::{empty_group, status_chip};
+
+const ROUTE_LIST_SCROLL_STATE_ID: &str = "route-map-routes-scroll";
+const ROUTE_ROW_HEIGHT: f32 = 48.0;
 
 pub(super) fn render_graph(
     model: &RouteMapData,
     mode: RouteMapMode,
+    window: &mut Window,
     cx: &mut Context<WgApp>,
 ) -> Div {
     match mode {
-        RouteMapMode::Flow => render_flow(model, cx),
-        RouteMapMode::Routes => render_routes(model, cx),
+        RouteMapMode::Flow => render_flow(model, window, cx),
+        RouteMapMode::Routes => render_routes(model, window, cx),
         RouteMapMode::Explain => super::explain::render_explain(model, cx),
-        RouteMapMode::Events => super::events::render_events(model, cx),
+        RouteMapMode::Events => super::events::render_events(model, window, cx),
     }
 }
 
-fn render_flow(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
+fn render_flow(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgApp>) -> Div {
     let Some(selected) = model.selected_item.as_ref() else {
         return div().child(empty_group(
-            "Decision Graph",
+            "Decision Path",
             "Select an inventory item to inspect its decision path.",
             cx,
         ));
     };
 
-    let steps =
-        selected
-            .graph_steps
-            .iter()
-            .enumerate()
-            .fold(v_flex().gap_2(), |list, (index, step)| {
-                let list = list.child(render_flow_step(step, cx));
-                if index + 1 < selected.graph_steps.len() {
-                    list.child(div().ml_6().w(px(1.0)).h(px(18.0)).bg(cx.theme().border))
-                } else {
-                    list
-                }
-            });
+    let steps = if window.viewport_size().width >= px(1500.0) {
+        render_horizontal_flow_steps(&selected.graph_steps, cx).into_any_element()
+    } else {
+        render_vertical_flow_steps(&selected.graph_steps, cx).into_any_element()
+    };
 
     div()
         .flex()
@@ -60,7 +61,7 @@ fn render_flow(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
             GroupBox::new()
                 .fill()
                 .flex_grow()
-                .title("Decision Graph")
+                .title("Decision Path")
                 .child(
                     v_flex()
                         .gap_3()
@@ -79,18 +80,126 @@ fn render_flow(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
                                 )
                                 .child(status_chip(selected.status)),
                         )
+                        .when(
+                            model.explain_match_id.as_ref() == Some(&selected.id),
+                            |this| {
+                                this.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().info)
+                                        .child("Explain hit highlighted in inventory."),
+                                )
+                            },
+                        )
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
                                 .child(selected.subtitle.clone()),
                         )
-                        .child(steps.w_full().flex_grow()),
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(selected_summary(selected)),
+                        )
+                        .child(steps),
                 ),
         )
 }
 
+fn render_vertical_flow_steps(steps: &[RouteMapGraphStep], cx: &mut Context<WgApp>) -> Div {
+    steps
+        .iter()
+        .enumerate()
+        .fold(v_flex().gap_2(), |list, (index, step)| {
+            let list = list.child(render_flow_step(step, cx));
+            if index + 1 < steps.len() {
+                list.child(
+                    div()
+                        .ml_6()
+                        .w(px(1.0))
+                        .h(px(18.0))
+                        .child(animated_connector(
+                            ("route-map-flow-v", index),
+                            true,
+                            step,
+                            cx,
+                        )),
+                )
+            } else {
+                list
+            }
+        })
+        .w_full()
+        .flex_grow()
+}
+
+fn render_horizontal_flow_steps(steps: &[RouteMapGraphStep], cx: &mut Context<WgApp>) -> Div {
+    steps
+        .iter()
+        .enumerate()
+        .fold(
+            h_flex().items_start().gap_0().w_full(),
+            |row, (index, step)| {
+                let row = row.child(render_flow_card(step, cx));
+                if index + 1 < steps.len() {
+                    row.child(
+                        div().flex_1().h_full().min_w(px(28.0)).px_2().child(
+                            div()
+                                .mt(px(38.0))
+                                .h(px(1.0))
+                                .w_full()
+                                .child(animated_connector(
+                                    ("route-map-flow-h", index),
+                                    false,
+                                    step,
+                                    cx,
+                                )),
+                        ),
+                    )
+                } else {
+                    row
+                }
+            },
+        )
+        .min_h(px(0.0))
+}
+
+fn animated_connector(
+    animation_id: impl Into<ElementId>,
+    vertical: bool,
+    step: &RouteMapGraphStep,
+    cx: &mut Context<WgApp>,
+) -> Div {
+    let connector_color = step_kind_palette(step.kind, cx).2;
+    let glow = connector_color.alpha(0.72);
+    let base = connector_color.alpha(0.26);
+
+    div().relative().w_full().h_full().bg(base).child(
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .bg(glow)
+            .with_animation(
+                animation_id,
+                Animation::new(Duration::from_secs(2)).repeat(),
+                move |this, delta| {
+                    let pulse = 0.18 + (0.42 * (1.0 - ((delta as f32 * 2.0) - 1.0).abs()));
+                    this.opacity(pulse)
+                        .when(vertical, |this| this.rounded_full())
+                        .when(!vertical, |this| this.rounded_full())
+                },
+            ),
+    )
+}
+
 fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
+    let (icon_color, icon_background, card_border) = step_kind_palette(step.kind, cx);
+
     div()
         .flex()
         .flex_row()
@@ -101,15 +210,11 @@ fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
             div()
                 .size(px(28.0))
                 .rounded_full()
-                .bg(cx.theme().accent.alpha(0.12))
+                .bg(icon_background)
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(
-                    Icon::new(step.icon.clone())
-                        .size_4()
-                        .text_color(cx.theme().accent),
-                ),
+                .child(Icon::new(step.icon.clone()).size_4().text_color(icon_color)),
         )
         .child(
             div()
@@ -121,7 +226,7 @@ fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
                 .flex_1()
                 .rounded_lg()
                 .border_1()
-                .border_color(cx.theme().border)
+                .border_color(card_border)
                 .bg(cx.theme().group_box)
                 .child(
                     div()
@@ -142,7 +247,61 @@ fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
         )
 }
 
-fn render_routes(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
+fn render_flow_card(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
+    let (icon_color, icon_background, card_border) = step_kind_palette(step.kind, cx);
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .w(px(164.0))
+        .min_w(px(164.0))
+        .child(
+            div()
+                .size(px(32.0))
+                .rounded_full()
+                .bg(icon_background)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(step.icon.clone()).size_4().text_color(icon_color)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_3()
+                .rounded_lg()
+                .border_1()
+                .border_color(card_border)
+                .bg(cx.theme().group_box)
+                .child(
+                    div()
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(step.label.clone()),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_semibold()
+                        .truncate()
+                        .child(step.value.clone()),
+                )
+                .when_some(step.note.as_ref(), |this, note| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(note.clone()),
+                    )
+                }),
+        )
+}
+
+fn render_routes(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgApp>) -> Div {
     if model.route_rows.is_empty() {
         return div().child(empty_group(
             "Routes",
@@ -151,10 +310,26 @@ fn render_routes(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
         ));
     }
 
+    let rows = model.route_rows.clone();
+    let scroll_handle = window
+        .use_keyed_state(ROUTE_LIST_SCROLL_STATE_ID, cx, |_, _| {
+            UniformListScrollHandle::new()
+        })
+        .read(cx)
+        .clone();
     let header = route_row_header(cx);
-    let rows = model.route_rows.iter().fold(v_flex().gap_1(), |list, row| {
-        list.child(render_route_row(row, cx))
-    });
+    let list = uniform_list(
+        "route-map-routes-list",
+        rows.len(),
+        move |visible_range, _window, cx| {
+            visible_range
+                .map(|ix| render_route_row(&rows[ix], cx))
+                .collect::<Vec<_>>()
+        },
+    )
+    .track_scroll(scroll_handle.clone())
+    .w_full()
+    .flex_1();
 
     div()
         .flex()
@@ -177,9 +352,9 @@ fn render_routes(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
                             .flex_1()
                             .w_full()
                             .min_h(px(0.0))
-                            .gap_1()
-                            .overflow_y_scrollbar()
-                            .child(rows),
+                            .relative()
+                            .child(list)
+                            .child(Scrollbar::vertical(&scroll_handle)),
                     ),
             ),
         )
@@ -187,9 +362,9 @@ fn render_routes(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
 
 fn route_row_header(cx: &mut Context<WgApp>) -> Div {
     div()
-        .grid()
-        .grid_cols(8)
-        .gap_2()
+        .flex()
+        .items_center()
+        .gap_3()
         .px_3()
         .pb_1()
         .border_b_1()
@@ -197,34 +372,156 @@ fn route_row_header(cx: &mut Context<WgApp>) -> Div {
         .text_xs()
         .font_semibold()
         .text_color(cx.theme().muted_foreground)
-        .child("Destination")
-        .child("Family")
-        .child("Kind")
-        .child("Peer")
-        .child("Endpoint")
-        .child("Table")
-        .child("Status")
-        .child("Note")
+        .child(route_header_cell("Destination", Some(px(176.0))))
+        .child(route_header_cell("Family", Some(px(64.0))))
+        .child(route_header_cell("Kind", Some(px(112.0))))
+        .child(route_header_cell("Peer", Some(px(84.0))))
+        .child(route_header_cell("Endpoint", Some(px(168.0))))
+        .child(route_header_cell("Table", Some(px(104.0))))
+        .child(route_header_cell("Status", Some(px(72.0))))
+        .child(route_header_cell("Note", None))
 }
 
-fn render_route_row(row: &RouteMapRouteRow, cx: &mut Context<WgApp>) -> Div {
-    div()
-        .grid()
-        .grid_cols(8)
-        .w_full()
-        .gap_2()
-        .p_3()
-        .rounded_md()
-        .border_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().group_box)
+fn route_header_cell(label: &str, width: Option<Pixels>) -> Div {
+    let cell = div()
         .text_xs()
-        .child(row.destination.clone())
-        .child(row.family.clone())
-        .child(row.kind.clone())
-        .child(row.peer.clone())
-        .child(row.endpoint.clone())
-        .child(row.table.clone())
-        .child(row.status.clone())
-        .child(row.note.clone())
+        .font_semibold()
+        .truncate()
+        .child(label.to_string());
+    if let Some(width) = width {
+        cell.w(width)
+    } else {
+        cell.flex_1().min_w(px(0.0))
+    }
+}
+
+fn render_route_row(row: &RouteMapRouteRow, cx: &mut App) -> Div {
+    div()
+        .h(px(ROUTE_ROW_HEIGHT))
+        .flex()
+        .items_center()
+        .w_full()
+        .gap_3()
+        .px_3()
+        .border_b_1()
+        .border_color(cx.theme().border.alpha(0.42))
+        .text_xs()
+        .child(route_value_cell(
+            row.destination.clone(),
+            Some(px(176.0)),
+            true,
+            cx,
+        ))
+        .child(route_value_cell(
+            row.family.clone(),
+            Some(px(64.0)),
+            false,
+            cx,
+        ))
+        .child(route_value_cell(
+            row.kind.clone(),
+            Some(px(112.0)),
+            false,
+            cx,
+        ))
+        .child(route_value_cell(
+            row.peer.clone(),
+            Some(px(84.0)),
+            false,
+            cx,
+        ))
+        .child(route_value_cell(
+            row.endpoint.clone(),
+            Some(px(168.0)),
+            true,
+            cx,
+        ))
+        .child(route_value_cell(
+            row.table.clone(),
+            Some(px(104.0)),
+            true,
+            cx,
+        ))
+        .child(route_value_cell(
+            row.status.clone(),
+            Some(px(72.0)),
+            false,
+            cx,
+        ))
+        .child(route_value_cell(row.note.clone(), None, false, cx))
+}
+
+fn route_value_cell(value: SharedString, width: Option<Pixels>, mono: bool, cx: &mut App) -> Div {
+    let cell = div().text_xs().truncate().child(value);
+    let cell = if mono {
+        cell.font_family(cx.theme().mono_font_family.clone())
+    } else {
+        cell
+    };
+    if let Some(width) = width {
+        cell.w(width)
+    } else {
+        cell.flex_1().min_w(px(0.0))
+    }
+}
+
+fn selected_summary(selected: &RouteMapInventoryItem) -> SharedString {
+    let mut parts = selected
+        .chips
+        .iter()
+        .take(3)
+        .map(|chip| chip.label.to_string())
+        .collect::<Vec<_>>();
+
+    if let Some(route_row) = selected.route_row.as_ref() {
+        parts.push(route_row.table.to_string());
+    }
+
+    let has_evidence = selected
+        .inspector
+        .runtime_evidence
+        .iter()
+        .all(|entry| entry.as_ref() != "No matching net event captured yet.");
+    parts.push(if has_evidence {
+        format!("evidence {}", selected.inspector.runtime_evidence.len())
+    } else {
+        "evidence missing".to_string()
+    });
+
+    parts.join(" · ").into()
+}
+
+fn step_kind_palette(kind: RouteMapGraphStepKind, cx: &mut Context<WgApp>) -> (Hsla, Hsla, Hsla) {
+    match kind {
+        RouteMapGraphStepKind::Interface => (
+            cx.theme().accent,
+            cx.theme().accent.alpha(0.12),
+            cx.theme().accent.alpha(0.28),
+        ),
+        RouteMapGraphStepKind::Dns => (
+            cx.theme().info,
+            cx.theme().info.alpha(0.12),
+            cx.theme().info.alpha(0.24),
+        ),
+        RouteMapGraphStepKind::Policy => (
+            cx.theme().accent.alpha(0.84),
+            cx.theme().accent.alpha(0.08),
+            cx.theme().accent.alpha(0.22),
+        ),
+        RouteMapGraphStepKind::Peer | RouteMapGraphStepKind::Endpoint => (
+            cx.theme().foreground.alpha(0.72),
+            cx.theme().secondary.alpha(0.6),
+            cx.theme().border,
+        ),
+        RouteMapGraphStepKind::Guardrail => (
+            cx.theme().warning,
+            cx.theme().warning.alpha(0.12),
+            cx.theme().warning.alpha(0.24),
+        ),
+        RouteMapGraphStepKind::Destination => (
+            cx.theme().muted_foreground,
+            cx.theme().secondary.alpha(0.52),
+            cx.theme().border,
+        ),
+    }
 }

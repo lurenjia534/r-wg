@@ -19,6 +19,7 @@ pub(super) fn render_explain(model: &RouteMapData, cx: &mut Context<WgApp>) -> D
             cx,
         ));
     };
+    let content_style = StyleRefinement::default().flex_grow().min_h(px(0.0));
 
     div()
         .flex()
@@ -27,74 +28,90 @@ pub(super) fn render_explain(model: &RouteMapData, cx: &mut Context<WgApp>) -> D
         .h_full()
         .min_h(px(0.0))
         .child(
-            GroupBox::new().fill().flex_grow().title("Explain").child(
-                v_flex()
-                    .gap_3()
-                    .flex_grow()
-                    .min_h(px(0.0))
-                    .overflow_y_scrollbar()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_semibold()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(if explain.query.is_empty() {
-                                SharedString::from("QUERY")
-                            } else {
-                                explain.query.clone()
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_semibold()
-                            .child(explain.headline.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(explain.summary.clone()),
-                    )
-                    .when_some(explain.matched_item_id.as_ref(), |this, matched| {
-                        this.child(summary_chip(&super::data::RouteMapChip {
-                            label: format!("Linked to {}", matched).into(),
-                            tone: super::data::RouteMapTone::Info,
-                        }))
-                    })
-                    .child(explain.steps.iter().fold(v_flex().gap_2(), |list, step| {
-                        list.child(
-                            div()
-                                .p_3()
-                                .rounded_lg()
-                                .border_1()
-                                .border_color(cx.theme().border)
-                                .bg(cx.theme().group_box)
-                                .text_sm()
-                                .child(step.clone()),
-                        )
-                    }))
-                    .when(!explain.risk.is_empty(), |this| {
-                        this.child(
+            GroupBox::new()
+                .fill()
+                .flex_grow()
+                .content_style(content_style)
+                .title("Explain")
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .w_full()
+                        .min_h(px(0.0))
+                        .overflow_hidden()
+                        .child(
                             v_flex()
-                                .gap_2()
+                                .gap_3()
+                                .min_h(px(0.0))
+                                .overflow_y_scrollbar()
                                 .child(
                                     div()
                                         .text_xs()
                                         .font_semibold()
-                                        .text_color(cx.theme().warning)
-                                        .child("RISK"),
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(if explain.query.is_empty() {
+                                            SharedString::from("QUERY")
+                                        } else {
+                                            explain.query.clone()
+                                        }),
                                 )
-                                .child(explain.risk.iter().fold(v_flex().gap_1(), |list, item| {
+                                .child(
+                                    div()
+                                        .text_lg()
+                                        .font_semibold()
+                                        .child(explain.headline.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(explain.summary.clone()),
+                                )
+                                .when_some(explain.matched_item_id.as_ref(), |this, matched| {
+                                    this.child(summary_chip(&super::data::RouteMapChip {
+                                        label: format!("Linked to {}", matched).into(),
+                                        tone: super::data::RouteMapTone::Info,
+                                    }))
+                                })
+                                .child(explain.steps.iter().fold(v_flex().gap_2(), |list, step| {
                                     list.child(
                                         div()
+                                            .p_3()
+                                            .rounded_lg()
+                                            .border_1()
+                                            .border_color(cx.theme().border)
+                                            .bg(cx.theme().group_box)
                                             .text_sm()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(item.clone()),
+                                            .child(step.clone()),
                                     )
-                                })),
-                        )
-                    }),
-            ),
+                                }))
+                                .when(!explain.risk.is_empty(), |this| {
+                                    this.child(
+                                        v_flex()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_semibold()
+                                                    .text_color(cx.theme().warning)
+                                                    .child("RISK"),
+                                            )
+                                            .child(explain.risk.iter().fold(
+                                                v_flex().gap_1(),
+                                                |list, item| {
+                                                    list.child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .child(item.clone()),
+                                                    )
+                                                },
+                                            )),
+                                    )
+                                }),
+                        ),
+                ),
         )
 }

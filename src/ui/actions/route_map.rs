@@ -14,7 +14,7 @@ impl WgApp {
         }
 
         let input = cx
-            .new(|cx| InputState::new(window, cx).placeholder("Search destination, IP, or domain"));
+            .new(|cx| InputState::new(window, cx).placeholder("Search IP, CIDR, or endpoint host"));
         self.ui.route_map_search_input = Some(input);
     }
 }

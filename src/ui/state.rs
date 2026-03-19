@@ -33,6 +33,8 @@ pub(crate) const TRAFFIC_HOURLY_HISTORY: usize = 48;
 pub(crate) const RESTART_COOLDOWN: Duration = Duration::from_millis(300);
 pub(crate) const DEFAULT_CONFIGS_LIBRARY_WIDTH: f32 = 300.0;
 pub(crate) const DEFAULT_CONFIGS_INSPECTOR_WIDTH: f32 = 332.0;
+pub(crate) const DEFAULT_ROUTE_MAP_INVENTORY_WIDTH: f32 = 280.0;
+pub(crate) const DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH: f32 = 340.0;
 
 /// 配置来源：文件或粘贴文本。
 #[derive(Clone, PartialEq, Eq)]
@@ -1238,6 +1240,8 @@ pub(crate) struct UiPrefsState {
     pub(crate) preferred_traffic_period: TrafficPeriod,
     pub(crate) configs_library_width: f32,
     pub(crate) configs_inspector_width: f32,
+    pub(crate) route_map_inventory_width: f32,
+    pub(crate) route_map_inspector_width: f32,
     pub(crate) proxies_view_mode: ProxiesViewMode,
     pub(crate) appearance_policy: AppearancePolicy,
     pub(crate) resolved_theme_mode: ThemeMode,
@@ -1264,6 +1268,8 @@ impl UiPrefsState {
             preferred_traffic_period: TrafficPeriod::Today,
             configs_library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,
             configs_inspector_width: DEFAULT_CONFIGS_INSPECTOR_WIDTH,
+            route_map_inventory_width: DEFAULT_ROUTE_MAP_INVENTORY_WIDTH,
+            route_map_inspector_width: DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH,
             proxies_view_mode: ProxiesViewMode::List,
             appearance_policy,
             resolved_theme_mode,
@@ -1498,6 +1504,25 @@ impl WgApp {
         }
         self.ui_prefs.configs_library_width = library_width;
         self.ui_prefs.configs_inspector_width = inspector_width;
+        self.persist_state_async(cx);
+        true
+    }
+
+    pub(crate) fn persist_route_map_panel_widths(
+        &mut self,
+        inventory_width: f32,
+        inspector_width: f32,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let inventory_width = inventory_width.clamp(240.0, 360.0);
+        let inspector_width = inspector_width.clamp(280.0, 420.0);
+        if self.ui_prefs.route_map_inventory_width == inventory_width
+            && self.ui_prefs.route_map_inspector_width == inspector_width
+        {
+            return false;
+        }
+        self.ui_prefs.route_map_inventory_width = inventory_width;
+        self.ui_prefs.route_map_inspector_width = inspector_width;
         self.persist_state_async(cx);
         true
     }

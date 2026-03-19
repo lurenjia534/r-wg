@@ -11,32 +11,92 @@ use gpui_component::{
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     input::Input,
-    resizable::{h_resizable, resizable_panel},
+    resizable::{h_resizable, resizable_panel, ResizableState},
     tag::Tag,
-    v_flex, ActiveTheme as _, Selectable, Sizable as _, StyledExt as _,
+    v_flex, ActiveTheme as _, PixelsExt as _, Selectable, Sizable as _, StyledExt as _,
 };
 
 use crate::ui::state::{RouteFamilyFilter, RouteMapMode, WgApp};
 use crate::ui::view::data::ViewData;
 
-use self::data::{RouteMapChip, RouteMapData, RouteMapItemStatus, RouteMapTone};
+use self::data::{
+    EffectiveRoutePlan, RouteMapChip, RouteMapData, RouteMapEvidence, RouteMapItemStatus,
+    RouteMapTone,
+};
+
+#[derive(Default)]
+struct RouteMapWorkspaceState {
+    plan: Option<EffectiveRoutePlan>,
+    evidence: Option<RouteMapEvidence>,
+}
+
+impl RouteMapWorkspaceState {
+    fn refresh(&mut self, app: &WgApp, data: &ViewData) {
+        let plan_key = RouteMapData::plan_key(app, data);
+        if self.plan.as_ref().map(|plan| plan.cache_key) != Some(plan_key) {
+            self.plan = Some(RouteMapData::build_plan(app, data));
+        }
+
+        let evidence = RouteMapData::build_evidence();
+        if self.evidence.as_ref().map(|cached| cached.cache_key) != Some(evidence.cache_key) {
+            self.evidence = Some(evidence);
+        }
+    }
+
+    fn model(&self, app: &WgApp, query: &str) -> RouteMapData {
+        RouteMapData::from_cached(
+            app,
+            query,
+            self.plan.as_ref().expect("route map plan should be cached"),
+            self.evidence
+                .as_ref()
+                .expect("route map evidence should be cached"),
+        )
+    }
+}
 
 pub(crate) fn render_route_map(
     app: &mut WgApp,
     data: &ViewData,
     window: &mut Window,
     cx: &mut Context<WgApp>,
-) -> Div {
+) -> impl IntoElement {
     app.ensure_route_map_search_input(window, cx);
+    let app_handle = cx.entity();
     let search_input = app
         .ui
         .route_map_search_input
         .clone()
         .expect("route map search input should be initialized");
     let query = search_input.read(cx).value().to_string();
-    let model = RouteMapData::new(app, data, &query);
+    let inventory_width = app.ui_prefs.route_map_inventory_width;
+    let inspector_width = app.ui_prefs.route_map_inspector_width;
+    let workspace = window.use_keyed_state("route-map-workspace", cx, |_, _| {
+        RouteMapWorkspaceState::default()
+    });
+    let _ = workspace.update(cx, |state, _| {
+        state.refresh(app, data);
+    });
+    let model = workspace.read(cx).model(app, &query);
+    let mode = app.ui_session.route_map_mode;
+    let key_search_input = search_input.clone();
+    let key_explain_match_id = model.explain_match_id.clone();
+    let key_selected_item_id = model.selected_item_id.clone();
 
     div()
+        .id("route-map-root")
+        .key_context("RouteMap")
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+            handle_route_map_keydown(
+                this,
+                key_explain_match_id.as_ref(),
+                key_selected_item_id.as_ref(),
+                &key_search_input,
+                event,
+                window,
+                cx,
+            );
+        }))
         .flex()
         .flex_col()
         .flex_1()
@@ -55,65 +115,200 @@ pub(crate) fn render_route_map(
                 .flex_1()
                 .w_full()
                 .min_h(px(0.0))
-                .child(
-                    h_resizable("route-map-layout")
-                        .child(
-                            resizable_panel()
-                                .size(px(280.0))
-                                .size_range(px(240.0)..px(360.0))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .w_full()
-                                        .h_full()
-                                        .min_h(px(0.0))
-                                        .p_3()
-                                        .child(inventory::render_inventory(&model, cx)),
-                                ),
-                        )
-                        .child(
-                            resizable_panel().size_range(px(420.0)..Pixels::MAX).child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .w_full()
-                                    .h_full()
-                                    .min_h(px(0.0))
-                                    .p_3()
-                                    .child(graph::render_graph(
-                                        &model,
-                                        app.ui_session.route_map_mode,
-                                        cx,
-                                    )),
-                            ),
-                        )
-                        .child(
-                            resizable_panel()
-                                .size(px(340.0))
-                                .size_range(px(280.0)..px(420.0))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .w_full()
-                                        .h_full()
-                                        .min_h(px(0.0))
-                                        .p_3()
-                                        .child(inspector::render_inspector(&model, cx)),
-                                ),
-                        ),
-                ),
+                .child(if mode == RouteMapMode::Events {
+                    render_events_layout(
+                        app,
+                        &model,
+                        inventory_width,
+                        app_handle.clone(),
+                        window,
+                        cx,
+                    )
+                } else {
+                    render_standard_layout(
+                        app,
+                        &model,
+                        inventory_width,
+                        inspector_width,
+                        mode,
+                        app_handle.clone(),
+                        window,
+                        cx,
+                    )
+                }),
         )
 }
 
+fn render_standard_layout(
+    app: &mut WgApp,
+    model: &RouteMapData,
+    inventory_width: f32,
+    inspector_width: f32,
+    mode: RouteMapMode,
+    app_handle: Entity<WgApp>,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) -> AnyElement {
+    h_resizable("route-map-layout")
+        .on_resize(move |state: &Entity<ResizableState>, _window, cx| {
+            let sizes = state.read(cx).sizes().clone();
+            if sizes.len() < 3 {
+                return;
+            }
+            let _ = app_handle.update(cx, |app, cx| {
+                let changed =
+                    app.persist_route_map_panel_widths(sizes[0].as_f32(), sizes[2].as_f32(), cx);
+                if changed {
+                    cx.notify();
+                }
+            });
+        })
+        .child(
+            resizable_panel()
+                .size(px(inventory_width))
+                .size_range(px(240.0)..px(360.0))
+                .child(panel_shell(
+                    inventory::render_inventory(app, model, window, cx).into_any_element(),
+                )),
+        )
+        .child(
+            resizable_panel()
+                .size_range(px(420.0)..Pixels::MAX)
+                .child(panel_shell(
+                    graph::render_graph(model, mode, window, cx).into_any_element(),
+                )),
+        )
+        .child(
+            resizable_panel()
+                .size(px(inspector_width))
+                .size_range(px(280.0)..px(420.0))
+                .child(panel_shell(
+                    inspector::render_inspector(model, cx).into_any_element(),
+                )),
+        )
+        .into_any_element()
+}
+
+fn render_events_layout(
+    app: &mut WgApp,
+    model: &RouteMapData,
+    inventory_width: f32,
+    app_handle: Entity<WgApp>,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) -> AnyElement {
+    h_resizable("route-map-layout-events")
+        .on_resize(move |state: &Entity<ResizableState>, _window, cx| {
+            let sizes = state.read(cx).sizes().clone();
+            let Some(inventory_size) = sizes.first() else {
+                return;
+            };
+            let _ = app_handle.update(cx, |app, cx| {
+                let changed = app.persist_route_map_panel_widths(
+                    inventory_size.as_f32(),
+                    app.ui_prefs.route_map_inspector_width,
+                    cx,
+                );
+                if changed {
+                    cx.notify();
+                }
+            });
+        })
+        .child(
+            resizable_panel()
+                .size(px(inventory_width))
+                .size_range(px(240.0)..px(360.0))
+                .child(panel_shell(
+                    inventory::render_inventory(app, model, window, cx).into_any_element(),
+                )),
+        )
+        .child(
+            resizable_panel()
+                .size_range(px(560.0)..Pixels::MAX)
+                .child(panel_shell(
+                    events::render_events_workspace(model, window, cx).into_any_element(),
+                )),
+        )
+        .into_any_element()
+}
+
+fn panel_shell(child: AnyElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .w_full()
+        .h_full()
+        .min_h(px(0.0))
+        .p_3()
+        .child(child)
+}
+
+fn handle_route_map_keydown(
+    app: &mut WgApp,
+    explain_match_id: Option<&SharedString>,
+    selected_item_id: Option<&SharedString>,
+    search_input: &Entity<gpui_component::input::InputState>,
+    event: &KeyDownEvent,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) {
+    if event.is_held {
+        return;
+    }
+
+    let modifiers = event.keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+        return;
+    }
+
+    let search_focused = search_input.read(cx).focus_handle(cx).is_focused(window);
+    let key = event.keystroke.key.as_str();
+
+    if key == "/" && !search_focused {
+        search_input.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+        cx.stop_propagation();
+        return;
+    }
+
+    if search_focused {
+        return;
+    }
+
+    let next_mode = match key {
+        "1" => Some(RouteMapMode::Flow),
+        "2" => Some(RouteMapMode::Routes),
+        "3" => Some(RouteMapMode::Explain),
+        "4" => Some(RouteMapMode::Events),
+        _ => None,
+    };
+    if let Some(next_mode) = next_mode {
+        app.set_route_map_mode(next_mode, cx);
+        cx.stop_propagation();
+        return;
+    }
+
+    if matches!(key, "enter" | "return") {
+        if let Some(matched_id) = explain_match_id {
+            if selected_item_id != Some(matched_id) {
+                app.set_route_map_selected_item(Some(matched_id.clone()), cx);
+                cx.stop_propagation();
+            }
+        }
+    }
+}
+
 fn render_header(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
+    let (context_chips, metric_chips): (Vec<_>, Vec<_>) = model
+        .summary_chips
+        .iter()
+        .partition(|chip| !is_metric_chip(chip));
+
     div()
         .px_6()
-        .py_5()
+        .py_4()
         .border_b_1()
         .border_color(cx.theme().border)
         .bg(linear_gradient(
@@ -122,47 +317,71 @@ fn render_header(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
             linear_color_stop(cx.theme().muted.alpha(0.72), 1.0),
         ))
         .child(
-            h_flex()
-                .items_start()
-                .justify_between()
-                .gap_4()
-                .flex_wrap()
+            v_flex()
+                .gap_3()
                 .child(
-                    v_flex()
-                        .gap_1()
+                    h_flex()
+                        .items_start()
+                        .justify_between()
+                        .gap_4()
+                        .flex_wrap()
                         .child(
-                            div()
-                                .text_xs()
-                                .font_semibold()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("ROUTE DECISION MAP"),
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_semibold()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("ROUTE DECISION MAP"),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .flex_wrap()
+                                        .child(div().text_xl().font_semibold().child("Route Map"))
+                                        .child(
+                                            Tag::secondary()
+                                                .small()
+                                                .rounded_full()
+                                                .child(model.source_label.clone()),
+                                        )
+                                        .child(
+                                            Tag::secondary()
+                                                .small()
+                                                .rounded_full()
+                                                .child(model.platform_label.clone()),
+                                        ),
+                                ),
                         )
-                        .child(div().text_xl().font_semibold().child("Route Map"))
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .flex_wrap()
+                                .children(metric_chips.into_iter().map(summary_chip)),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .items_start()
+                        .justify_between()
+                        .gap_3()
+                        .flex_wrap()
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
                                 .child(model.plan_status.clone()),
+                        )
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .flex_wrap()
+                                .children(context_chips.into_iter().map(summary_chip)),
                         ),
-                )
-                .child(
-                    h_flex()
-                        .items_center()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(
-                            Tag::secondary()
-                                .small()
-                                .rounded_full()
-                                .child(model.source_label.clone()),
-                        )
-                        .child(
-                            Tag::secondary()
-                                .small()
-                                .rounded_full()
-                                .child(model.platform_label.clone()),
-                        )
-                        .children(model.summary_chips.iter().map(summary_chip)),
                 ),
         )
 }
@@ -219,7 +438,7 @@ fn render_toolbar(
 
     div()
         .px_6()
-        .py_3()
+        .py_2()
         .border_b_1()
         .border_color(cx.theme().border.alpha(0.6))
         .child(
@@ -241,8 +460,8 @@ fn render_toolbar(
                         .max_w_full()
                         .px_2()
                         .py_1()
-                        .rounded_md()
-                        .bg(cx.theme().secondary)
+                        .rounded_lg()
+                        .bg(cx.theme().secondary.alpha(0.88))
                         .child(
                             Input::new(search_input)
                                 .appearance(false)
@@ -263,6 +482,7 @@ fn mode_button(mode: RouteMapMode, current: RouteMapMode, cx: &mut Context<WgApp
 
     Button::new(id)
         .label(mode.label())
+        .tooltip(mode_tooltip(mode))
         .selected(current == mode)
         .on_click(cx.listener(move |this, _, _, cx| {
             this.set_route_map_mode(mode, cx);
@@ -282,10 +502,28 @@ fn family_button(
 
     Button::new(id)
         .label(family.label())
+        .tooltip(family_tooltip(family))
         .selected(current == family)
         .on_click(cx.listener(move |this, _, _, cx| {
             this.set_route_map_family_filter(family, cx);
         }))
+}
+
+fn mode_tooltip(mode: RouteMapMode) -> &'static str {
+    match mode {
+        RouteMapMode::Flow => "Decision path view. Shortcut: 1",
+        RouteMapMode::Routes => "Planned route table view. Shortcut: 2",
+        RouteMapMode::Explain => "Explain the current search target. Shortcut: 3",
+        RouteMapMode::Events => "Recent runtime evidence stream. Shortcut: 4",
+    }
+}
+
+fn family_tooltip(family: RouteFamilyFilter) -> &'static str {
+    match family {
+        RouteFamilyFilter::All => "Show both IPv4 and IPv6 plan items.",
+        RouteFamilyFilter::Ipv4 => "Restrict the route plan to IPv4 items.",
+        RouteFamilyFilter::Ipv6 => "Restrict the route plan to IPv6 items.",
+    }
 }
 
 pub(super) fn summary_chip(chip: &RouteMapChip) -> Tag {
@@ -295,10 +533,6 @@ pub(super) fn summary_chip(chip: &RouteMapChip) -> Tag {
             .rounded_full()
             .child(chip.label.clone()),
         RouteMapTone::Info => Tag::info().small().rounded_full().child(chip.label.clone()),
-        RouteMapTone::Success => Tag::success()
-            .small()
-            .rounded_full()
-            .child(chip.label.clone()),
         RouteMapTone::Warning => Tag::warning()
             .small()
             .rounded_full()
@@ -313,10 +547,22 @@ pub(super) fn status_chip(status: RouteMapItemStatus) -> Tag {
             .rounded_full()
             .child(status.label()),
         RouteMapItemStatus::Applied => Tag::success().small().rounded_full().child(status.label()),
-        RouteMapItemStatus::Skipped => Tag::warning().small().rounded_full().child(status.label()),
+        RouteMapItemStatus::Skipped => Tag::secondary()
+            .outline()
+            .small()
+            .rounded_full()
+            .child(status.label()),
         RouteMapItemStatus::Failed => Tag::danger().small().rounded_full().child(status.label()),
         RouteMapItemStatus::Warning => Tag::warning().small().rounded_full().child(status.label()),
     }
+}
+
+fn is_metric_chip(chip: &RouteMapChip) -> bool {
+    let label = chip.label.as_ref();
+    label.starts_with("Guardrails ")
+        || label.starts_with("Bypass ")
+        || label.starts_with("Evidence ")
+        || label.starts_with("Routes ")
 }
 
 pub(super) fn empty_group(
