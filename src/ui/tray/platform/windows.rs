@@ -215,7 +215,11 @@ fn load_tray_icon() -> HICON {
     };
     handle
         .map(|icon| HICON(icon.0))
-        .unwrap_or_else(|_| LoadIconW(None, IDI_APPLICATION).unwrap_or_default())
+        .unwrap_or_else(|_| {
+            // SAFETY: `None` asks Windows for a shared predefined system icon,
+            // and `IDI_APPLICATION` is a valid predefined icon resource id.
+            unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() }
+        })
 }
 
 /// 托盘线程主函数。
