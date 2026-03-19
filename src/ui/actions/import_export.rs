@@ -204,10 +204,13 @@ impl WgApp {
 
         // 记录总数，用于状态提示与批量导入节奏控制。
         let total = jobs.len();
-        self.set_editor_operation(Some(EditorOperation::Importing {
-            processed: 0,
-            total,
-        }), cx);
+        self.set_editor_operation(
+            Some(EditorOperation::Importing {
+                processed: 0,
+                total,
+            }),
+            cx,
+        );
         self.set_status(format!("Loading {total} files..."));
         cx.notify();
 
@@ -302,10 +305,10 @@ impl WgApp {
                                 }
                             }
                             // 使用状态文本作为轻量“进度提示”。
-                            this.set_editor_operation(Some(EditorOperation::Importing {
-                                processed,
-                                total,
-                            }), cx);
+                            this.set_editor_operation(
+                                Some(EditorOperation::Importing { processed, total }),
+                                cx,
+                            );
                             this.set_status(format!("Importing {processed}/{total}..."));
                             cx.notify();
                         })
@@ -317,7 +320,7 @@ impl WgApp {
                     this.set_editor_operation(None, cx);
                     if imported > 0 {
                         let selected_id = this.configs.last().map(|config| config.id);
-                        this.selection.selected_id = selected_id;
+                        this.set_selected_config_id(selected_id, cx);
                         if let Some(config_id) = selected_id {
                             this.load_config_into_inputs(config_id, window, cx);
                         }

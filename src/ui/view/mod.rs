@@ -18,12 +18,27 @@ use gpui_component::{scroll::ScrollableElement as _, ActiveTheme as _, Root};
 use super::state::{SidebarItem, WgApp};
 use data::ViewData;
 
+impl WgApp {
+    fn shared_view_data(&self, cx: &mut Context<Self>) -> ViewData {
+        if let Some(workspace) = self.ui.configs_workspace.as_ref() {
+            let snapshot = workspace.read(cx);
+            ViewData::from_editor(self, &snapshot.draft, snapshot.operation.as_ref())
+        } else {
+            self.compat_editor_view_data()
+        }
+    }
+
+    fn compat_editor_view_data(&self) -> ViewData {
+        ViewData::from_editor(self, &self.editor.draft, self.editor.operation.as_ref())
+    }
+}
+
 impl Render for WgApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.start_load_persisted_state(window, cx);
 
-        let root_data =
-            (self.ui_session.sidebar_active != SidebarItem::Configs).then(|| ViewData::new(self));
+        let root_data = (self.ui_session.sidebar_active != SidebarItem::Configs)
+            .then(|| self.shared_view_data(cx));
 
         {
             let main = div()
@@ -99,11 +114,12 @@ impl Render for WgApp {
                                     .flex_1()
                                     .min_h(px(0.0))
                                     .child(main_body);
-                                let body = if self.ui_session.sidebar_active == SidebarItem::Overview {
-                                    body.overflow_y_scrollbar().into_any_element()
-                                } else {
-                                    body.into_any_element()
-                                };
+                                let body =
+                                    if self.ui_session.sidebar_active == SidebarItem::Overview {
+                                        body.overflow_y_scrollbar().into_any_element()
+                                    } else {
+                                        body.into_any_element()
+                                    };
                                 body
                             })
                             .into_any_element()

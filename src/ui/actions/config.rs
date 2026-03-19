@@ -20,7 +20,7 @@ use r_wg::backend::wg::config;
 
 use super::super::persistence;
 use super::super::state::{
-    ConfigSource, ConfigDraftState, ConfigsWorkspace, DraftValidationState, EditorOperation,
+    ConfigDraftState, ConfigSource, ConfigsWorkspace, DraftValidationState, EditorOperation,
     EndpointFamily, LoadedConfigState, PendingDraftAction, SidebarItem, TunnelConfig, WgApp,
 };
 
@@ -39,24 +39,29 @@ enum DeletePolicy {
 }
 
 impl WgApp {
-    pub(crate) fn sync_configs_workspace_snapshot(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn set_selected_config_id(
+        &mut self,
+        selected_id: Option<u64>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.selection.selected_id == selected_id {
+            return false;
+        }
+        self.selection.selected_id = selected_id;
+        self.sync_configs_selection_snapshot(cx);
+        true
+    }
+
+    pub(crate) fn sync_configs_selection_snapshot(&mut self, cx: &mut Context<Self>) {
         let Some(workspace) = self.ui.configs_workspace.clone() else {
             return;
         };
-        let draft = self.editor.draft.clone();
-        let operation = self.editor.operation.clone();
-        let pending_action = self.editor.pending_action;
-        let validation_generation = self.editor.validation_generation;
         let has_selection = self.selection.selected_id.is_some();
         let _ = workspace.update(cx, |workspace, cx| {
-            workspace.sync_editor_snapshot(
-                draft,
-                operation,
-                pending_action,
-                validation_generation,
-                has_selection,
-            );
-            cx.notify();
+            if workspace.has_selection != has_selection {
+                workspace.has_selection = has_selection;
+                cx.notify();
+            }
         });
     }
 
@@ -65,8 +70,15 @@ impl WgApp {
         operation: Option<EditorOperation>,
         cx: &mut Context<Self>,
     ) {
-        self.editor.operation = operation;
-        self.sync_configs_workspace_snapshot(cx);
+        if let Some(workspace) = self.ui.configs_workspace.clone() {
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace.operation = operation;
+                cx.notify();
+            });
+            self.mirror_editor_from_workspace(cx);
+        } else {
+            self.editor.operation = operation;
+        }
     }
 
     pub(crate) fn configs_draft_snapshot(&self, cx: &mut Context<Self>) -> ConfigDraftState {
@@ -92,17 +104,6 @@ impl WgApp {
         self.configs_operation_snapshot(cx).is_some()
     }
 
-    pub(crate) fn configs_pending_action_snapshot(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Option<PendingDraftAction> {
-        self.ui
-            .configs_workspace
-            .as_ref()
-            .map(|workspace| workspace.read(cx).pending_action)
-            .unwrap_or(self.editor.pending_action)
-    }
-
     fn mirror_editor_from_workspace(&mut self, cx: &mut Context<Self>) {
         let Some(workspace) = self.ui.configs_workspace.clone() else {
             return;
@@ -110,30 +111,6 @@ impl WgApp {
         let snapshot = workspace.read(cx);
         self.editor.draft = snapshot.draft.clone();
         self.editor.operation = snapshot.operation.clone();
-        self.editor.pending_action = snapshot.pending_action;
-        self.editor.validation_generation = snapshot.validation_generation;
-    }
-
-    pub(crate) fn configs_validation_generation(&self, cx: &mut Context<Self>) -> u64 {
-        self.ui
-            .configs_workspace
-            .as_ref()
-            .map(|workspace| workspace.read(cx).validation_generation)
-            .unwrap_or(self.editor.validation_generation)
-    }
-
-    pub(crate) fn bump_configs_validation_generation(&mut self, cx: &mut Context<Self>) -> u64 {
-        let next = self
-            .configs_validation_generation(cx)
-            .wrapping_add(1);
-        self.editor.validation_generation = next;
-        if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.validation_generation = next;
-                cx.notify();
-            });
-        }
-        next
     }
 
     pub(crate) fn set_configs_pending_action(
@@ -141,12 +118,15 @@ impl WgApp {
         action: Option<PendingDraftAction>,
         cx: &mut Context<Self>,
     ) {
-        self.editor.pending_action = action;
+        if self.ui.configs_workspace.is_none() {
+            let _ = self.ensure_configs_workspace(cx);
+        }
         if let Some(workspace) = self.ui.configs_workspace.clone() {
             let _ = workspace.update(cx, |workspace, cx| {
                 workspace.pending_action = action;
                 cx.notify();
             });
+            self.mirror_editor_from_workspace(cx);
         }
     }
 
@@ -154,14 +134,16 @@ impl WgApp {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<PendingDraftAction> {
-        let mut action = self.editor.pending_action.take();
         if let Some(workspace) = self.ui.configs_workspace.clone() {
+            let mut action = None;
             let _ = workspace.update(cx, |workspace, cx| {
-                action = workspace.pending_action.take().or(action);
+                action = workspace.pending_action.take();
                 cx.notify();
             });
+            self.mirror_editor_from_workspace(cx);
+            return action;
         }
-        action
+        None
     }
 
     fn configs_name_input(&self, cx: &mut Context<Self>) -> Option<Entity<InputState>> {
@@ -206,68 +188,76 @@ impl WgApp {
         text: SharedString,
         cx: &mut Context<Self>,
     ) {
-        if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let _ = workspace.update(cx, |workspace, cx| {
-                if workspace.sync_draft_from_values(name, text, self.runtime.running_id) {
-                    cx.notify();
-                }
-            });
-            self.mirror_editor_from_workspace(cx);
-            return;
-        }
-
-        if self.editor.draft.name == name && self.editor.draft.text == text {
-            return;
-        }
-        let text_changed = self.editor.draft.text != text;
-        self.editor.draft.name = name;
-        self.editor.draft.text = text;
-        self.refresh_draft_flags(cx);
-        if text_changed {
-            self.editor.draft.validation = DraftValidationState::Idle;
-        }
+        let workspace = self.ensure_configs_workspace(cx);
+        let _ = workspace.update(cx, |workspace, cx| {
+            if workspace.sync_draft_from_values(name, text, self.runtime.running_id) {
+                cx.notify();
+            }
+        });
+        self.mirror_editor_from_workspace(cx);
     }
 }
 
 impl ConfigsWorkspace {
+    fn sync_editor_mirror_to_app(&self, cx: &mut Context<Self>) {
+        let draft = self.draft.clone();
+        let operation = self.operation.clone();
+        let _ = self.app.update(cx, |app, _| {
+            app.editor.draft = draft;
+            app.editor.operation = operation;
+        });
+    }
+
+    fn schedule_draft_validation(&mut self, cx: &mut Context<Self>) {
+        if self.draft.text.as_ref().trim().is_empty() || self.operation.is_some() {
+            return;
+        }
+
+        self.validation_generation = self.validation_generation.wrapping_add(1);
+        let generation = self.validation_generation;
+        cx.spawn(async move |view, cx| {
+            cx.background_executor()
+                .timer(DRAFT_VALIDATION_DEBOUNCE)
+                .await;
+            let _ = view.update(cx, |this, cx| {
+                if this.validation_generation != generation || this.operation.is_some() {
+                    return;
+                }
+                let running_id = this.app.read(cx).runtime.running_id;
+                this.apply_draft_validation(running_id);
+                this.sync_editor_mirror_to_app(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn ensure_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.name_input.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Tunnel name"));
-            let subscription = cx.subscribe(&input, |this, _, event: &InputEvent, cx: &mut Context<Self>| {
-                if matches!(event, InputEvent::Change) {
-                    let Some(name_input) = this.name_input.as_ref() else {
-                        return;
-                    };
-                    let Some(config_input) = this.config_input.as_ref() else {
-                        return;
-                    };
-                    let name = name_input.read(cx).value();
-                    let text = config_input.read(cx).value();
-                    let snapshot = this.app.update(cx, |app, cx| {
-                        app.sync_draft_from_values(name, text, cx);
-                        if !app.configs_is_busy(cx) {
-                            app.schedule_draft_validation(cx);
+            let subscription = cx.subscribe(
+                &input,
+                |this, _, event: &InputEvent, cx: &mut Context<Self>| {
+                    if matches!(event, InputEvent::Change) {
+                        let Some(name_input) = this.name_input.as_ref() else {
+                            return;
+                        };
+                        let Some(config_input) = this.config_input.as_ref() else {
+                            return;
+                        };
+                        let name = name_input.read(cx).value();
+                        let text = config_input.read(cx).value();
+                        let running_id = this.app.read(cx).runtime.running_id;
+                        let has_selection = this.app.read(cx).selection.selected_id.is_some();
+                        if this.sync_draft_from_values(name, text, running_id) {
+                            this.sync_editor_mirror_to_app(cx);
                         }
-                        (
-                            app.configs_draft_snapshot(cx),
-                            app.configs_operation_snapshot(cx),
-                            app.configs_pending_action_snapshot(cx),
-                            app.configs_validation_generation(cx),
-                            app.selection.selected_id.is_some(),
-                        )
-                    });
-                    let (draft, operation, pending_action, validation_generation, has_selection) =
-                        snapshot;
-                    this.sync_editor_snapshot(
-                        draft,
-                        operation,
-                        pending_action,
-                        validation_generation,
-                        has_selection,
-                    );
-                    cx.notify();
-                }
-            });
+                        this.has_selection = has_selection;
+                        this.schedule_draft_validation(cx);
+                        cx.notify();
+                    }
+                },
+            );
             self.name_input = Some(input);
             self.name_input_subscription = Some(subscription);
         }
@@ -280,41 +270,29 @@ impl ConfigsWorkspace {
                     .rows(16)
                     .placeholder(placeholder)
             });
-            let subscription = cx.subscribe(&input, |this, _, event: &InputEvent, cx: &mut Context<Self>| {
-                if matches!(event, InputEvent::Change) {
-                    let Some(name_input) = this.name_input.as_ref() else {
-                        return;
-                    };
-                    let Some(config_input) = this.config_input.as_ref() else {
-                        return;
-                    };
-                    let name = name_input.read(cx).value();
-                    let text = config_input.read(cx).value();
-                    let snapshot = this.app.update(cx, |app, cx| {
-                        app.sync_draft_from_values(name, text, cx);
-                        if !app.configs_is_busy(cx) {
-                            app.schedule_draft_validation(cx);
+            let subscription = cx.subscribe(
+                &input,
+                |this, _, event: &InputEvent, cx: &mut Context<Self>| {
+                    if matches!(event, InputEvent::Change) {
+                        let Some(name_input) = this.name_input.as_ref() else {
+                            return;
+                        };
+                        let Some(config_input) = this.config_input.as_ref() else {
+                            return;
+                        };
+                        let name = name_input.read(cx).value();
+                        let text = config_input.read(cx).value();
+                        let running_id = this.app.read(cx).runtime.running_id;
+                        let has_selection = this.app.read(cx).selection.selected_id.is_some();
+                        if this.sync_draft_from_values(name, text, running_id) {
+                            this.sync_editor_mirror_to_app(cx);
                         }
-                        (
-                            app.configs_draft_snapshot(cx),
-                            app.configs_operation_snapshot(cx),
-                            app.configs_pending_action_snapshot(cx),
-                            app.configs_validation_generation(cx),
-                            app.selection.selected_id.is_some(),
-                        )
-                    });
-                    let (draft, operation, pending_action, validation_generation, has_selection) =
-                        snapshot;
-                    this.sync_editor_snapshot(
-                        draft,
-                        operation,
-                        pending_action,
-                        validation_generation,
-                        has_selection,
-                    );
-                    cx.notify();
-                }
-            });
+                        this.has_selection = has_selection;
+                        this.schedule_draft_validation(cx);
+                        cx.notify();
+                    }
+                },
+            );
             self.config_input = Some(input);
             self.config_input_subscription = Some(subscription);
         }
@@ -366,73 +344,13 @@ impl WgApp {
         text
     }
 
-    fn refresh_draft_flags(&mut self, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.refresh_draft_flags(self.runtime.running_id);
-                cx.notify();
-            });
-            self.mirror_editor_from_workspace(cx);
-            return;
-        }
-
-        let text_hash = text_hash(self.editor.draft.text.as_ref());
-        self.editor.draft.dirty_name = self.editor.draft.name != self.editor.draft.base_name;
-        self.editor.draft.dirty_text = text_hash != self.editor.draft.base_text_hash;
-        self.editor.draft.needs_restart =
-            self.editor.draft.is_dirty() && self.runtime.running_id == self.editor.draft.source_id;
-    }
-
     fn apply_draft_validation(&mut self, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.apply_draft_validation(self.runtime.running_id);
-                cx.notify();
-            });
-            self.mirror_editor_from_workspace(cx);
-            return;
-        }
-
-        let text = self.editor.draft.text.clone();
-
-        self.refresh_draft_flags(cx);
-        self.editor.draft.validation = if text.as_ref().trim().is_empty() {
-            DraftValidationState::Idle
-        } else {
-            match config::parse_config(text.as_ref()) {
-                Ok(parsed) => DraftValidationState::Valid {
-                    endpoint_family: endpoint_family_hint_from_config(&parsed).base_family,
-                    parsed,
-                },
-                Err(err) => DraftValidationState::Invalid {
-                    line: err.line,
-                    message: err.message.into(),
-                },
-            }
-        };
-        self.sync_configs_workspace_snapshot(cx);
-    }
-
-    fn schedule_draft_validation(&mut self, cx: &mut Context<Self>) {
-        if self.configs_draft_snapshot(cx).text.as_ref().trim().is_empty() {
-            return;
-        }
-
-        let generation = self.bump_configs_validation_generation(cx);
-        cx.spawn(async move |view, cx| {
-            cx.background_executor()
-                .timer(DRAFT_VALIDATION_DEBOUNCE)
-                .await;
-            let _ = view.update(cx, |this, cx| {
-                if this.configs_validation_generation(cx) != generation || this.configs_is_busy(cx)
-                {
-                    return;
-                }
-                this.apply_draft_validation(cx);
-                cx.notify();
-            });
-        })
-        .detach();
+        let workspace = self.ensure_configs_workspace(cx);
+        let _ = workspace.update(cx, |workspace, cx| {
+            workspace.apply_draft_validation(self.runtime.running_id);
+            cx.notify();
+        });
+        self.mirror_editor_from_workspace(cx);
     }
 
     fn set_saved_draft(
@@ -442,52 +360,31 @@ impl WgApp {
         text: SharedString,
         cx: &mut Context<Self>,
     ) {
-        if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let workspace_name = name.clone();
-            let workspace_text = text.clone();
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.set_saved_draft(source_id, workspace_name, workspace_text);
-                cx.notify();
-            });
-            self.mirror_editor_from_workspace(cx);
-        } else {
-            self.editor.draft = ConfigDraftState {
-                source_id: Some(source_id),
-                name: name.clone(),
-                text: text.clone(),
-                base_name: name,
-                base_text_hash: text_hash(text.as_ref()),
-                dirty_name: false,
-                dirty_text: false,
-                validation: DraftValidationState::Idle,
-                needs_restart: false,
-            };
-        }
+        let workspace = self.ensure_configs_workspace(cx);
+        let workspace_name = name.clone();
+        let workspace_text = text.clone();
+        let _ = workspace.update(cx, |workspace, cx| {
+            workspace.set_saved_draft(source_id, workspace_name, workspace_text);
+            cx.notify();
+        });
+        self.mirror_editor_from_workspace(cx);
         self.apply_draft_validation(cx);
     }
 
-    fn set_unsaved_draft(&mut self, name: SharedString, text: SharedString, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let workspace_name = name.clone();
-            let workspace_text = text.clone();
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.set_unsaved_draft(workspace_name, workspace_text);
-                cx.notify();
-            });
-            self.mirror_editor_from_workspace(cx);
-        } else {
-            self.editor.draft = ConfigDraftState {
-                source_id: None,
-                name,
-                text,
-                base_name: SharedString::new_static(""),
-                base_text_hash: 0,
-                dirty_name: true,
-                dirty_text: true,
-                validation: DraftValidationState::Idle,
-                needs_restart: false,
-            };
-        }
+    fn set_unsaved_draft(
+        &mut self,
+        name: SharedString,
+        text: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.ensure_configs_workspace(cx);
+        let workspace_name = name.clone();
+        let workspace_text = text.clone();
+        let _ = workspace.update(cx, |workspace, cx| {
+            workspace.set_unsaved_draft(workspace_name, workspace_text);
+            cx.notify();
+        });
+        self.mirror_editor_from_workspace(cx);
         self.apply_draft_validation(cx);
     }
 
@@ -498,16 +395,15 @@ impl WgApp {
         let name = name_input.read(cx).value();
         let text = config_input.read(cx).value();
         self.sync_draft_from_values(name, text, cx);
-        self.sync_configs_workspace_snapshot(cx);
     }
 
     fn discard_current_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.configs_draft_snapshot(cx);
         if let Some(source_id) = draft.source_id.or(self.selection.selected_id) {
-            self.selection.selected_id = Some(source_id);
+            self.set_selected_config_id(Some(source_id), cx);
             self.load_config_into_inputs(source_id, window, cx);
         } else {
-            self.selection.selected_id = None;
+            self.set_selected_config_id(None, cx);
             self.clear_inputs(window, cx);
         }
     }
@@ -523,7 +419,7 @@ impl WgApp {
                 if self.selection.selected_id == Some(config_id) {
                     return;
                 }
-                self.selection.selected_id = Some(config_id);
+                self.set_selected_config_id(Some(config_id), cx);
                 self.load_config_into_inputs(config_id, window, cx);
                 self.persist_state_async(cx);
                 self.set_status("Loaded tunnel");
@@ -533,7 +429,7 @@ impl WgApp {
                 self.set_sidebar_active(item, cx);
             }
             PendingDraftAction::NewDraft => {
-                self.selection.selected_id = None;
+                self.set_selected_config_id(None, cx);
                 self.clear_inputs(window, cx);
                 self.set_status("New draft");
                 cx.notify();
@@ -597,15 +493,15 @@ impl WgApp {
                 .footer(move |_ok, _cancel, _window, _cx| {
                     let save_handle = app_handle_save.clone();
                     let discard_handle = app_handle_discard.clone();
-                    let save_button = Button::new("draft-dialog-save")
-                        .label("Save")
-                        .on_click(move |_, window, cx| {
+                    let save_button = Button::new("draft-dialog-save").label("Save").on_click(
+                        move |_, window, cx| {
                             let _ = save_handle.update(cx, |app, cx| {
                                 app.set_configs_pending_action(Some(action), cx);
                                 app.save_draft(false, window, cx);
                             });
                             window.close_dialog(cx);
-                        });
+                        },
+                    );
                     let discard_button = Button::new("draft-dialog-discard")
                         .label("Discard")
                         .danger()
@@ -738,7 +634,7 @@ impl WgApp {
         };
 
         let config_id = self.configs[idx].id;
-        self.selection.selected_id = Some(config_id);
+        self.set_selected_config_id(Some(config_id), cx);
         if let Some(text) = self.configs[idx].text.clone() {
             self.set_saved_draft(config_id, self.configs[idx].name.clone().into(), text, cx);
         }
@@ -895,7 +791,12 @@ impl WgApp {
                             if should_write_ui {
                                 this.selection.loading_config_id = None;
                                 this.selection.loading_config_path = None;
-                                this.set_saved_draft(config_id, name.clone().into(), text.clone(), cx);
+                                this.set_saved_draft(
+                                    config_id,
+                                    name.clone().into(),
+                                    text.clone(),
+                                    cx,
+                                );
                                 if let Some(config_input) = this.configs_config_input(cx) {
                                     config_input.update(cx, |input, cx| {
                                         input.set_value(text.clone(), window, cx);
@@ -993,7 +894,7 @@ impl WgApp {
             suggested_name.to_string()
         };
 
-        self.selection.selected_id = None;
+        self.set_selected_config_id(None, cx);
         self.selection.loading_config_id = None;
         self.selection.loading_config_path = None;
         self.selection.loaded_config = None;
@@ -1052,15 +953,13 @@ impl WgApp {
             }
         };
 
-        let source_id = if force_new {
-            None
-        } else {
-            draft.source_id
-        };
+        let source_id = if force_new { None } else { draft.source_id };
 
-        if self.configs.iter().any(|entry| {
-            entry.name == name && Some(entry.id) != source_id
-        }) {
+        if self
+            .configs
+            .iter()
+            .any(|entry| entry.name == name && Some(entry.id) != source_id)
+        {
             self.set_error("Tunnel name already exists");
             cx.notify();
             return;
@@ -1206,16 +1105,13 @@ impl WgApp {
             }
         }
         if draft.source_id == Some(config_id) {
-            if let Some(workspace) = self.ui.configs_workspace.clone() {
-                let base_name: SharedString = new_name.to_string().into();
-                let _ = workspace.update(cx, |workspace, cx| {
-                    workspace.draft.base_name = base_name;
-                    cx.notify();
-                });
-                self.mirror_editor_from_workspace(cx);
-            } else {
-                self.editor.draft.base_name = new_name.to_string().into();
-            }
+            let workspace = self.ensure_configs_workspace(cx);
+            let base_name: SharedString = new_name.to_string().into();
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace.draft.base_name = base_name;
+                cx.notify();
+            });
+            self.mirror_editor_from_workspace(cx);
             self.apply_draft_validation(cx);
         }
         if self.runtime.running_name.as_deref() == Some(old_name.as_str()) {
@@ -1363,22 +1259,22 @@ impl WgApp {
         self.selection.loading_config_path = None;
 
         if self.configs.is_empty() {
-            self.selection.selected_id = None;
+            self.set_selected_config_id(None, cx);
             self.clear_inputs(window, cx);
         } else if let Some(prev_id) = prev_selected_id {
             if self.configs.get_by_id(prev_id).is_some() {
-                self.selection.selected_id = Some(prev_id);
+                self.set_selected_config_id(Some(prev_id), cx);
             } else if let Some(prev_idx) = prev_selected_idx {
                 let idx = prev_idx.min(self.configs.len() - 1);
                 let fallback_id = self.configs[idx].id;
-                self.selection.selected_id = Some(fallback_id);
+                self.set_selected_config_id(Some(fallback_id), cx);
                 self.load_config_into_inputs(fallback_id, window, cx);
             } else {
-                self.selection.selected_id = None;
+                self.set_selected_config_id(None, cx);
                 self.clear_inputs(window, cx);
             }
         } else {
-            self.selection.selected_id = None;
+            self.set_selected_config_id(None, cx);
             self.clear_inputs(window, cx);
         }
 
@@ -1482,15 +1378,12 @@ impl WgApp {
         self.selection.loaded_config = None;
         self.selection.loading_config_id = None;
         self.selection.loading_config_path = None;
-        if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.draft = ConfigDraftState::new();
-                cx.notify();
-            });
-            self.mirror_editor_from_workspace(cx);
-        } else {
-            self.editor.draft = ConfigDraftState::new();
-        }
+        let workspace = self.ensure_configs_workspace(cx);
+        let _ = workspace.update(cx, |workspace, cx| {
+            workspace.draft = ConfigDraftState::new();
+            cx.notify();
+        });
+        self.mirror_editor_from_workspace(cx);
         self.set_editor_operation(None, cx);
         if let Some(name_input) = self.configs_name_input(cx) {
             name_input.update(cx, |input, cx| input.set_value("", window, cx));
@@ -1498,7 +1391,7 @@ impl WgApp {
         if let Some(config_input) = self.configs_config_input(cx) {
             config_input.update(cx, |input, cx| input.set_value("", window, cx));
         }
-        self.sync_configs_workspace_snapshot(cx);
+        self.sync_configs_selection_snapshot(cx);
     }
 
     /// 生成一个不会与现有配置重名的名称。

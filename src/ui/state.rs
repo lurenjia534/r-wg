@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet, VecDeque};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 use std::ops::{Deref, DerefMut};
@@ -146,10 +146,7 @@ impl ConfigDraftState {
 pub(crate) enum EditorOperation {
     LoadingConfig,
     Saving,
-    Importing {
-        processed: usize,
-        total: usize,
-    },
+    Importing { processed: usize, total: usize },
     Exporting,
     Deleting,
 }
@@ -157,8 +154,6 @@ pub(crate) enum EditorOperation {
 pub(crate) struct EditorState {
     pub(crate) draft: ConfigDraftState,
     pub(crate) operation: Option<EditorOperation>,
-    pub(crate) pending_action: Option<PendingDraftAction>,
-    pub(crate) validation_generation: u64,
 }
 
 impl EditorState {
@@ -166,13 +161,7 @@ impl EditorState {
         Self {
             draft: ConfigDraftState::new(),
             operation: None,
-            pending_action: None,
-            validation_generation: 0,
         }
-    }
-
-    pub(crate) fn is_busy(&self) -> bool {
-        self.operation.is_some()
     }
 }
 
@@ -217,17 +206,12 @@ impl ConfigsWorkspace {
 
     pub(crate) fn sync_from_app(&mut self, app: &WgApp) {
         if !self.initialized {
+            self.has_selection = app.selection.selected_id.is_some();
             self.inspector_tab = app.ui_prefs.preferred_inspector_tab;
             self.library_width = app.ui_prefs.configs_library_width;
             self.inspector_width = app.ui_prefs.configs_inspector_width;
             self.initialized = true;
         }
-
-        self.draft = app.editor.draft.clone();
-        self.operation = app.editor.operation.clone();
-        self.pending_action = app.editor.pending_action;
-        self.validation_generation = app.editor.validation_generation;
-        self.has_selection = app.selection.selected_id.is_some();
 
         let next_rows = app
             .configs
@@ -276,8 +260,7 @@ impl ConfigsWorkspace {
         let text_hash = workspace_text_hash(self.draft.text.as_ref());
         self.draft.dirty_name = self.draft.name != self.draft.base_name;
         self.draft.dirty_text = text_hash != self.draft.base_text_hash;
-        self.draft.needs_restart =
-            self.draft.is_dirty() && running_id == self.draft.source_id;
+        self.draft.needs_restart = self.draft.is_dirty() && running_id == self.draft.source_id;
     }
 
     pub(crate) fn sync_draft_from_values(
@@ -318,7 +301,12 @@ impl ConfigsWorkspace {
         };
     }
 
-    pub(crate) fn set_saved_draft(&mut self, source_id: u64, name: SharedString, text: SharedString) {
+    pub(crate) fn set_saved_draft(
+        &mut self,
+        source_id: u64,
+        name: SharedString,
+        text: SharedString,
+    ) {
         self.draft = ConfigDraftState {
             source_id: Some(source_id),
             name: name.clone(),
@@ -359,7 +347,8 @@ impl ConfigsWorkspace {
     }
 
     pub(crate) fn set_panel_widths(&mut self, library_width: f32, inspector_width: f32) -> bool {
-        let changed = self.library_width != library_width || self.inspector_width != inspector_width;
+        let changed =
+            self.library_width != library_width || self.inspector_width != inspector_width;
         if changed {
             self.library_width = library_width;
             self.inspector_width = inspector_width;

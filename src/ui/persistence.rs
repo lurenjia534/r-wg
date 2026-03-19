@@ -297,7 +297,10 @@ mod tests {
         assert_eq!(loaded.selected_id, state.selected_id);
         assert_eq!(loaded.theme_mode, state.theme_mode);
         assert_eq!(loaded.log_auto_follow, state.log_auto_follow);
-        assert_eq!(loaded.preferred_inspector_tab, state.preferred_inspector_tab);
+        assert_eq!(
+            loaded.preferred_inspector_tab,
+            state.preferred_inspector_tab
+        );
         assert_eq!(
             loaded.preferred_traffic_period,
             state.preferred_traffic_period

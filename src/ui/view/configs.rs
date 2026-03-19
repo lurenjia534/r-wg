@@ -14,9 +14,7 @@ use gpui_component::{
     Sizable as _, StyledExt as _,
 };
 
-use super::super::format::{
-    format_addresses, format_allowed_ips, format_dns, format_route_table,
-};
+use super::super::format::{format_addresses, format_allowed_ips, format_dns, format_route_table};
 use super::super::state::{
     ConfigInspectorTab, ConfigSource, ConfigsLibraryRow, ConfigsWorkspace, DraftValidationState,
     EndpointFamily, WgApp,
@@ -116,9 +114,23 @@ pub(crate) fn render_configs_page(
             .flex_1()
             .min_h(px(0.0))
             .p_3()
-            .child(render_library_panel(app, data, workspace, library_rows, window, cx))
+            .child(render_library_panel(
+                app,
+                data,
+                workspace,
+                library_rows,
+                window,
+                cx,
+            ))
             .child(render_editor_panel(app, data, name_input, config_input, cx))
-            .child(render_inspector_panel(app, workspace, inspector_tab, compact, data, cx))
+            .child(render_inspector_panel(
+                app,
+                workspace,
+                inspector_tab,
+                compact,
+                data,
+                cx,
+            ))
             .into_any_element()
     } else {
         div()
@@ -143,10 +155,9 @@ pub(crate) fn render_configs_page(
                                 );
                                 if let Some(workspace) = app.ui.configs_workspace.clone() {
                                     let _ = workspace.update(cx, |workspace, cx| {
-                                        if workspace.set_panel_widths(
-                                            library_width,
-                                            inspector_width,
-                                        ) {
+                                        if workspace
+                                            .set_panel_widths(library_width, inspector_width)
+                                        {
                                             cx.notify();
                                         }
                                     });
@@ -160,47 +171,36 @@ pub(crate) fn render_configs_page(
                         resizable_panel()
                             .size(px(library_width))
                             .size_range(px(240.0)..px(420.0))
-                            .child(
-                                div()
-                                    .h_full()
-                                    .p_3()
-                                    .child(render_library_panel(
-                                        app,
-                                        data,
-                                        workspace,
-                                        library_rows,
-                                        window,
-                                        cx,
-                                    )),
-                            ),
+                            .child(div().h_full().p_3().child(render_library_panel(
+                                app,
+                                data,
+                                workspace,
+                                library_rows,
+                                window,
+                                cx,
+                            ))),
                     )
-                    .child(
-                        resizable_panel()
-                            .size_range(px(420.0)..Pixels::MAX)
-                            .child(
-                                div()
-                                    .h_full()
-                                    .p_3()
-                                    .child(render_editor_panel(app, data, name_input, config_input, cx)),
-                            ),
-                    )
+                    .child(resizable_panel().size_range(px(420.0)..Pixels::MAX).child(
+                        div().h_full().p_3().child(render_editor_panel(
+                            app,
+                            data,
+                            name_input,
+                            config_input,
+                            cx,
+                        )),
+                    ))
                     .child(
                         resizable_panel()
                             .size(px(inspector_width))
                             .size_range(px(280.0)..px(440.0))
-                            .child(
-                                div()
-                                    .h_full()
-                                    .p_3()
-                                    .child(render_inspector_panel(
-                                        app,
-                                        workspace,
-                                        inspector_tab,
-                                        compact,
-                                        data,
-                                        cx,
-                                    )),
-                            ),
+                            .child(div().h_full().p_3().child(render_inspector_panel(
+                                app,
+                                workspace,
+                                inspector_tab,
+                                compact,
+                                data,
+                                cx,
+                            ))),
                     ),
             )
             .into_any_element()
@@ -259,8 +259,8 @@ fn render_configs_shell_header(
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
                                 .child(
-                                    "Edit, validate, and manage tunnel profiles from one workspace.",
-                                ),
+                                "Edit, validate, and manage tunnel profiles from one workspace.",
+                            ),
                         ),
                 )
                 .child(
@@ -274,12 +274,7 @@ fn render_configs_shell_header(
                             this.child(Tag::warning().small().rounded_full().child("Dirty"))
                         })
                         .when(data.shared.needs_restart, |this| {
-                            this.child(
-                                Tag::warning()
-                                    .small()
-                                    .rounded_full()
-                                    .child("Needs restart"),
-                            )
+                            this.child(Tag::warning().small().rounded_full().child("Needs restart"))
                         })
                         .when(data.is_running_draft, |this| {
                             this.child(Tag::success().small().rounded_full().child("Running"))
@@ -388,14 +383,17 @@ fn render_library_panel(
                                         })),
                                 ),
                         )
-                        .when(!data.has_saved_source && !data.draft.name.is_empty(), |this| {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Working on an unsaved draft."),
-                            )
-                        }),
+                        .when(
+                            !data.has_saved_source && !data.draft.name.is_empty(),
+                            |this| {
+                                this.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Working on an unsaved draft."),
+                                )
+                            },
+                        ),
                 ),
         )
         .child(
@@ -563,33 +561,29 @@ fn render_editor_panel(
                                 .items_center()
                                 .gap_2()
                                 .flex_wrap()
-                                .child(
-                                    Tag::secondary().small().rounded_full().child(if data.has_saved_source {
+                                .child(Tag::secondary().small().rounded_full().child(
+                                    if data.has_saved_source {
                                         "Saved config"
                                     } else {
                                         "Unsaved draft"
-                                    }),
-                                )
-                                .child(
-                                    if data.shared.draft_dirty {
-                                        Tag::warning().small().rounded_full().child("Dirty")
-                                    } else {
-                                        Tag::secondary().small().rounded_full().child("Saved")
                                     },
-                                )
-                                .child(
-                                    match &data.draft.validation {
-                                        DraftValidationState::Valid { .. } => {
-                                            Tag::success().small().rounded_full().child("Valid")
-                                        }
-                                        DraftValidationState::Invalid { .. } => {
-                                            Tag::danger().small().rounded_full().child("Invalid")
-                                        }
-                                        DraftValidationState::Idle => {
-                                            Tag::secondary().small().rounded_full().child("Draft")
-                                        }
-                                    },
-                                )
+                                ))
+                                .child(if data.shared.draft_dirty {
+                                    Tag::warning().small().rounded_full().child("Dirty")
+                                } else {
+                                    Tag::secondary().small().rounded_full().child("Saved")
+                                })
+                                .child(match &data.draft.validation {
+                                    DraftValidationState::Valid { .. } => {
+                                        Tag::success().small().rounded_full().child("Valid")
+                                    }
+                                    DraftValidationState::Invalid { .. } => {
+                                        Tag::danger().small().rounded_full().child("Invalid")
+                                    }
+                                    DraftValidationState::Idle => {
+                                        Tag::secondary().small().rounded_full().child("Draft")
+                                    }
+                                })
                                 .when(data.shared.needs_restart, |this| {
                                     this.child(
                                         Tag::warning()
@@ -718,7 +712,8 @@ fn render_inspector_panel(
             ),
             DraftValidationState::Invalid { line, message, .. } => (
                 "Invalid".to_string(),
-                line.map(|line| line.to_string()).unwrap_or_else(|| "-".to_string()),
+                line.map(|line| line.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
                 message.to_string(),
             ),
         };
@@ -854,8 +849,7 @@ fn inspector_tab_row(
                     let workspace = workspace.clone();
                     move |_, _, cx| {
                         let _ = workspace.update(cx, |workspace, cx| {
-                            let changed =
-                                workspace.set_inspector_tab(ConfigInspectorTab::Preview);
+                            let changed = workspace.set_inspector_tab(ConfigInspectorTab::Preview);
                             let _ = workspace.app.update(cx, |app, cx| {
                                 app.persist_preferred_inspector_tab(
                                     ConfigInspectorTab::Preview,
@@ -906,8 +900,7 @@ fn inspector_tab_row(
                     let workspace = workspace.clone();
                     move |_, _, cx| {
                         let _ = workspace.update(cx, |workspace, cx| {
-                            let changed =
-                                workspace.set_inspector_tab(ConfigInspectorTab::Activity);
+                            let changed = workspace.set_inspector_tab(ConfigInspectorTab::Activity);
                             let _ = workspace.app.update(cx, |app, cx| {
                                 app.persist_preferred_inspector_tab(
                                     ConfigInspectorTab::Activity,
@@ -988,9 +981,10 @@ fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> 
                 .when(data.shared.needs_restart, |this| {
                     this.child(Tag::warning().small().child("Restart required"))
                 })
-                .when(matches!(data.draft.validation, DraftValidationState::Valid { .. }), |this| {
-                    this.child(Tag::success().small().child("Ready"))
-                }),
+                .when(
+                    matches!(data.draft.validation, DraftValidationState::Valid { .. }),
+                    |this| this.child(Tag::success().small().child("Ready")),
+                ),
         )
 }
 
@@ -1018,36 +1012,35 @@ fn editor_action_bar(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> Div {
                 let export_handle = app_handle.clone();
                 let copy_handle = app_handle.clone();
                 let delete_handle = app_handle.clone();
-                menu
-                    .item(PopupMenuItem::new("Rename").on_click({
-                        move |_, window, cx| {
-                            let _ = rename_handle.update(cx, |this, cx| {
-                                this.handle_rename_click(window, cx);
-                            });
-                        }
-                    }))
-                    .item(PopupMenuItem::new("Export").on_click({
-                        move |_, _, cx| {
-                            let _ = export_handle.update(cx, |this, cx| {
-                                this.handle_export_click(cx);
-                            });
-                        }
-                    }))
-                    .item(PopupMenuItem::new("Copy").on_click({
-                        move |_, _, cx| {
-                            let _ = copy_handle.update(cx, |this, cx| {
-                                this.handle_copy_click(cx);
-                            });
-                        }
-                    }))
-                    .item(PopupMenuItem::separator())
-                    .item(PopupMenuItem::new("Delete").on_click({
-                        move |_, window, cx| {
-                            let _ = delete_handle.update(cx, |this, cx| {
-                                this.handle_delete_click(window, cx);
-                            });
-                        }
-                    }))
+                menu.item(PopupMenuItem::new("Rename").on_click({
+                    move |_, window, cx| {
+                        let _ = rename_handle.update(cx, |this, cx| {
+                            this.handle_rename_click(window, cx);
+                        });
+                    }
+                }))
+                .item(PopupMenuItem::new("Export").on_click({
+                    move |_, _, cx| {
+                        let _ = export_handle.update(cx, |this, cx| {
+                            this.handle_export_click(cx);
+                        });
+                    }
+                }))
+                .item(PopupMenuItem::new("Copy").on_click({
+                    move |_, _, cx| {
+                        let _ = copy_handle.update(cx, |this, cx| {
+                            this.handle_copy_click(cx);
+                        });
+                    }
+                }))
+                .item(PopupMenuItem::separator())
+                .item(PopupMenuItem::new("Delete").on_click({
+                    move |_, window, cx| {
+                        let _ = delete_handle.update(cx, |this, cx| {
+                            this.handle_delete_click(window, cx);
+                        });
+                    }
+                }))
             })
             .into_any_element()
     };

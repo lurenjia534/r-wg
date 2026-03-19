@@ -10,8 +10,7 @@ use r_wg::log::events::stats as log_stats;
 
 use super::super::state::{
     ConfigInspectorTab, SidebarItem, TrafficDay, TrafficDayStats, TrafficHour, WgApp,
-    SPARKLINE_SAMPLES,
-    TRAFFIC_HISTORY_DAYS, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
+    SPARKLINE_SAMPLES, TRAFFIC_HISTORY_DAYS, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
 };
 
 impl WgApp {

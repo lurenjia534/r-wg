@@ -8,8 +8,7 @@ use super::super::format::{
 };
 use super::super::state::{
     ConfigDraftState, DraftValidationState, EditorOperation, TrafficDayStats, TrafficHour,
-    TrafficPeriod, TunnelConfig, WgApp,
-    TRAFFIC_TREND_DAYS,
+    TrafficPeriod, TunnelConfig, WgApp, TRAFFIC_TREND_DAYS,
 };
 
 /// `ConfigStatus` 是配置编辑页和顶部工具栏共享的“解析结果快照”。
@@ -184,11 +183,6 @@ impl TrafficRankItem {
 }
 
 impl ViewData {
-    /// 从应用状态构造渲染数据。
-    pub(crate) fn new(app: &WgApp) -> Self {
-        Self::from_editor(app, &app.editor.draft, app.editor.operation.as_ref())
-    }
-
     /// 从显式传入的 editor 快照构造共享派生数据。
     pub(crate) fn from_editor(
         app: &WgApp,
