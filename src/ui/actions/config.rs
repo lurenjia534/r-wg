@@ -113,6 +113,7 @@ impl WgApp {
             return false;
         }
         self.selection.selected_id = selected_id;
+        self.selection.selection_revision = self.selection.selection_revision.wrapping_add(1);
         self.sync_configs_selection_snapshot(cx);
         true
     }
@@ -398,6 +399,7 @@ impl WgApp {
                 self.selection.config_text_cache.remove(&evicted);
             }
         }
+        self.selection.selection_revision = self.selection.selection_revision.wrapping_add(1);
     }
 
     pub(crate) fn cached_config_text(&mut self, path: &Path) -> Option<SharedString> {
@@ -411,6 +413,10 @@ impl WgApp {
                 .push_back(path.to_path_buf());
         }
         text
+    }
+
+    pub(crate) fn peek_cached_config_text(&self, path: &Path) -> Option<SharedString> {
+        self.selection.config_text_cache.get(path).cloned()
     }
 
     fn apply_draft_validation(&mut self, cx: &mut Context<Self>) {
@@ -1188,6 +1194,7 @@ impl WgApp {
         }
         if self.runtime.running_name.as_deref() == Some(old_name.as_str()) {
             self.runtime.running_name = Some(new_name.to_string());
+            self.runtime.runtime_revision = self.runtime.runtime_revision.wrapping_add(1);
         }
         self.set_status(format!("Renamed to {new_name}"));
         self.persist_state_async(cx);
@@ -1308,8 +1315,7 @@ impl WgApp {
         let prev_selected_idx = prev_selected_id.and_then(|id| self.configs.find_index_by_id(id));
 
         for id in &to_delete_ids {
-            self.stats.config_traffic_days.remove(id);
-            self.stats.config_traffic_hours.remove(id);
+            self.stats.traffic.remove_config(*id);
         }
 
         self.configs.retain(|cfg| !to_delete_ids.contains(&cfg.id));

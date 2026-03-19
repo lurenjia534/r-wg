@@ -27,7 +27,7 @@ use super::super::state::{
 };
 use super::super::theme_lint::{self, ThemeLintItem, ThemeLintSeverity};
 use super::super::themes::{self, AppearancePolicy};
-use super::widgets::backend_status_tag;
+use super::widgets::{backend_status_tag, PageShell, PageShellHeader};
 
 pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
     let app_handle = cx.entity();
@@ -104,52 +104,21 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
         .page(monitoring_page)
         .page(system_page);
 
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_h(px(0.0))
-        .rounded_lg()
-        .border_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().tiles)
-        .overflow_hidden()
-        .child(render_settings_shell_header(cx))
-        .child(
-            div()
-                .flex_1()
-                .min_h(px(0.0))
-                .w_full()
-                .flex()
-                .justify_center()
-                .child(div().h_full().w_full().max_w(px(1040.0)).child(settings)),
-        )
-}
-
-fn render_settings_shell_header(cx: &mut Context<WgApp>) -> Div {
-    div()
-        .px_5()
-        .py_4()
-        .border_b_1()
-        .border_color(cx.theme().border)
-        .child(
-            v_flex()
-                .gap_1()
-                .child(
-                    div()
-                        .text_xs()
-                        .font_semibold()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("SETTINGS"),
-                )
-                .child(div().text_xl().font_semibold().child("Preferences"))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Manage appearance, defaults, and system integration in one place."),
-                ),
-        )
+    PageShell::new(
+        PageShellHeader::new(
+            "SETTINGS",
+            "Preferences",
+            "Manage appearance, defaults, and system integration in one place.",
+        ),
+        div()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .flex()
+            .justify_center()
+            .child(div().h_full().w_full().max_w(px(1040.0)).child(settings)),
+    )
+    .render(cx)
 }
 
 fn settings_sidebar_style(cx: &mut Context<WgApp>) -> gpui::StyleRefinement {

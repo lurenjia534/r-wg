@@ -7,13 +7,14 @@ use gpui_component::theme::ThemeMode;
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use super::super::persistence::{
-    self, PersistedConfig, PersistedConfigTrafficDay, PersistedConfigTrafficHour, PersistedSource,
-    PersistedState, PersistedTrafficDayStats, PersistedTrafficHour, StoragePaths, STATE_VERSION,
+    self, PersistedConfig, PersistedConfigTrafficDayBucket, PersistedConfigTrafficHourBucket,
+    PersistedSource, PersistedState, PersistedTrafficDayBucket, PersistedTrafficHourBucket,
+    StoragePaths, STATE_VERSION,
 };
 use super::super::state::{
     build_configs_library_rows, ConfigSource, ConfigsState, EndpointFamily, SelectionState,
-    StatsState, TrafficDay, TrafficDayStats, TrafficHour, TunnelConfig, UiPrefsState, WgApp,
-    TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
+    StatsState, TrafficDayBucket, TrafficHourBucket, TrafficStore, TunnelConfig, UiPrefsState,
+    WgApp, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
 };
 use super::super::themes::{self, AppearancePolicy};
 
@@ -244,54 +245,51 @@ impl<'a> PersistedStateSnapshot<'a> {
             proxies_view_mode: Some(self.ui_prefs.proxies_view_mode),
             dns_mode: Some(self.ui_prefs.dns_mode),
             dns_preset: Some(self.ui_prefs.dns_preset),
-            traffic_days: self
+            traffic_global_days: self
                 .stats
-                .traffic_days
-                .clone()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            traffic_days_v2: self
-                .stats
-                .traffic_days_v2
+                .traffic
+                .global_days
                 .iter()
-                .map(|day| PersistedTrafficDayStats {
-                    date: day.date.clone(),
+                .map(|day| PersistedTrafficDayBucket {
+                    day_key: day.day_key,
                     rx_bytes: day.rx_bytes,
                     tx_bytes: day.tx_bytes,
                 })
                 .collect(),
-            traffic_hours: self
+            traffic_global_hours: self
                 .stats
-                .traffic_hours
+                .traffic
+                .global_hours
                 .iter()
-                .map(|hour| PersistedTrafficHour {
-                    hour: hour.hour,
+                .map(|hour| PersistedTrafficHourBucket {
+                    hour_key: hour.hour_key,
                     rx_bytes: hour.rx_bytes,
                     tx_bytes: hour.tx_bytes,
                 })
                 .collect(),
-            config_traffic_days: self
+            traffic_config_days: self
                 .stats
-                .config_traffic_days
+                .traffic
+                .config_days
                 .iter()
                 .flat_map(|(config_id, days)| {
-                    days.iter().map(|day| PersistedConfigTrafficDay {
+                    days.iter().map(|day| PersistedConfigTrafficDayBucket {
                         config_id: *config_id,
-                        date: day.date.clone(),
+                        day_key: day.day_key,
                         rx_bytes: day.rx_bytes,
                         tx_bytes: day.tx_bytes,
                     })
                 })
                 .collect(),
-            config_traffic_hours: self
+            traffic_config_hours: self
                 .stats
-                .config_traffic_hours
+                .traffic
+                .config_hours
                 .iter()
                 .flat_map(|(config_id, hours)| {
-                    hours.iter().map(|hour| PersistedConfigTrafficHour {
+                    hours.iter().map(|hour| PersistedConfigTrafficHourBucket {
                         config_id: *config_id,
-                        hour: hour.hour,
+                        hour_key: hour.hour_key,
                         rx_bytes: hour.rx_bytes,
                         tx_bytes: hour.tx_bytes,
                     })
@@ -330,11 +328,7 @@ struct PersistedStateRestore {
     configs: Vec<TunnelConfig>,
     next_config_id: u64,
     selected_id: Option<u64>,
-    traffic_days: Vec<TrafficDay>,
-    traffic_days_v2: Vec<TrafficDayStats>,
-    traffic_hours: Vec<TrafficHour>,
-    config_traffic_days: HashMap<u64, Vec<TrafficDayStats>>,
-    config_traffic_hours: HashMap<u64, Vec<TrafficHour>>,
+    traffic: TrafficStore,
     missing_files: usize,
     theme_notice: Option<SharedString>,
     theme_prefs_migrated: bool,
@@ -382,16 +376,6 @@ impl PersistedStateRestore {
                 endpoint_family: EndpointFamily::Unknown,
             });
         }
-
-        let mut traffic_days = BTreeMap::<String, u64>::new();
-        for day in state.traffic_days {
-            let entry = traffic_days.entry(day.date).or_insert(0);
-            *entry = entry.saturating_add(day.bytes);
-        }
-        let traffic_days = traffic_days
-            .into_iter()
-            .map(|(date, bytes)| TrafficDay { date, bytes })
-            .collect();
 
         let config_ids: HashSet<u64> = configs.iter().map(|cfg| cfg.id).collect();
         let appearance_policy = state
@@ -443,11 +427,15 @@ impl PersistedStateRestore {
             dns_preset: state.dns_preset,
             next_config_id: state.next_id.max(max_id.saturating_add(1)),
             selected_id: state.selected_id,
-            traffic_days,
-            traffic_days_v2: merge_day_stats(state.traffic_days_v2),
-            traffic_hours: merge_hour_stats(state.traffic_hours),
-            config_traffic_days: merge_config_day_stats(state.config_traffic_days, &config_ids),
-            config_traffic_hours: merge_config_hour_stats(state.config_traffic_hours, &config_ids),
+            traffic: TrafficStore {
+                global_days: merge_day_buckets(state.traffic_global_days),
+                global_hours: merge_hour_buckets(state.traffic_global_hours),
+                config_days: merge_config_day_buckets(state.traffic_config_days, &config_ids),
+                config_hours: merge_config_hour_buckets(state.traffic_config_hours, &config_ids),
+                dirty: false,
+                last_persist_at: None,
+                rev: 0,
+            },
             configs,
             missing_files,
             theme_notice,
@@ -514,13 +502,8 @@ impl PersistedStateRestore {
         configs.configs = self.configs;
         configs.next_config_id = self.next_config_id;
 
-        stats.traffic_days = self.traffic_days;
-        stats.traffic_days_v2 = self.traffic_days_v2;
-        stats.traffic_hours = self.traffic_hours;
-        stats.config_traffic_days = self.config_traffic_days;
-        stats.config_traffic_hours = self.config_traffic_hours;
-        stats.traffic_dirty = false;
-        stats.traffic_last_persist_at = None;
+        stats.traffic = self.traffic;
+        stats.traffic.reset_persist_state();
 
         selection.restore_after_persist(self.selected_id, configs);
 
@@ -534,49 +517,49 @@ impl PersistedStateRestore {
     }
 }
 
-fn merge_day_stats(items: Vec<PersistedTrafficDayStats>) -> Vec<TrafficDayStats> {
-    let mut map = BTreeMap::<String, (u64, u64)>::new();
+fn merge_day_buckets(items: Vec<PersistedTrafficDayBucket>) -> Vec<TrafficDayBucket> {
+    let mut map = BTreeMap::<i32, (u64, u64)>::new();
     for day in items {
-        let entry = map.entry(day.date).or_insert((0, 0));
+        let entry = map.entry(day.day_key).or_insert((0, 0));
         entry.0 = entry.0.saturating_add(day.rx_bytes);
         entry.1 = entry.1.saturating_add(day.tx_bytes);
     }
     let mut days = map
         .into_iter()
-        .map(|(date, (rx_bytes, tx_bytes))| TrafficDayStats {
-            date,
+        .map(|(day_key, (rx_bytes, tx_bytes))| TrafficDayBucket {
+            day_key,
             rx_bytes,
             tx_bytes,
         })
         .collect::<Vec<_>>();
-    prune_day_stats(&mut days);
+    prune_day_buckets(&mut days);
     days
 }
 
-fn merge_hour_stats(items: Vec<PersistedTrafficHour>) -> Vec<TrafficHour> {
+fn merge_hour_buckets(items: Vec<PersistedTrafficHourBucket>) -> Vec<TrafficHourBucket> {
     let mut map = BTreeMap::<i64, (u64, u64)>::new();
     for hour in items {
-        let entry = map.entry(hour.hour).or_insert((0, 0));
+        let entry = map.entry(hour.hour_key).or_insert((0, 0));
         entry.0 = entry.0.saturating_add(hour.rx_bytes);
         entry.1 = entry.1.saturating_add(hour.tx_bytes);
     }
     let mut hours = map
         .into_iter()
-        .map(|(hour, (rx_bytes, tx_bytes))| TrafficHour {
-            hour,
+        .map(|(hour_key, (rx_bytes, tx_bytes))| TrafficHourBucket {
+            hour_key,
             rx_bytes,
             tx_bytes,
         })
         .collect::<Vec<_>>();
-    prune_hour_stats(&mut hours);
+    prune_hour_buckets(&mut hours);
     hours
 }
 
-fn merge_config_day_stats(
-    items: Vec<PersistedConfigTrafficDay>,
+fn merge_config_day_buckets(
+    items: Vec<PersistedConfigTrafficDayBucket>,
     config_ids: &HashSet<u64>,
-) -> HashMap<u64, Vec<TrafficDayStats>> {
-    let mut map = HashMap::<u64, BTreeMap<String, (u64, u64)>>::new();
+) -> HashMap<u64, Vec<TrafficDayBucket>> {
+    let mut map = HashMap::<u64, BTreeMap<i32, (u64, u64)>>::new();
     for day in items {
         if !config_ids.contains(&day.config_id) {
             continue;
@@ -584,7 +567,7 @@ fn merge_config_day_stats(
         let entry = map
             .entry(day.config_id)
             .or_insert_with(BTreeMap::new)
-            .entry(day.date)
+            .entry(day.day_key)
             .or_insert((0, 0));
         entry.0 = entry.0.saturating_add(day.rx_bytes);
         entry.1 = entry.1.saturating_add(day.tx_bytes);
@@ -593,22 +576,22 @@ fn merge_config_day_stats(
     for (config_id, days) in map {
         let mut days = days
             .into_iter()
-            .map(|(date, (rx_bytes, tx_bytes))| TrafficDayStats {
-                date,
+            .map(|(day_key, (rx_bytes, tx_bytes))| TrafficDayBucket {
+                day_key,
                 rx_bytes,
                 tx_bytes,
             })
             .collect::<Vec<_>>();
-        prune_day_stats(&mut days);
+        prune_day_buckets(&mut days);
         out.insert(config_id, days);
     }
     out
 }
 
-fn merge_config_hour_stats(
-    items: Vec<PersistedConfigTrafficHour>,
+fn merge_config_hour_buckets(
+    items: Vec<PersistedConfigTrafficHourBucket>,
     config_ids: &HashSet<u64>,
-) -> HashMap<u64, Vec<TrafficHour>> {
+) -> HashMap<u64, Vec<TrafficHourBucket>> {
     let mut map = HashMap::<u64, BTreeMap<i64, (u64, u64)>>::new();
     for hour in items {
         if !config_ids.contains(&hour.config_id) {
@@ -617,7 +600,7 @@ fn merge_config_hour_stats(
         let entry = map
             .entry(hour.config_id)
             .or_insert_with(BTreeMap::new)
-            .entry(hour.hour)
+            .entry(hour.hour_key)
             .or_insert((0, 0));
         entry.0 = entry.0.saturating_add(hour.rx_bytes);
         entry.1 = entry.1.saturating_add(hour.tx_bytes);
@@ -626,28 +609,28 @@ fn merge_config_hour_stats(
     for (config_id, hours) in map {
         let mut hours = hours
             .into_iter()
-            .map(|(hour, (rx_bytes, tx_bytes))| TrafficHour {
-                hour,
+            .map(|(hour_key, (rx_bytes, tx_bytes))| TrafficHourBucket {
+                hour_key,
                 rx_bytes,
                 tx_bytes,
             })
             .collect::<Vec<_>>();
-        prune_hour_stats(&mut hours);
+        prune_hour_buckets(&mut hours);
         out.insert(config_id, hours);
     }
     out
 }
 
-fn prune_day_stats(days: &mut Vec<TrafficDayStats>) {
-    days.sort_by(|a, b| a.date.cmp(&b.date));
+fn prune_day_buckets(days: &mut Vec<TrafficDayBucket>) {
+    days.sort_by(|a, b| a.day_key.cmp(&b.day_key));
     if days.len() > TRAFFIC_ROLLING_DAYS {
         let remove_count = days.len() - TRAFFIC_ROLLING_DAYS;
         days.drain(0..remove_count);
     }
 }
 
-fn prune_hour_stats(hours: &mut Vec<TrafficHour>) {
-    hours.sort_by(|a, b| a.hour.cmp(&b.hour));
+fn prune_hour_buckets(hours: &mut Vec<TrafficHourBucket>) {
+    hours.sort_by(|a, b| a.hour_key.cmp(&b.hour_key));
     if hours.len() > TRAFFIC_HOURLY_HISTORY {
         let remove_count = hours.len() - TRAFFIC_HOURLY_HISTORY;
         hours.drain(0..remove_count);

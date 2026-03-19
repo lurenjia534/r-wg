@@ -4,13 +4,11 @@ use gpui_component::{
     h_flex, tag::Tag, v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
-use crate::ui::state::WgApp;
-
-pub(super) fn card_title(
+pub(super) fn card_title<T>(
     icon: IconName,
     label: &str,
     trailing_icon: Option<IconName>,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<T>,
 ) -> Div {
     h_flex()
         .items_center()
@@ -35,12 +33,12 @@ pub(super) fn card_title(
         })
 }
 
-pub(super) fn metric_cell(
+pub(super) fn metric_cell<T>(
     icon: IconName,
     label: &str,
     value: &str,
     color: impl Into<Hsla>,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<T>,
 ) -> Div {
     let color: Hsla = color.into();
     v_flex()
@@ -63,17 +61,17 @@ pub(super) fn metric_cell(
             div()
                 .text_2xl()
                 .font_semibold()
-                .text_color(color)
+                .text_color(cx.theme().foreground)
                 .child(value.to_string()),
         )
 }
 
-pub(super) fn status_item(
+pub(super) fn status_item<T>(
     icon: IconName,
     label: &str,
     value: &str,
     color: impl Into<Hsla>,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<T>,
 ) -> Div {
     let color: Hsla = color.into();
     v_flex()
@@ -101,7 +99,7 @@ pub(super) fn status_item(
         )
 }
 
-pub(super) fn status_state_item(is_running: bool, cx: &mut Context<WgApp>) -> Div {
+pub(super) fn status_state_item<T>(is_running: bool, cx: &mut Context<T>) -> Div {
     let (state_text, state_icon, tag) = if is_running {
         ("On", IconName::CircleCheck, Tag::success())
     } else {
@@ -129,7 +127,7 @@ pub(super) fn status_state_item(is_running: bool, cx: &mut Context<WgApp>) -> Di
         )
 }
 
-pub(super) fn two_row_grid(top: [Div; 3], bottom: [Div; 3], cx: &mut Context<WgApp>) -> Div {
+pub(super) fn two_row_grid<T>(top: [Div; 3], bottom: [Div; 3], cx: &mut Context<T>) -> Div {
     let [top_left, top_mid, top_right] = top;
     let [bottom_left, bottom_mid, bottom_right] = bottom;
     let border = cx.theme().border;
@@ -145,6 +143,6 @@ pub(super) fn two_row_grid(top: [Div; 3], bottom: [Div; 3], cx: &mut Context<WgA
         .child(bottom_right.border_t_1().border_color(border))
 }
 
-pub(super) fn vertical_rule(cx: &mut Context<WgApp>) -> Div {
+pub(super) fn vertical_rule<T>(cx: &mut Context<T>) -> Div {
     div().w(px(1.0)).h(px(64.0)).bg(cx.theme().border)
 }

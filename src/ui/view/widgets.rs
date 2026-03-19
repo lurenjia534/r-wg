@@ -1,5 +1,6 @@
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{tag::Tag, Sizable as _};
+use gpui_component::{h_flex, tag::Tag, v_flex, ActiveTheme as _, Sizable as _, StyledExt as _};
 
 use super::super::state::{BackendDiagnostic, BackendHealth};
 
@@ -27,4 +28,103 @@ pub(crate) fn backend_status_tag(
         BackendHealth::Unsupported => Tag::secondary().small().rounded_full().child(label),
         BackendHealth::Unknown => Tag::secondary().small().rounded_full().child(label),
     }
+}
+
+pub(crate) struct PageShellHeader {
+    eyebrow: SharedString,
+    title: SharedString,
+    subtitle: SharedString,
+    actions: Option<AnyElement>,
+}
+
+impl PageShellHeader {
+    pub(crate) fn new(
+        eyebrow: impl Into<SharedString>,
+        title: impl Into<SharedString>,
+        subtitle: impl Into<SharedString>,
+    ) -> Self {
+        Self {
+            eyebrow: eyebrow.into(),
+            title: title.into(),
+            subtitle: subtitle.into(),
+            actions: None,
+        }
+    }
+
+    pub(crate) fn actions(mut self, actions: impl IntoElement) -> Self {
+        self.actions = Some(actions.into_any_element());
+        self
+    }
+}
+
+pub(crate) struct PageShell {
+    header: PageShellHeader,
+    toolbar: Option<AnyElement>,
+    body: AnyElement,
+}
+
+impl PageShell {
+    pub(crate) fn new(header: PageShellHeader, body: impl IntoElement) -> Self {
+        Self {
+            header,
+            toolbar: None,
+            body: body.into_any_element(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn toolbar(mut self, toolbar: impl IntoElement) -> Self {
+        self.toolbar = Some(toolbar.into_any_element());
+        self
+    }
+
+    pub(crate) fn render<T>(self, cx: &mut Context<T>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tiles)
+            .overflow_hidden()
+            .child(render_page_shell_header(self.header, cx))
+            .when_some(self.toolbar, |this, toolbar| this.child(toolbar))
+            .child(self.body)
+    }
+}
+
+fn render_page_shell_header<T>(header: PageShellHeader, cx: &mut Context<T>) -> Div {
+    div()
+        .px_5()
+        .py_4()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            h_flex()
+                .items_start()
+                .justify_between()
+                .flex_wrap()
+                .gap_4()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_semibold()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(header.eyebrow),
+                        )
+                        .child(div().text_xl().font_semibold().child(header.title))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(header.subtitle),
+                        ),
+                )
+                .when_some(header.actions, |this, actions| this.child(actions)),
+        )
 }

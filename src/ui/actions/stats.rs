@@ -9,9 +9,14 @@ use r_wg::backend::wg::EngineStats;
 use r_wg::log::events::stats as log_stats;
 
 use super::super::state::{
-    ConfigInspectorTab, SidebarItem, TrafficDay, TrafficDayStats, TrafficHour, WgApp,
-    SPARKLINE_SAMPLES, TRAFFIC_HISTORY_DAYS, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
+    day_key_from_date, ConfigInspectorTab, SidebarItem, WgApp, SPARKLINE_SAMPLES,
 };
+
+struct SampledRuntimeMetrics {
+    iface_rx: Option<u64>,
+    iface_tx: Option<u64>,
+    process_rss_bytes: Option<u64>,
+}
 
 impl WgApp {
     /// 启动统计轮询。
@@ -25,40 +30,46 @@ impl WgApp {
         let generation = self.stats.stats_generation;
         let engine = self.engine.clone();
         let poll_interval = Duration::from_secs(2);
-        // Proxies 列表在滚动时非常敏感，降低轮询频率并跳过统计刷新，
-        // 避免每次 notify 触发大列表重建造成卡顿。
-        let proxies_interval = Duration::from_secs(6);
 
         // 异步轮询 peer 统计，避免阻塞 UI。
         cx.spawn(async move |view, cx| {
             loop {
-                // 先在 UI 线程读取状态，避免在后台线程里直接访问视图数据。
-                let (should_continue, in_proxies) = view
+                let should_continue = view
                     .update(cx, |this, _| {
-                        if !this.runtime.running || this.stats.stats_generation != generation {
-                            return (false, false);
-                        }
-                        (true, this.ui_session.sidebar_active == SidebarItem::Proxies)
+                        this.runtime.running && this.stats.stats_generation == generation
                     })
-                    .unwrap_or((false, false));
+                    .unwrap_or(false);
                 if !should_continue {
                     break;
                 }
 
-                // Proxies 页面：降频并跳过 stats 拉取与 notify。
-                let interval = if in_proxies {
-                    proxies_interval
-                } else {
-                    poll_interval
+                cx.background_executor().timer(poll_interval).await;
+
+                let poll_context = view
+                    .update(cx, |this, _| {
+                        if !this.runtime.running || this.stats.stats_generation != generation {
+                            return None;
+                        }
+                        Some(this.runtime.running_name.clone())
+                    })
+                    .unwrap_or(None);
+                let Some(running_name) = poll_context else {
+                    break;
                 };
-                cx.background_executor().timer(interval).await;
-                if in_proxies {
-                    // 直接进入下一轮等待，避免触发统计刷新和 UI 重绘。
-                    continue;
-                }
 
                 let engine = engine.clone();
-                let result = cx.background_spawn(async move { engine.stats() }).await;
+                let (result, sampled) = cx
+                    .background_spawn(async move {
+                        let result = engine.stats();
+                        let iface = running_name.as_deref().and_then(read_interface_stats);
+                        let sampled = SampledRuntimeMetrics {
+                            iface_rx: iface.map(|(rx, _)| rx),
+                            iface_tx: iface.map(|(_, tx)| tx),
+                            process_rss_bytes: read_process_rss_bytes(),
+                        };
+                        (result, sampled)
+                    })
+                    .await;
 
                 // 将统计结果回写 UI 状态并 notify，触发依赖 stats 的视图刷新。
                 let continue_polling = view
@@ -71,7 +82,7 @@ impl WgApp {
                         let mut status_changed = false;
                         match result {
                             Ok(stats) => {
-                                persist_due = this.apply_stats(stats);
+                                persist_due = this.apply_stats(stats, sampled);
                             }
                             Err(err) => {
                                 #[cfg(target_os = "windows")]
@@ -95,8 +106,7 @@ impl WgApp {
                         if persist_due {
                             // 仅在必要时落盘，避免每次轮询都写 state.json。
                             this.persist_state_async(cx);
-                            this.stats.traffic_last_persist_at = Some(Instant::now());
-                            this.stats.traffic_dirty = false;
+                            this.stats.traffic.mark_persisted(Instant::now());
                         }
                         let should_notify = match this.ui_session.sidebar_active {
                             SidebarItem::Configs => {
@@ -126,8 +136,8 @@ impl WgApp {
     /// 说明：
     /// - 先汇总 peer 的累计字节数。
     /// - 基于上一次采样计算速率，避免计数回绕导致负值。
-    /// - 尝试读取网卡层统计，作为辅助对比。
-    pub(crate) fn apply_stats(&mut self, stats: EngineStats) -> bool {
+    /// - 网卡层统计和 RSS 由后台采样并随本轮结果一起提交。
+    fn apply_stats(&mut self, stats: EngineStats, sampled: SampledRuntimeMetrics) -> bool {
         // 聚合统计，用于右侧状态卡片展示。
         let total_rx: u64 = stats.peers.iter().map(|peer| peer.rx_bytes).sum();
         let total_tx: u64 = stats.peers.iter().map(|peer| peer.tx_bytes).sum();
@@ -146,26 +156,25 @@ impl WgApp {
             }
         }
 
-        let mut iface_rx = None;
-        let mut iface_tx = None;
-        if let Some(name) = self.runtime.running_name.as_deref() {
-            if let Some((rx, tx)) = read_interface_stats(name) {
-                iface_rx = Some(rx);
-                iface_tx = Some(tx);
-                if let Some(elapsed) = elapsed_secs {
-                    let rx_delta = rx.saturating_sub(self.stats.last_iface_rx_bytes);
-                    let tx_delta = tx.saturating_sub(self.stats.last_iface_tx_bytes);
-                    self.stats.iface_rx_rate_bps = rx_delta as f64 / elapsed;
-                    self.stats.iface_tx_rate_bps = tx_delta as f64 / elapsed;
-                }
-                self.stats.last_iface_rx_bytes = rx;
-                self.stats.last_iface_tx_bytes = tx;
-            }
+        let iface_rx = sampled.iface_rx;
+        let iface_tx = sampled.iface_tx;
+        if let (Some(rx), Some(tx), Some(elapsed)) = (iface_rx, iface_tx, elapsed_secs) {
+            let rx_delta = rx.saturating_sub(self.stats.last_iface_rx_bytes);
+            let tx_delta = tx.saturating_sub(self.stats.last_iface_tx_bytes);
+            self.stats.iface_rx_rate_bps = rx_delta as f64 / elapsed;
+            self.stats.iface_tx_rate_bps = tx_delta as f64 / elapsed;
+            self.stats.last_iface_rx_bytes = rx;
+            self.stats.last_iface_tx_bytes = tx;
+        } else if let (Some(rx), Some(tx)) = (iface_rx, iface_tx) {
+            self.stats.last_iface_rx_bytes = rx;
+            self.stats.last_iface_tx_bytes = tx;
         }
 
         self.stats.last_stats_at = Some(Instant::now());
         self.stats.last_rx_bytes = total_rx;
         self.stats.last_tx_bytes = total_tx;
+        self.stats.process_rss_bytes = sampled.process_rss_bytes;
+        self.stats.stats_revision = self.stats.stats_revision.wrapping_add(1);
         push_rate_sample(&mut self.stats.rx_rate_history, self.stats.rx_rate_bps);
         push_rate_sample(&mut self.stats.tx_rate_history, self.stats.tx_rate_bps);
 
@@ -208,53 +217,21 @@ impl WgApp {
     }
 
     fn record_traffic(&mut self, rx_bytes: u64, tx_bytes: u64) -> bool {
-        let total = rx_bytes.saturating_add(tx_bytes);
-        // 没有流量就不记录，避免制造无意义的“空写盘”。
-        if total == 0 {
+        if rx_bytes.saturating_add(tx_bytes) == 0 {
             return false;
         }
 
         // 按本地日期归档，确保跨时区/跨天显示符合用户直觉。
         let now = Local::now();
-        let today = now.format("%Y-%m-%d").to_string();
-        let hour = now.timestamp() / 3600;
-        let mut created = false;
-
-        // 旧版总量统计（用于 7 日趋势）。
-        if update_traffic_day_total(&mut self.stats.traffic_days, &today, total) {
-            created = true;
-        }
-        self.prune_traffic_days();
-
-        // 新版整体统计（按天 + 按小时）。
-        if update_traffic_day_stats(&mut self.stats.traffic_days_v2, &today, rx_bytes, tx_bytes) {
-            created = true;
-        }
-        if update_traffic_hour_stats(&mut self.stats.traffic_hours, hour, rx_bytes, tx_bytes) {
-            created = true;
-        }
-
-        // 按配置统计：仅在运行中时记录。
-        if let Some(config_id) = self.runtime.running_id {
-            let days = self
-                .stats
-                .config_traffic_days
-                .entry(config_id)
-                .or_insert_with(Vec::new);
-            if update_traffic_day_stats(days, &today, rx_bytes, tx_bytes) {
-                created = true;
-            }
-            let hours = self
-                .stats
-                .config_traffic_hours
-                .entry(config_id)
-                .or_insert_with(Vec::new);
-            if update_traffic_hour_stats(hours, hour, rx_bytes, tx_bytes) {
-                created = true;
-            }
-        }
-
-        self.stats.traffic_dirty = true;
+        let day_key = day_key_from_date(now.date_naive());
+        let hour_key = now.timestamp() / 3600;
+        let created = self.stats.traffic.record(
+            self.runtime.running_id,
+            day_key,
+            hour_key,
+            rx_bytes,
+            tx_bytes,
+        );
 
         if created {
             // 新的一天/新的一小时首次写入，立即落盘，避免异常退出丢失起点。
@@ -262,87 +239,65 @@ impl WgApp {
         }
 
         // 同一天内按节流间隔落盘，平衡数据安全与磁盘写入频率。
-        match self.stats.traffic_last_persist_at {
+        match self.stats.traffic.last_persist_at {
             Some(last) => last.elapsed() >= Duration::from_secs(60),
             None => true,
         }
     }
-
-    fn prune_traffic_days(&mut self) {
-        // 保持按时间顺序排列，超出上限时丢弃最旧的记录。
-        self.stats.traffic_days.sort_by(|a, b| a.date.cmp(&b.date));
-        if self.stats.traffic_days.len() > TRAFFIC_HISTORY_DAYS {
-            let remove_count = self.stats.traffic_days.len() - TRAFFIC_HISTORY_DAYS;
-            self.stats.traffic_days.drain(0..remove_count);
-        }
-    }
 }
 
-fn update_traffic_day_total(days: &mut Vec<TrafficDay>, date: &str, bytes: u64) -> bool {
-    if let Some(day) = days.iter_mut().find(|day| day.date == date) {
-        day.bytes = day.bytes.saturating_add(bytes);
-        return false;
-    }
-    days.push(TrafficDay {
-        date: date.to_string(),
-        bytes,
-    });
-    true
-}
+#[cfg(test)]
+mod tests {
+    use gpui_component::theme::ThemeMode;
 
-fn update_traffic_day_stats(
-    days: &mut Vec<TrafficDayStats>,
-    date: &str,
-    rx_bytes: u64,
-    tx_bytes: u64,
-) -> bool {
-    if let Some(day) = days.iter_mut().find(|day| day.date == date) {
-        day.rx_bytes = day.rx_bytes.saturating_add(rx_bytes);
-        day.tx_bytes = day.tx_bytes.saturating_add(tx_bytes);
-        return false;
-    }
-    days.push(TrafficDayStats {
-        date: date.to_string(),
-        rx_bytes,
-        tx_bytes,
-    });
-    prune_traffic_day_stats(days);
-    true
-}
+    use super::{read_process_rss_bytes, SampledRuntimeMetrics};
+    use crate::ui::state::{SidebarItem, WgApp};
+    use crate::ui::themes::AppearancePolicy;
 
-fn update_traffic_hour_stats(
-    hours: &mut Vec<TrafficHour>,
-    hour: i64,
-    rx_bytes: u64,
-    tx_bytes: u64,
-) -> bool {
-    if let Some(bucket) = hours.iter_mut().find(|bucket| bucket.hour == hour) {
-        bucket.rx_bytes = bucket.rx_bytes.saturating_add(rx_bytes);
-        bucket.tx_bytes = bucket.tx_bytes.saturating_add(tx_bytes);
-        return false;
+    fn make_app() -> WgApp {
+        WgApp::new(
+            r_wg::backend::wg::Engine::new(),
+            AppearancePolicy::Dark,
+            ThemeMode::Dark,
+            None,
+            None,
+            None,
+            None,
+        )
     }
-    hours.push(TrafficHour {
-        hour,
-        rx_bytes,
-        tx_bytes,
-    });
-    prune_traffic_hours(hours);
-    true
-}
 
-fn prune_traffic_day_stats(days: &mut Vec<TrafficDayStats>) {
-    days.sort_by(|a, b| a.date.cmp(&b.date));
-    if days.len() > TRAFFIC_ROLLING_DAYS {
-        let remove_count = days.len() - TRAFFIC_ROLLING_DAYS;
-        days.drain(0..remove_count);
+    #[test]
+    fn stats_sampling_still_records_traffic_while_proxies_page_is_active() {
+        let mut app = make_app();
+        app.ui_session.sidebar_active = SidebarItem::Proxies;
+        app.runtime.running = true;
+        app.runtime.running_id = Some(7);
+
+        let persist_due = app.record_traffic(512, 256);
+
+        assert!(persist_due);
+        assert_eq!(app.stats.traffic.global_days.len(), 1);
+        assert_eq!(
+            app.stats.traffic.global_days[0].rx_bytes + app.stats.traffic.global_days[0].tx_bytes,
+            768
+        );
+        assert_eq!(app.stats.traffic.global_hours.len(), 1);
+        assert_eq!(
+            app.stats.traffic.config_hours.get(&7).map(Vec::len),
+            Some(1)
+        );
     }
-}
 
-fn prune_traffic_hours(hours: &mut Vec<TrafficHour>) {
-    hours.sort_by(|a, b| a.hour.cmp(&b.hour));
-    if hours.len() > TRAFFIC_HOURLY_HISTORY {
-        let remove_count = hours.len() - TRAFFIC_HOURLY_HISTORY;
-        hours.drain(0..remove_count);
+    #[test]
+    fn sampled_runtime_metrics_can_be_built_without_ui_thread_io() {
+        let sampled = SampledRuntimeMetrics {
+            iface_rx: None,
+            iface_tx: None,
+            process_rss_bytes: read_process_rss_bytes(),
+        };
+
+        assert_eq!(sampled.iface_rx, None);
+        assert_eq!(sampled.iface_tx, None);
     }
 }
 
@@ -371,4 +326,41 @@ fn push_rate_sample(history: &mut VecDeque<f32>, value: f64) {
         history.pop_front();
     }
     history.push_back(value);
+}
+
+fn read_process_rss_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                let mut parts = rest.split_whitespace();
+                let kb = parts.next()?.parse::<u64>().ok()?;
+                return Some(kb.saturating_mul(1024));
+            }
+        }
+        return None;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+        use windows::Win32::System::Threading::GetCurrentProcess;
+
+        let process = unsafe { GetCurrentProcess() };
+        let mut counters = PROCESS_MEMORY_COUNTERS::default();
+        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+
+        unsafe {
+            GetProcessMemoryInfo(process, &mut counters, counters.cb).ok()?;
+        }
+        return Some(counters.WorkingSetSize as u64);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
 }

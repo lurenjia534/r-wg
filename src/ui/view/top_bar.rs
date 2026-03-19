@@ -11,8 +11,39 @@ use super::data::ViewData;
 /// 顶部工具栏骨架：标题、配置切换、模式按钮、状态图标。
 pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {
     let ui_font = "Plus Jakarta Sans";
+    let (eyebrow, title_text, subtitle_text) = top_bar_copy(app);
 
-    let title = div();
+    let title = div().child(
+        h_flex().items_start().child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_family(ui_font)
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cx.theme().muted_foreground)
+                        .child(eyebrow),
+                )
+                .child(
+                    div()
+                        .text_lg()
+                        .font_family(ui_font)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().foreground)
+                        .child(title_text),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_family(ui_font)
+                        .text_color(cx.theme().muted_foreground)
+                        .child(subtitle_text),
+                ),
+        ),
+    );
 
     let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
     let can_start = config_valid
@@ -215,4 +246,64 @@ fn vertical_divider(cx: &mut Context<WgApp>) -> Div {
         cx.theme().border
     };
     div().w(px(1.0)).h(px(22.0)).bg(color)
+}
+
+fn top_bar_copy(app: &WgApp) -> (&'static str, String, String) {
+    match app.ui_session.sidebar_active {
+        SidebarItem::Overview => (
+            "DASHBOARD",
+            "Overview".to_string(),
+            if app.runtime.running {
+                format!(
+                    "Monitoring {} and the currently selected config.",
+                    app.runtime
+                        .running_name
+                        .as_deref()
+                        .unwrap_or("the active tunnel")
+                )
+            } else {
+                "Runtime health, traffic, and selected config context.".to_string()
+            },
+        ),
+        SidebarItem::Proxies => (
+            "LIBRARY",
+            "Proxies".to_string(),
+            "Browse saved configs and current tunnel selection.".to_string(),
+        ),
+        SidebarItem::Logs => (
+            "MONITORING",
+            "Logs".to_string(),
+            "Follow runtime events and backend activity.".to_string(),
+        ),
+        SidebarItem::Dns => (
+            "NETWORK",
+            "DNS".to_string(),
+            "Inspect resolver policy and applied presets.".to_string(),
+        ),
+        SidebarItem::About => (
+            "SYSTEM",
+            "About".to_string(),
+            "Capabilities, release notes, and local environment details.".to_string(),
+        ),
+        SidebarItem::Advanced => (
+            "SETTINGS",
+            "Preferences".to_string(),
+            "Manage appearance, defaults, and system integration.".to_string(),
+        ),
+        SidebarItem::RouteMap => (
+            "ANALYSIS",
+            "Route Map".to_string(),
+            "Explain how the selected config reaches each destination.".to_string(),
+        ),
+        SidebarItem::Configs => (
+            "WORKSPACE",
+            "Configs".to_string(),
+            "Edit, validate, and save tunnel definitions.".to_string(),
+        ),
+        _ => (
+            "WORKSPACE",
+            "Panel".to_string(),
+            "Current application section.".to_string(),
+        ),
+    }
 }

@@ -1,14 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use chrono::{Duration as ChronoDuration, Local, NaiveDate};
 use r_wg::backend::wg::config;
 
-use super::super::format::{
-    format_bytes, format_duration, format_route_table, summarize_peers, PeerSummary,
-};
+use super::super::format::{format_bytes, format_duration, format_route_table, summarize_peers};
 use super::super::state::{
-    ConfigDraftState, DraftValidationState, EditorOperation, TrafficDayStats, TrafficHour,
-    TrafficPeriod, TunnelConfig, WgApp, TRAFFIC_TREND_DAYS,
+    day_key_from_date, ConfigDraftState, ConfigSource, ConfigsState, DraftValidationState,
+    EditorOperation, StatsState, TrafficDayBucket, TrafficHourBucket, TrafficPeriod, TunnelConfig,
+    WgApp, TRAFFIC_TREND_DAYS,
 };
 
 /// Configs 页的局部渲染快照。
@@ -37,7 +36,7 @@ pub(crate) struct ConfigsViewData {
 /// 它只放多个页面都会读到的结果：
 /// - 当前选中配置的解析结果；
 /// - 配置解析状态徽标；
-/// - peer 统计摘要与最近握手文本。
+/// - 最近握手文本。
 ///
 /// 换句话说，`ViewData` 解决的是“全局共享的只读派生信息”，
 /// 而不是某个页面自己的展示模型。
@@ -53,8 +52,6 @@ pub(crate) struct ViewData {
     pub(crate) has_saved_source: bool,
     /// 当前 draft 是否需要重启运行中的隧道。
     pub(crate) needs_restart: bool,
-    /// 统计摘要（总流量/握手时间等）。
-    pub(crate) peer_summary: PeerSummary,
     /// 最近握手时间的可读文本。
     pub(crate) last_handshake: String,
 }
@@ -69,50 +66,45 @@ pub(crate) struct ViewData {
 /// - 图表类：上传/下载 sparkline 序列、7 日趋势、Traffic Summary；
 /// - 控制类：当前运行态、当前选择的流量周期。
 pub(crate) struct OverviewData {
-    /// 从隧道启动时间换算出来的运行时长文案，例如 `12:34` 或 `1:02`。
-    pub(crate) uptime_text: String,
-    /// 当前进程常驻内存文案；读取失败时为 `-`。
-    pub(crate) memory_text: String,
-    /// Peer 统计聚合后的累计下载总量（RX）。
-    pub(crate) rx_total_text: String,
-    /// Peer 统计聚合后的累计上传总量（TX）。
-    pub(crate) tx_total_text: String,
-    /// Peer 数量文本，供状态卡片直接展示。
-    pub(crate) peer_count_text: String,
-    /// 最近握手时间文本，已经过 `format_duration` 处理。
-    pub(crate) handshake_text: String,
-    /// 当前上传速率文案；当隧道未运行时固定回落为 0。
-    pub(crate) upload_speed_text: String,
-    /// 当前下载速率文案；当隧道未运行时固定回落为 0。
-    pub(crate) download_speed_text: String,
-    /// 上传累计总量文本，用于 Traffic Stats 卡片底部。
-    pub(crate) upload_total_text: String,
-    /// 下载累计总量文本，用于 Traffic Stats 卡片底部。
-    pub(crate) download_total_text: String,
-    /// 上传 sparkline 原始采样值，视图层只负责转成 chart point。
-    pub(crate) upload_series: Vec<f32>,
-    /// 下载 sparkline 原始采样值，视图层只负责转成 chart point。
-    pub(crate) download_series: Vec<f32>,
-    /// 当前配置的本地地址摘要。
-    pub(crate) local_ip_text: String,
-    /// 当前配置的首个 DNS 服务器摘要。
-    pub(crate) dns_text: String,
-    /// 当前配置的首个 peer endpoint 摘要。
-    pub(crate) endpoint_text: String,
-    /// Allowed IPs 的汇总结果，按“路由条数”展示。
-    pub(crate) allowed_text: String,
-    /// 当前运行中的隧道名称；未运行时为 `-`。
-    pub(crate) network_name_text: String,
-    /// 配置中的 route table 文本。
-    pub(crate) route_table_text: String,
-    /// 当前是否处于运行态。Overview 页只消费这个布尔值，不再直接读 `app.runtime`。
-    pub(crate) is_running: bool,
+    /// 运行态 dashboard 数据。
+    pub(crate) runtime: OverviewRuntimeData,
+    /// 当前选中配置的预览数据。
+    pub(crate) preview: OverviewPreviewData,
     /// Traffic Summary 当前选中的统计周期。
     pub(crate) traffic_period: TrafficPeriod,
     /// 7 日趋势图所需的完整数据集。
     pub(crate) traffic_trend: TrafficTrendData,
     /// Traffic Summary 区块所需的完整数据集。
     pub(crate) traffic_summary: TrafficSummaryData,
+}
+
+pub(crate) struct OverviewRuntimeData {
+    pub(crate) is_running: bool,
+    pub(crate) running_name_text: String,
+    pub(crate) uptime_text: String,
+    pub(crate) memory_text: String,
+    pub(crate) rx_total_text: String,
+    pub(crate) tx_total_text: String,
+    pub(crate) peer_count_text: String,
+    pub(crate) handshake_text: String,
+    pub(crate) upload_speed_text: String,
+    pub(crate) download_speed_text: String,
+    pub(crate) upload_total_text: String,
+    pub(crate) download_total_text: String,
+    pub(crate) upload_series: Vec<f32>,
+    pub(crate) download_series: Vec<f32>,
+}
+
+pub(crate) struct OverviewPreviewData {
+    pub(crate) has_selection: bool,
+    pub(crate) selected_name_text: String,
+    pub(crate) source_text: String,
+    pub(crate) context_text: String,
+    pub(crate) local_ip_text: String,
+    pub(crate) dns_text: String,
+    pub(crate) endpoint_text: String,
+    pub(crate) allowed_text: String,
+    pub(crate) route_table_text: String,
 }
 
 /// 趋势图上的单个点。
@@ -199,7 +191,6 @@ impl ViewData {
             draft_dirty: draft.is_dirty(),
             has_saved_source: draft.source_id.is_some(),
             needs_restart: draft.needs_restart,
-            peer_summary,
             last_handshake,
         }
     }
@@ -265,177 +256,266 @@ impl OverviewData {
     /// 这么分层的原因是：
     /// - `ViewData` 继续承担“跨页面共享”；
     /// - `OverviewData` 只承担 “Overview 页额外需要的页面级派生”。
-    pub(crate) fn new(app: &WgApp, data: &ViewData) -> Self {
+    pub(crate) fn new(app: &WgApp) -> Self {
+        let now = Local::now();
+        let peer_summary = summarize_peers(&app.stats.peer_stats);
+        let last_handshake = peer_summary
+            .last_handshake
+            .map(format_duration)
+            .unwrap_or_else(|| "never".to_string());
+        let preview = build_overview_preview(app);
+
         Self {
-            uptime_text: format_uptime(app.stats.started_at),
-            memory_text: format_memory_usage(),
-            rx_total_text: format_bytes(data.peer_summary.rx_bytes),
-            tx_total_text: format_bytes(data.peer_summary.tx_bytes),
-            peer_count_text: data.peer_summary.peer_count.to_string(),
-            handshake_text: data.last_handshake.clone(),
-            upload_speed_text: format_speed_text(app.runtime.running, app.stats.tx_rate_bps),
-            download_speed_text: format_speed_text(app.runtime.running, app.stats.rx_rate_bps),
-            upload_total_text: format_bytes(data.peer_summary.tx_bytes),
-            download_total_text: format_bytes(data.peer_summary.rx_bytes),
-            upload_series: app.stats.tx_rate_history.iter().copied().collect(),
-            download_series: app.stats.rx_rate_history.iter().copied().collect(),
-            local_ip_text: format_local_ip(data),
-            dns_text: format_dns(data),
-            endpoint_text: format_endpoint(data),
-            allowed_text: format_allowed_summary(data),
-            network_name_text: app
-                .runtime
-                .running_name
-                .clone()
-                .unwrap_or_else(|| "-".to_string()),
-            route_table_text: data
-                .parsed_config
-                .as_ref()
-                .map(|cfg| format_route_table(cfg.interface.table))
-                .unwrap_or_else(|| "-".to_string()),
-            is_running: app.runtime.running,
+            runtime: OverviewRuntimeData {
+                is_running: app.runtime.running,
+                running_name_text: app
+                    .runtime
+                    .running_name
+                    .clone()
+                    .unwrap_or_else(|| "-".to_string()),
+                uptime_text: format_uptime(app.stats.started_at),
+                memory_text: format_process_memory(app.stats.process_rss_bytes),
+                rx_total_text: format_bytes(peer_summary.rx_bytes),
+                tx_total_text: format_bytes(peer_summary.tx_bytes),
+                peer_count_text: peer_summary.peer_count.to_string(),
+                handshake_text: last_handshake,
+                upload_speed_text: format_speed_text(app.runtime.running, app.stats.tx_rate_bps),
+                download_speed_text: format_speed_text(app.runtime.running, app.stats.rx_rate_bps),
+                upload_total_text: format_bytes(peer_summary.tx_bytes),
+                download_total_text: format_bytes(peer_summary.rx_bytes),
+                upload_series: app.stats.tx_rate_history.iter().copied().collect(),
+                download_series: app.stats.rx_rate_history.iter().copied().collect(),
+            },
+            preview,
             traffic_period: app.ui_session.traffic_period,
-            traffic_trend: build_traffic_trend(app),
-            traffic_summary: build_traffic_summary(app),
+            traffic_trend: app.stats.overview_traffic_trend(now.date_naive()),
+            traffic_summary: app.stats.overview_traffic_summary(
+                &app.configs,
+                app.ui_session.traffic_period,
+                now.date_naive(),
+                now.timestamp() / 3600,
+            ),
         }
     }
 }
 
-/// 构造 Traffic Summary 的入口。
-///
-/// 使用当前本地时间作为“统计窗口基准点”：
-/// - Today: 最近 24 小时；
-/// - ThisMonth: 过去 30 天；
-/// - LastMonth: 再往前 30 天。
-fn build_traffic_summary(app: &WgApp) -> TrafficSummaryData {
-    const MAX_RANK_ITEMS: usize = 7;
-    let now = Local::now();
-    build_traffic_summary_at(
-        app,
-        now.date_naive(),
-        now.timestamp() / 3600,
-        MAX_RANK_ITEMS,
-    )
-}
-
-fn build_traffic_summary_at(
-    app: &WgApp,
-    today: NaiveDate,
-    current_hour: i64,
-    max_rank_items: usize,
-) -> TrafficSummaryData {
-    // 这里的统计口径有两层：
-    // 1. 先按当前 period 求整体 total_rx / total_tx；
-    // 2. 再按配置分别求同周期总量，用于排行。
-    //
-    // 排行里会跳过零流量项，避免“空配置”挤占榜单空间。
-    let (total_rx, total_tx, ranked) = match app.ui_session.traffic_period {
-        TrafficPeriod::Today => {
-            // Today 采用滚动 24 小时窗口，而不是“从当天 00:00 到现在”。
-            let min_hour = current_hour.saturating_sub(23);
-            let (total_rx, total_tx) = sum_hours(&app.stats.traffic_hours, min_hour, current_hour);
-            let ranked = app
-                .configs
-                .iter()
-                .filter_map(|cfg| {
-                    let hours = app.stats.config_traffic_hours.get(&cfg.id)?;
-                    let (rx, tx) = sum_hours(hours, min_hour, current_hour);
-                    let total = rx.saturating_add(tx);
-                    if total == 0 {
-                        None
-                    } else {
-                        Some(TrafficRankItem {
-                            name: cfg.name.clone(),
-                            rx_bytes: rx,
-                            tx_bytes: tx,
-                        })
-                    }
-                })
-                .collect::<Vec<_>>();
-            (total_rx, total_tx, ranked)
-        }
-        TrafficPeriod::ThisMonth => {
-            // ThisMonth 口径：包含 today 在内的最近 30 个自然日。
-            let dates = build_date_set(today, 0, 30);
-            let (total_rx, total_tx) = sum_days(&app.stats.traffic_days_v2, &dates);
-            let ranked = app
-                .configs
-                .iter()
-                .filter_map(|cfg| {
-                    let days = app.stats.config_traffic_days.get(&cfg.id)?;
-                    let (rx, tx) = sum_days(days, &dates);
-                    let total = rx.saturating_add(tx);
-                    if total == 0 {
-                        None
-                    } else {
-                        Some(TrafficRankItem {
-                            name: cfg.name.clone(),
-                            rx_bytes: rx,
-                            tx_bytes: tx,
-                        })
-                    }
-                })
-                .collect::<Vec<_>>();
-            (total_rx, total_tx, ranked)
-        }
-        TrafficPeriod::LastMonth => {
-            // LastMonth 口径：排除最近 30 天，取再往前的 30 个自然日。
-            let dates = build_date_set(today, 30, 30);
-            let (total_rx, total_tx) = sum_days(&app.stats.traffic_days_v2, &dates);
-            let ranked = app
-                .configs
-                .iter()
-                .filter_map(|cfg| {
-                    let days = app.stats.config_traffic_days.get(&cfg.id)?;
-                    let (rx, tx) = sum_days(days, &dates);
-                    let total = rx.saturating_add(tx);
-                    if total == 0 {
-                        None
-                    } else {
-                        Some(TrafficRankItem {
-                            name: cfg.name.clone(),
-                            rx_bytes: rx,
-                            tx_bytes: tx,
-                        })
-                    }
-                })
-                .collect::<Vec<_>>();
-            (total_rx, total_tx, ranked)
-        }
+fn build_overview_preview(app: &WgApp) -> OverviewPreviewData {
+    let selected = app.selected_config().cloned();
+    let Some(selected) = selected else {
+        return OverviewPreviewData {
+            has_selection: false,
+            selected_name_text: "No config selected".to_string(),
+            source_text: "-".to_string(),
+            context_text: "Pick a saved config to show a stable preview here.".to_string(),
+            local_ip_text: "-".to_string(),
+            dns_text: "-".to_string(),
+            endpoint_text: "-".to_string(),
+            allowed_text: "-".to_string(),
+            route_table_text: "-".to_string(),
+        };
     };
 
-    // 最终排行统一按总流量倒序，并截断到 UI 预设数量。
-    let mut ranked = ranked;
-    ranked.sort_by(|a, b| b.total_bytes().cmp(&a.total_bytes()));
-    ranked.truncate(max_rank_items);
+    let cached_text = app.peek_cached_config_text(&selected.storage_path);
+    let parsed_config = selected
+        .text
+        .clone()
+        .or(cached_text)
+        .and_then(|text| config::parse_config(text.as_ref()).ok());
+    let data = ViewData {
+        parsed_config,
+        parse_error: None,
+        draft_dirty: false,
+        has_saved_source: true,
+        needs_restart: false,
+        last_handshake: String::new(),
+    };
+    let is_running_config = app.runtime.running_id == Some(selected.id)
+        || app.runtime.running_name.as_deref() == Some(selected.name.as_str());
 
-    TrafficSummaryData {
-        total_rx,
-        total_tx,
-        ranked,
+    OverviewPreviewData {
+        has_selection: true,
+        selected_name_text: selected.name.clone(),
+        source_text: overview_source_summary(&selected),
+        context_text: if is_running_config {
+            "Selected config matches the running tunnel.".to_string()
+        } else {
+            "Preview comes from the selected saved config, not the running tunnel.".to_string()
+        },
+        local_ip_text: format_local_ip(&data),
+        dns_text: format_dns(&data),
+        endpoint_text: format_endpoint(&data),
+        allowed_text: format_allowed_summary(&data),
+        route_table_text: data
+            .parsed_config
+            .as_ref()
+            .map(|cfg| format_route_table(cfg.interface.table))
+            .unwrap_or_else(|| "-".to_string()),
     }
 }
 
-/// 构造一个日期集合，供“按天”统计窗口过滤使用。
+impl StatsState {
+    pub(crate) fn overview_traffic_summary(
+        &self,
+        configs: &ConfigsState,
+        period: TrafficPeriod,
+        today: NaiveDate,
+        current_hour: i64,
+    ) -> TrafficSummaryData {
+        const MAX_RANK_ITEMS: usize = 7;
+        self.overview_traffic_summary_at(configs, period, today, current_hour, MAX_RANK_ITEMS)
+    }
+
+    fn overview_traffic_summary_at(
+        &self,
+        configs: &ConfigsState,
+        period: TrafficPeriod,
+        today: NaiveDate,
+        current_hour: i64,
+        max_rank_items: usize,
+    ) -> TrafficSummaryData {
+        // 这里的统计口径有两层：
+        // 1. 先按当前 period 求整体 total_rx / total_tx；
+        // 2. 再按配置分别求同周期总量，用于排行。
+        //
+        // 排行里会跳过零流量项，避免“空配置”挤占榜单空间。
+        let (total_rx, total_tx, ranked) = match period {
+            TrafficPeriod::Today => {
+                // Today 采用滚动 24 小时窗口，而不是“从当天 00:00 到现在”。
+                let min_hour = current_hour.saturating_sub(23);
+                let (total_rx, total_tx) =
+                    sum_hours(&self.traffic.global_hours, min_hour, current_hour);
+                let ranked = configs
+                    .iter()
+                    .filter_map(|cfg| {
+                        let hours = self.traffic.config_hours.get(&cfg.id)?;
+                        let (rx, tx) = sum_hours(hours, min_hour, current_hour);
+                        let total = rx.saturating_add(tx);
+                        if total == 0 {
+                            None
+                        } else {
+                            Some(TrafficRankItem {
+                                name: cfg.name.clone(),
+                                rx_bytes: rx,
+                                tx_bytes: tx,
+                            })
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                (total_rx, total_tx, ranked)
+            }
+            TrafficPeriod::ThisMonth => {
+                // ThisMonth 口径：包含 today 在内的最近 30 个自然日。
+                let dates = build_day_key_set(today, 0, 30);
+                let (total_rx, total_tx) = sum_days(&self.traffic.global_days, &dates);
+                let ranked = configs
+                    .iter()
+                    .filter_map(|cfg| {
+                        let days = self.traffic.config_days.get(&cfg.id)?;
+                        let (rx, tx) = sum_days(days, &dates);
+                        let total = rx.saturating_add(tx);
+                        if total == 0 {
+                            None
+                        } else {
+                            Some(TrafficRankItem {
+                                name: cfg.name.clone(),
+                                rx_bytes: rx,
+                                tx_bytes: tx,
+                            })
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                (total_rx, total_tx, ranked)
+            }
+            TrafficPeriod::LastMonth => {
+                // LastMonth 口径：排除最近 30 天，取再往前的 30 个自然日。
+                let dates = build_day_key_set(today, 30, 30);
+                let (total_rx, total_tx) = sum_days(&self.traffic.global_days, &dates);
+                let ranked = configs
+                    .iter()
+                    .filter_map(|cfg| {
+                        let days = self.traffic.config_days.get(&cfg.id)?;
+                        let (rx, tx) = sum_days(days, &dates);
+                        let total = rx.saturating_add(tx);
+                        if total == 0 {
+                            None
+                        } else {
+                            Some(TrafficRankItem {
+                                name: cfg.name.clone(),
+                                rx_bytes: rx,
+                                tx_bytes: tx,
+                            })
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                (total_rx, total_tx, ranked)
+            }
+        };
+
+        // 最终排行统一按总流量倒序，并截断到 UI 预设数量。
+        let mut ranked = ranked;
+        ranked.sort_by(|a, b| b.total_bytes().cmp(&a.total_bytes()));
+        ranked.truncate(max_rank_items);
+
+        TrafficSummaryData {
+            total_rx,
+            total_tx,
+            ranked,
+        }
+    }
+
+    pub(crate) fn overview_traffic_trend(&self, today: NaiveDate) -> TrafficTrendData {
+        // 图表始终展示固定长度的最近 7 天：
+        // - 没有流量的日期也会补 0；
+        // - 最后一个点永远是 today，并打上高亮标记。
+        let mut points = Vec::with_capacity(TRAFFIC_TREND_DAYS);
+        for offset in (0..TRAFFIC_TREND_DAYS).rev() {
+            let date = today - ChronoDuration::days(offset as i64);
+            let day_key = day_key_from_date(date);
+            let bytes = self
+                .traffic
+                .global_days
+                .iter()
+                .find(|day| day.day_key == day_key)
+                .map(|day| day.rx_bytes.saturating_add(day.tx_bytes))
+                .unwrap_or(0);
+            let label = date.format("%a").to_string();
+            points.push(TrafficTrendPoint {
+                label,
+                bytes,
+                is_today: offset == 0,
+            });
+        }
+
+        let total: u64 = points.iter().map(|point| point.bytes).sum();
+        let average_bytes = total as f64 / TRAFFIC_TREND_DAYS as f64;
+
+        TrafficTrendData {
+            points,
+            average_bytes,
+        }
+    }
+}
+
+/// 构造一个 day_key 集合，供“按天”统计窗口过滤使用。
 ///
 /// 例如：
 /// - `start_offset = 0, days = 30` 表示最近 30 天；
 /// - `start_offset = 30, days = 30` 表示再往前 30 天。
-fn build_date_set(today: NaiveDate, start_offset: i64, days: i64) -> HashSet<String> {
+fn build_day_key_set(today: NaiveDate, start_offset: i64, days: i64) -> HashSet<i32> {
     let mut set = HashSet::with_capacity(days as usize);
     for offset in start_offset..start_offset + days {
         let date = today - ChronoDuration::days(offset);
-        set.insert(date.format("%Y-%m-%d").to_string());
+        set.insert(day_key_from_date(date));
     }
     set
 }
 
 /// 在给定日期集合里，累计按天统计的 RX/TX。
-fn sum_days(days: &[TrafficDayStats], dates: &HashSet<String>) -> (u64, u64) {
+fn sum_days(days: &[TrafficDayBucket], dates: &HashSet<i32>) -> (u64, u64) {
     let mut rx = 0u64;
     let mut tx = 0u64;
     for day in days {
-        if dates.contains(&day.date) {
+        if dates.contains(&day.day_key) {
             rx = rx.saturating_add(day.rx_bytes);
             tx = tx.saturating_add(day.tx_bytes);
         }
@@ -444,57 +524,16 @@ fn sum_days(days: &[TrafficDayStats], dates: &HashSet<String>) -> (u64, u64) {
 }
 
 /// 在给定小时窗口里，累计按小时统计的 RX/TX。
-fn sum_hours(hours: &[TrafficHour], min_hour: i64, max_hour: i64) -> (u64, u64) {
+fn sum_hours(hours: &[TrafficHourBucket], min_hour: i64, max_hour: i64) -> (u64, u64) {
     let mut rx = 0u64;
     let mut tx = 0u64;
     for hour in hours {
-        if hour.hour >= min_hour && hour.hour <= max_hour {
+        if hour.hour_key >= min_hour && hour.hour_key <= max_hour {
             rx = rx.saturating_add(hour.rx_bytes);
             tx = tx.saturating_add(hour.tx_bytes);
         }
     }
     (rx, tx)
-}
-
-/// 构造 7 日趋势图的入口。
-fn build_traffic_trend(app: &WgApp) -> TrafficTrendData {
-    build_traffic_trend_at(app, Local::now().date_naive())
-}
-
-fn build_traffic_trend_at(app: &WgApp, today: NaiveDate) -> TrafficTrendData {
-    // 原始数据里同一天可能出现多条累计记录，这里先按日期合并，
-    // 避免图表上同一天被重复计入。
-    let mut by_date: HashMap<NaiveDate, u64> = HashMap::new();
-    for day in &app.stats.traffic_days {
-        if let Ok(date) = NaiveDate::parse_from_str(&day.date, "%Y-%m-%d") {
-            let entry = by_date.entry(date).or_insert(0);
-            *entry = entry.saturating_add(day.bytes);
-        }
-    }
-
-    // 图表始终展示固定长度的最近 7 天：
-    // - 没有流量的日期也会补 0；
-    // - 最后一个点永远是 today，并打上高亮标记。
-    let mut points = Vec::with_capacity(TRAFFIC_TREND_DAYS);
-    for offset in (0..TRAFFIC_TREND_DAYS).rev() {
-        let date = today - ChronoDuration::days(offset as i64);
-        let bytes = by_date.get(&date).copied().unwrap_or(0);
-        let label = date.format("%a").to_string();
-        points.push(TrafficTrendPoint {
-            label,
-            bytes,
-            is_today: offset == 0,
-        });
-    }
-
-    // 平均值按“固定 7 天窗口”计算，而不是按“非零流量天数”计算。
-    let total: u64 = points.iter().map(|point| point.bytes).sum();
-    let average_bytes = total as f64 / TRAFFIC_TREND_DAYS as f64;
-
-    TrafficTrendData {
-        points,
-        average_bytes,
-    }
 }
 
 /// 把启动时间转成 Overview 卡片显示的 uptime 文案。
@@ -564,6 +603,18 @@ fn config_origin_summary(config: &TunnelConfig) -> String {
     }
 }
 
+fn overview_source_summary(config: &TunnelConfig) -> String {
+    match &config.source {
+        ConfigSource::File { origin_path } => origin_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .map(|name| format!("Imported • {name}"))
+            .unwrap_or_else(|| "Imported config".to_string()),
+        ConfigSource::Paste => "Saved in app storage".to_string(),
+    }
+}
+
 /// 从解析后的配置里提取第一个本地地址。
 fn format_local_ip(data: &ViewData) -> String {
     data.parsed_config
@@ -611,54 +662,9 @@ fn format_allowed_summary(data: &ViewData) -> String {
     }
 }
 
-/// 读取当前进程常驻内存并格式化为文案。
-fn format_memory_usage() -> String {
-    match read_process_rss_bytes() {
-        Some(bytes) => format_memory(bytes),
-        None => "-".to_string(),
-    }
-}
-
-/// 读取当前进程 RSS。
-///
-/// 这里故意保留在 ViewModel 层，而不是视图层里现算：
-/// - 视图只消费“已经格式化好的文案”；
-/// - 平台差异（Linux `/proc`、Windows API）被封在这一层。
-fn read_process_rss_bytes() -> Option<u64> {
-    #[cfg(target_os = "linux")]
-    {
-        let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        for line in status.lines() {
-            if let Some(rest) = line.strip_prefix("VmRSS:") {
-                let mut parts = rest.split_whitespace();
-                let kb = parts.next()?.parse::<u64>().ok()?;
-                return Some(kb.saturating_mul(1024));
-            }
-        }
-        return None;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use windows::Win32::System::ProcessStatus::{
-            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
-        };
-        use windows::Win32::System::Threading::GetCurrentProcess;
-
-        let process = unsafe { GetCurrentProcess() };
-        let mut counters = PROCESS_MEMORY_COUNTERS::default();
-        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-
-        unsafe {
-            GetProcessMemoryInfo(process, &mut counters, counters.cb).ok()?;
-        }
-        return Some(counters.WorkingSetSize as u64);
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        None
-    }
+/// 将 stats 线程采样到的 RSS 统一格式化为文案。
+fn format_process_memory(bytes: Option<u64>) -> String {
+    bytes.map(format_memory).unwrap_or_else(|| "-".to_string())
 }
 
 /// 把字节数格式化成较稳定的内存展示文案。
@@ -686,10 +692,10 @@ mod tests {
     use chrono::NaiveDate;
     use gpui_component::theme::ThemeMode;
 
-    use super::{build_traffic_summary_at, build_traffic_trend_at};
+    use super::OverviewData;
     use crate::ui::state::{
-        ConfigSource, EndpointFamily, TrafficDay, TrafficDayStats, TrafficHour, TrafficPeriod,
-        TunnelConfig, WgApp, TRAFFIC_TREND_DAYS,
+        day_key_from_date, ConfigSource, EndpointFamily, TrafficDayBucket, TrafficHourBucket,
+        TrafficPeriod, TunnelConfig, WgApp, TRAFFIC_TREND_DAYS,
     };
     use crate::ui::themes::AppearancePolicy;
 
@@ -723,49 +729,50 @@ mod tests {
         let current_hour = 1_000;
         app.ui_session.traffic_period = TrafficPeriod::Today;
         app.configs.configs = vec![make_config(1, "alpha"), make_config(2, "beta")];
-        app.stats.traffic_hours = vec![
-            TrafficHour {
-                hour: current_hour,
+        app.stats.traffic.global_hours = vec![
+            TrafficHourBucket {
+                hour_key: current_hour,
                 rx_bytes: 50,
                 tx_bytes: 5,
             },
-            TrafficHour {
-                hour: current_hour - 23,
+            TrafficHourBucket {
+                hour_key: current_hour - 23,
                 rx_bytes: 10,
                 tx_bytes: 1,
             },
-            TrafficHour {
-                hour: current_hour - 24,
+            TrafficHourBucket {
+                hour_key: current_hour - 24,
                 rx_bytes: 999,
                 tx_bytes: 999,
             },
         ];
-        app.stats.config_traffic_hours.insert(
+        app.stats.traffic.config_hours.insert(
             1,
             vec![
-                TrafficHour {
-                    hour: current_hour,
+                TrafficHourBucket {
+                    hour_key: current_hour,
                     rx_bytes: 20,
                     tx_bytes: 10,
                 },
-                TrafficHour {
-                    hour: current_hour - 24,
+                TrafficHourBucket {
+                    hour_key: current_hour - 24,
                     rx_bytes: 500,
                     tx_bytes: 500,
                 },
             ],
         );
-        app.stats.config_traffic_hours.insert(
+        app.stats.traffic.config_hours.insert(
             2,
-            vec![TrafficHour {
-                hour: current_hour - 1,
+            vec![TrafficHourBucket {
+                hour_key: current_hour - 1,
                 rx_bytes: 40,
                 tx_bytes: 20,
             }],
         );
 
-        let summary = build_traffic_summary_at(
-            &app,
+        let summary = app.stats.overview_traffic_summary_at(
+            &app.configs,
+            app.ui_session.traffic_period,
             NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date"),
             current_hour,
             7,
@@ -785,38 +792,50 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date");
         let mut app = make_app();
         app.configs.configs = vec![make_config(7, "alpha")];
-        app.stats.traffic_days_v2 = vec![
-            TrafficDayStats {
-                date: "2026-03-06".to_string(),
+        app.stats.traffic.global_days = vec![
+            TrafficDayBucket {
+                day_key: day_key_from_date(
+                    NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date"),
+                ),
                 rx_bytes: 10,
                 tx_bytes: 20,
             },
-            TrafficDayStats {
-                date: "2026-02-10".to_string(),
+            TrafficDayBucket {
+                day_key: day_key_from_date(
+                    NaiveDate::from_ymd_opt(2026, 2, 10).expect("valid test date"),
+                ),
                 rx_bytes: 30,
                 tx_bytes: 40,
             },
-            TrafficDayStats {
-                date: "2026-01-20".to_string(),
+            TrafficDayBucket {
+                day_key: day_key_from_date(
+                    NaiveDate::from_ymd_opt(2026, 1, 20).expect("valid test date"),
+                ),
                 rx_bytes: 500,
                 tx_bytes: 600,
             },
         ];
-        app.stats.config_traffic_days.insert(
+        app.stats.traffic.config_days.insert(
             7,
             vec![
-                TrafficDayStats {
-                    date: "2026-03-06".to_string(),
+                TrafficDayBucket {
+                    day_key: day_key_from_date(
+                        NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date"),
+                    ),
                     rx_bytes: 10,
                     tx_bytes: 20,
                 },
-                TrafficDayStats {
-                    date: "2026-02-10".to_string(),
+                TrafficDayBucket {
+                    day_key: day_key_from_date(
+                        NaiveDate::from_ymd_opt(2026, 2, 10).expect("valid test date"),
+                    ),
                     rx_bytes: 30,
                     tx_bytes: 40,
                 },
-                TrafficDayStats {
-                    date: "2026-01-20".to_string(),
+                TrafficDayBucket {
+                    day_key: day_key_from_date(
+                        NaiveDate::from_ymd_opt(2026, 1, 20).expect("valid test date"),
+                    ),
                     rx_bytes: 500,
                     tx_bytes: 600,
                 },
@@ -824,13 +843,25 @@ mod tests {
         );
 
         app.ui_session.traffic_period = TrafficPeriod::ThisMonth;
-        let this_month = build_traffic_summary_at(&app, today, 0, 7);
+        let this_month = app.stats.overview_traffic_summary_at(
+            &app.configs,
+            app.ui_session.traffic_period,
+            today,
+            0,
+            7,
+        );
         assert_eq!(this_month.total_rx, 40);
         assert_eq!(this_month.total_tx, 60);
         assert_eq!(this_month.ranked[0].total_bytes(), 100);
 
         app.ui_session.traffic_period = TrafficPeriod::LastMonth;
-        let last_month = build_traffic_summary_at(&app, today, 0, 7);
+        let last_month = app.stats.overview_traffic_summary_at(
+            &app.configs,
+            app.ui_session.traffic_period,
+            today,
+            0,
+            7,
+        );
         assert_eq!(last_month.total_rx, 500);
         assert_eq!(last_month.total_tx, 600);
         assert_eq!(last_month.ranked[0].total_bytes(), 1100);
@@ -840,30 +871,82 @@ mod tests {
     fn traffic_trend_aggregates_same_day_entries_and_marks_today() {
         let today = NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date");
         let mut app = make_app();
-        app.stats.traffic_days = vec![
-            TrafficDay {
-                date: "2026-03-06".to_string(),
-                bytes: 100,
+        app.stats.traffic.global_days = vec![
+            TrafficDayBucket {
+                day_key: day_key_from_date(
+                    NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date"),
+                ),
+                rx_bytes: 100,
+                tx_bytes: 50,
             },
-            TrafficDay {
-                date: "2026-03-06".to_string(),
-                bytes: 50,
+            TrafficDayBucket {
+                day_key: day_key_from_date(
+                    NaiveDate::from_ymd_opt(2026, 3, 4).expect("valid test date"),
+                ),
+                rx_bytes: 20,
+                tx_bytes: 10,
             },
-            TrafficDay {
-                date: "2026-03-04".to_string(),
-                bytes: 30,
-            },
-            TrafficDay {
-                date: "2026-02-20".to_string(),
-                bytes: 999,
+            TrafficDayBucket {
+                day_key: day_key_from_date(
+                    NaiveDate::from_ymd_opt(2026, 2, 20).expect("valid test date"),
+                ),
+                rx_bytes: 999,
+                tx_bytes: 0,
             },
         ];
 
-        let trend = build_traffic_trend_at(&app, today);
+        let trend = app.stats.overview_traffic_trend(today);
 
         assert_eq!(trend.points.len(), TRAFFIC_TREND_DAYS);
         let today_point = trend.points.last().expect("today should be present");
         assert!(today_point.is_today);
         assert_eq!(today_point.bytes, 150);
+    }
+
+    #[test]
+    fn overview_snapshot_separates_running_runtime_from_selected_preview() {
+        let mut app = make_app();
+        app.configs.configs = vec![
+            TunnelConfig {
+                id: 7,
+                name: "alpha".to_string(),
+                name_lower: "alpha".to_string(),
+                text: Some(
+                    "[Interface]\nPrivateKey = 0000000000000000000000000000000000000000000000000000000000000000\nAddress = 10.0.0.2/32\nDNS = 1.1.1.1\nTable = off\n\n[Peer]\nPublicKey = 1111111111111111111111111111111111111111111111111111111111111111\nAllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.10:51820\n"
+                        .into(),
+                ),
+                source: ConfigSource::Paste,
+                storage_path: PathBuf::from("/tmp/alpha.conf"),
+                endpoint_family: EndpointFamily::Unknown,
+            },
+            TunnelConfig {
+                id: 9,
+                name: "beta".to_string(),
+                name_lower: "beta".to_string(),
+                text: None,
+                source: ConfigSource::Paste,
+                storage_path: PathBuf::from("/tmp/beta.conf"),
+                endpoint_family: EndpointFamily::Unknown,
+            },
+        ];
+        app.selection.selected_id = Some(7);
+        app.runtime.running = true;
+        app.runtime.running_id = Some(9);
+        app.runtime.running_name = Some("beta".to_string());
+
+        let overview = OverviewData::new(&mut app);
+
+        assert!(overview.runtime.is_running);
+        assert_eq!(overview.runtime.running_name_text, "beta");
+        assert!(overview.preview.has_selection);
+        assert_eq!(overview.preview.selected_name_text, "alpha");
+        assert_eq!(overview.preview.local_ip_text, "10.0.0.2/32");
+        assert_eq!(overview.preview.dns_text, "1.1.1.1");
+        assert_eq!(overview.preview.route_table_text, "off");
+        assert_eq!(overview.preview.allowed_text, "1 routes");
+        assert!(overview
+            .preview
+            .context_text
+            .contains("not the running tunnel"));
     }
 }

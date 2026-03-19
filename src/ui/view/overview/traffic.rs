@@ -1,11 +1,11 @@
 use gpui::*;
 use gpui_component::{
-    button::{Button, ButtonGroup, ButtonVariants},
+    button::{Button, ButtonGroup},
     chart::{BarChart, PieChart},
     divider::Divider,
     group_box::{GroupBox, GroupBoxVariants},
-    h_flex, v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _,
-    Sizable as _, StyledExt as _,
+    h_flex, v_flex, ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _,
+    StyledExt as _,
 };
 
 use crate::ui::format::format_bytes;
@@ -15,7 +15,7 @@ use crate::ui::view::data::{OverviewData, TrafficRankItem, TrafficTrendData};
 use super::chart::{format_avg_bytes, TrafficAvgLine};
 use super::common::{card_title, vertical_rule};
 
-pub(super) fn traffic_trend_card(trend: &TrafficTrendData, cx: &mut Context<WgApp>) -> GroupBox {
+pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T>) -> GroupBox {
     let avg_color = cx.theme().chart_4;
     let avg_line_color = avg_color.alpha(if cx.theme().is_dark() { 0.55 } else { 0.45 });
     let bar_color =
@@ -33,7 +33,7 @@ pub(super) fn traffic_trend_card(trend: &TrafficTrendData, cx: &mut Context<WgAp
         .title(card_title(
             IconName::Calendar,
             "7-Day Traffic Trend",
-            Some(IconName::Redo),
+            None,
             cx,
         ))
         .child(Divider::horizontal().color(cx.theme().border))
@@ -83,7 +83,11 @@ pub(super) fn traffic_trend_card(trend: &TrafficTrendData, cx: &mut Context<WgAp
         )
 }
 
-pub(super) fn traffic_summary_card(overview: &OverviewData, cx: &mut Context<WgApp>) -> GroupBox {
+pub(super) fn traffic_summary_card<T>(
+    app_handle: &Entity<WgApp>,
+    overview: &OverviewData,
+    cx: &mut Context<T>,
+) -> GroupBox {
     let summary = &overview.traffic_summary;
     let upload_color = cx.theme().chart_1;
     let download_color = cx.theme().chart_2;
@@ -98,67 +102,45 @@ pub(super) fn traffic_summary_card(overview: &OverviewData, cx: &mut Context<WgA
         .small()
         .child(
             Button::new("traffic-period-today")
-                .label("Today")
+                .label("24h")
                 .selected(overview.traffic_period == TrafficPeriod::Today)
                 .tooltip("Last 24 hours")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.set_session_traffic_period(TrafficPeriod::Today, cx);
-                })),
+                .on_click({
+                    let app_handle = app_handle.clone();
+                    move |_, _, cx| {
+                        let _ = app_handle.update(cx, |app, cx| {
+                            app.set_session_traffic_period(TrafficPeriod::Today, cx);
+                        });
+                    }
+                }),
         )
         .child(
             Button::new("traffic-period-month")
-                .label("This Month")
+                .label("30d")
                 .selected(overview.traffic_period == TrafficPeriod::ThisMonth)
                 .tooltip("Last 30 days")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.set_session_traffic_period(TrafficPeriod::ThisMonth, cx);
-                })),
+                .on_click({
+                    let app_handle = app_handle.clone();
+                    move |_, _, cx| {
+                        let _ = app_handle.update(cx, |app, cx| {
+                            app.set_session_traffic_period(TrafficPeriod::ThisMonth, cx);
+                        });
+                    }
+                }),
         )
         .child(
             Button::new("traffic-period-last")
-                .label("Last Month")
+                .label("Prev 30d")
                 .selected(overview.traffic_period == TrafficPeriod::LastMonth)
                 .tooltip("Previous 30 days")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.set_session_traffic_period(TrafficPeriod::LastMonth, cx);
-                })),
-        );
-
-    let ranking_tabs = h_flex()
-        .gap_2()
-        .items_center()
-        .child(
-            div()
-                .text_xs()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(cx.theme().muted_foreground)
-                .child("RANKING BY:"),
-        )
-        .child(
-            ButtonGroup::new("traffic-summary-ranking")
-                .ghost()
-                .compact()
-                .xsmall()
-                .child(
-                    Button::new("traffic-ranking-proxy")
-                        .label("Proxy")
-                        .selected(true),
-                )
-                .child(
-                    Button::new("traffic-ranking-process")
-                        .label("Process")
-                        .disabled(true),
-                )
-                .child(
-                    Button::new("traffic-ranking-interface")
-                        .label("Interface")
-                        .disabled(true),
-                )
-                .child(
-                    Button::new("traffic-ranking-host")
-                        .label("Hostname")
-                        .disabled(true),
-                ),
+                .on_click({
+                    let app_handle = app_handle.clone();
+                    move |_, _, cx| {
+                        let _ = app_handle.update(cx, |app, cx| {
+                            app.set_session_traffic_period(TrafficPeriod::LastMonth, cx);
+                        });
+                    }
+                }),
         );
 
     let pie_data = vec![
@@ -245,11 +227,18 @@ pub(super) fn traffic_summary_card(overview: &OverviewData, cx: &mut Context<WgA
                         .flex_wrap()
                         .gap_4()
                         .child(period_toggle)
-                        .child(ranking_tabs),
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Ranking by saved config"),
+                        ),
                 )
                 .child(
                     h_flex()
                         .items_start()
+                        .flex_wrap()
                         .gap_8()
                         .child(
                             v_flex()
@@ -266,13 +255,13 @@ pub(super) fn traffic_summary_card(overview: &OverviewData, cx: &mut Context<WgA
         )
 }
 
-fn metric_progress_modern(
+fn metric_progress_modern<T>(
     icon: IconName,
     label: &str,
     value: u64,
     total: u64,
     color: Hsla,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<T>,
 ) -> Div {
     let pct = percent(value, total);
     let value_text = format_bytes(value);
@@ -332,10 +321,10 @@ fn metric_progress_modern(
         )
 }
 
-fn traffic_ranking_list_modern(
+fn traffic_ranking_list_modern<T>(
     ranked: &[TrafficRankItem],
     color: Hsla,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<T>,
 ) -> Div {
     if ranked.is_empty() {
         return div()
@@ -437,7 +426,7 @@ pub(super) struct TrafficColumnProps<'a> {
     pub(super) sparkline: AnyElement,
 }
 
-pub(super) fn traffic_column(props: TrafficColumnProps<'_>, cx: &mut Context<WgApp>) -> Div {
+pub(super) fn traffic_column<T>(props: TrafficColumnProps<'_>, cx: &mut Context<T>) -> Div {
     let icon_small = props.icon.clone();
     v_flex()
         .gap_2()

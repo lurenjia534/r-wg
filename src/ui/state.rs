@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use chrono::NaiveDate;
 use gpui::{Entity, SharedString, Subscription, Window};
 use gpui_component::theme::ThemeMode;
 use gpui_component::{input::InputState, notification::Notification, IconName, WindowExt};
@@ -23,8 +24,6 @@ use super::themes::{self, AppearancePolicy};
 pub(crate) const SPARKLINE_SAMPLES: usize = 24;
 /// 7 日流量趋势展示天数。
 pub(crate) const TRAFFIC_TREND_DAYS: usize = 7;
-/// 持久化的流量历史天数（限制 state.json 体积）。
-pub(crate) const TRAFFIC_HISTORY_DAYS: usize = 30;
 /// Traffic Summary 的滚动天数（过去 30 天 + 前 30 天）。
 pub(crate) const TRAFFIC_ROLLING_DAYS: usize = 60;
 /// Traffic Summary 的滚动小时数（过去 24 小时，预留 48 小时）。
@@ -522,27 +521,164 @@ pub(crate) struct ConfigsLibraryRow {
     pub(crate) is_dirty: bool,
 }
 
-/// 日流量统计（按本地日期汇总）。
+/// 按天统计的 RX/TX bucket，`day_key` 为自 Unix epoch 起的天数。
 #[derive(Clone)]
-pub(crate) struct TrafficDay {
-    pub(crate) date: String,
-    pub(crate) bytes: u64,
-}
-
-/// 按天统计的 RX/TX 统计（用于 30 天窗口）。
-#[derive(Clone)]
-pub(crate) struct TrafficDayStats {
-    pub(crate) date: String,
+pub(crate) struct TrafficDayBucket {
+    pub(crate) day_key: i32,
     pub(crate) rx_bytes: u64,
     pub(crate) tx_bytes: u64,
 }
 
-/// 按小时统计的 RX/TX 统计（用于 24 小时窗口）。
+/// 按小时统计的 RX/TX bucket，`hour_key` 为自 Unix epoch 起的小时数。
 #[derive(Clone)]
-pub(crate) struct TrafficHour {
-    pub(crate) hour: i64,
+pub(crate) struct TrafficHourBucket {
+    pub(crate) hour_key: i64,
     pub(crate) rx_bytes: u64,
     pub(crate) tx_bytes: u64,
+}
+
+pub(crate) struct TrafficStore {
+    pub(crate) global_days: Vec<TrafficDayBucket>,
+    pub(crate) global_hours: Vec<TrafficHourBucket>,
+    pub(crate) config_days: HashMap<u64, Vec<TrafficDayBucket>>,
+    pub(crate) config_hours: HashMap<u64, Vec<TrafficHourBucket>>,
+    pub(crate) dirty: bool,
+    pub(crate) last_persist_at: Option<Instant>,
+    pub(crate) rev: u64,
+}
+
+impl TrafficStore {
+    pub(crate) fn new() -> Self {
+        Self {
+            global_days: Vec::new(),
+            global_hours: Vec::new(),
+            config_days: HashMap::new(),
+            config_hours: HashMap::new(),
+            dirty: false,
+            last_persist_at: None,
+            rev: 0,
+        }
+    }
+
+    pub(crate) fn record(
+        &mut self,
+        config_id: Option<u64>,
+        day_key: i32,
+        hour_key: i64,
+        rx_bytes: u64,
+        tx_bytes: u64,
+    ) -> bool {
+        if rx_bytes.saturating_add(tx_bytes) == 0 {
+            return false;
+        }
+
+        let mut created = false;
+        if update_traffic_day_buckets(&mut self.global_days, day_key, rx_bytes, tx_bytes) {
+            created = true;
+        }
+        if update_traffic_hour_buckets(&mut self.global_hours, hour_key, rx_bytes, tx_bytes) {
+            created = true;
+        }
+
+        if let Some(config_id) = config_id {
+            let days = self.config_days.entry(config_id).or_default();
+            if update_traffic_day_buckets(days, day_key, rx_bytes, tx_bytes) {
+                created = true;
+            }
+
+            let hours = self.config_hours.entry(config_id).or_default();
+            if update_traffic_hour_buckets(hours, hour_key, rx_bytes, tx_bytes) {
+                created = true;
+            }
+        }
+
+        self.dirty = true;
+        self.rev = self.rev.wrapping_add(1);
+        created
+    }
+
+    pub(crate) fn remove_config(&mut self, config_id: u64) -> bool {
+        let removed_days = self.config_days.remove(&config_id).is_some();
+        let removed_hours = self.config_hours.remove(&config_id).is_some();
+        let removed = removed_days || removed_hours;
+        if removed {
+            self.rev = self.rev.wrapping_add(1);
+        }
+        removed
+    }
+
+    pub(crate) fn mark_persisted(&mut self, at: Instant) {
+        self.last_persist_at = Some(at);
+        self.dirty = false;
+    }
+
+    pub(crate) fn reset_persist_state(&mut self) {
+        self.dirty = false;
+        self.last_persist_at = None;
+    }
+}
+
+pub(crate) fn day_key_from_date(date: NaiveDate) -> i32 {
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch date should be valid");
+    date.signed_duration_since(epoch).num_days() as i32
+}
+
+fn update_traffic_day_buckets(
+    days: &mut Vec<TrafficDayBucket>,
+    day_key: i32,
+    rx_bytes: u64,
+    tx_bytes: u64,
+) -> bool {
+    if let Some(day) = days.iter_mut().find(|day| day.day_key == day_key) {
+        day.rx_bytes = day.rx_bytes.saturating_add(rx_bytes);
+        day.tx_bytes = day.tx_bytes.saturating_add(tx_bytes);
+        return false;
+    }
+
+    days.push(TrafficDayBucket {
+        day_key,
+        rx_bytes,
+        tx_bytes,
+    });
+    prune_traffic_day_buckets(days);
+    true
+}
+
+fn update_traffic_hour_buckets(
+    hours: &mut Vec<TrafficHourBucket>,
+    hour_key: i64,
+    rx_bytes: u64,
+    tx_bytes: u64,
+) -> bool {
+    if let Some(hour) = hours.iter_mut().find(|hour| hour.hour_key == hour_key) {
+        hour.rx_bytes = hour.rx_bytes.saturating_add(rx_bytes);
+        hour.tx_bytes = hour.tx_bytes.saturating_add(tx_bytes);
+        return false;
+    }
+
+    hours.push(TrafficHourBucket {
+        hour_key,
+        rx_bytes,
+        tx_bytes,
+    });
+    prune_traffic_hour_buckets(hours);
+    true
+}
+
+fn prune_traffic_day_buckets(days: &mut Vec<TrafficDayBucket>) {
+    days.sort_by(|a, b| a.day_key.cmp(&b.day_key));
+    if days.len() > TRAFFIC_ROLLING_DAYS {
+        let remove_count = days.len() - TRAFFIC_ROLLING_DAYS;
+        days.drain(0..remove_count);
+    }
+}
+
+fn prune_traffic_hour_buckets(hours: &mut Vec<TrafficHourBucket>) {
+    hours.sort_by(|a, b| a.hour_key.cmp(&b.hour_key));
+    if hours.len() > TRAFFIC_HOURLY_HISTORY {
+        let remove_count = hours.len() - TRAFFIC_HOURLY_HISTORY;
+        hours.drain(0..remove_count);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -997,6 +1133,7 @@ pub(crate) struct SelectionState {
     pub(crate) proxy_select_mode: bool,
     /// 代理/节点多选：选中的配置 ID 列表。
     pub(crate) proxy_selected_ids: HashSet<u64>,
+    pub(crate) selection_revision: u64,
 }
 
 impl SelectionState {
@@ -1016,6 +1153,7 @@ impl SelectionState {
             proxy_running_filter: ProxyRunningFilter::All,
             proxy_select_mode: false,
             proxy_selected_ids: HashSet::new(),
+            selection_revision: 0,
         }
     }
 
@@ -1049,6 +1187,7 @@ impl SelectionState {
         self.loaded_config = None;
         self.loading_config_id = None;
         self.loading_config_path = None;
+        self.selection_revision = self.selection_revision.wrapping_add(1);
     }
 }
 
@@ -1063,6 +1202,7 @@ pub(crate) struct RuntimeState {
     pub(crate) last_stop_at: Option<Instant>,
     pub(crate) running_name: Option<String>,
     pub(crate) running_id: Option<u64>,
+    pub(crate) runtime_revision: u64,
 }
 
 impl RuntimeState {
@@ -1074,6 +1214,7 @@ impl RuntimeState {
             last_stop_at: None,
             running_name: None,
             running_id: None,
+            runtime_revision: 0,
         }
     }
 
@@ -1097,6 +1238,7 @@ impl RuntimeState {
 
     pub(crate) fn begin_stop(&mut self) {
         self.busy = true;
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
     pub(crate) fn finish_stop_success(&mut self) {
@@ -1105,25 +1247,30 @@ impl RuntimeState {
         self.running_name = None;
         self.running_id = None;
         self.last_stop_at = Some(Instant::now());
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
     pub(crate) fn finish_stop_failure(&mut self) {
         self.busy = false;
         self.pending_start = None;
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
     pub(crate) fn begin_start(&mut self) {
         self.busy = true;
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
     pub(crate) fn finish_start_attempt(&mut self) {
         self.busy = false;
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
     pub(crate) fn mark_started(&mut self, selected: &TunnelConfig) {
         self.running = true;
         self.running_name = Some(selected.name.clone());
         self.running_id = Some(selected.id);
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 }
 
@@ -1147,14 +1294,9 @@ pub(crate) struct StatsState {
     pub(crate) last_iface_tx_bytes: u64,
     pub(crate) iface_rx_rate_bps: f64,
     pub(crate) iface_tx_rate_bps: f64,
-    // 7 日流量趋势（按天累计）。
-    pub(crate) traffic_days: Vec<TrafficDay>,
-    pub(crate) traffic_days_v2: Vec<TrafficDayStats>,
-    pub(crate) traffic_hours: Vec<TrafficHour>,
-    pub(crate) config_traffic_days: HashMap<u64, Vec<TrafficDayStats>>,
-    pub(crate) config_traffic_hours: HashMap<u64, Vec<TrafficHour>>,
-    pub(crate) traffic_dirty: bool,
-    pub(crate) traffic_last_persist_at: Option<Instant>,
+    pub(crate) process_rss_bytes: Option<u64>,
+    pub(crate) traffic: TrafficStore,
+    pub(crate) stats_revision: u64,
 }
 
 impl StatsState {
@@ -1176,13 +1318,9 @@ impl StatsState {
             last_iface_tx_bytes: 0,
             iface_rx_rate_bps: 0.0,
             iface_tx_rate_bps: 0.0,
-            traffic_days: Vec::new(),
-            traffic_days_v2: Vec::new(),
-            traffic_hours: Vec::new(),
-            config_traffic_days: HashMap::new(),
-            config_traffic_hours: HashMap::new(),
-            traffic_dirty: false,
-            traffic_last_persist_at: None,
+            process_rss_bytes: None,
+            traffic: TrafficStore::new(),
+            stats_revision: 0,
         }
     }
 
@@ -1206,6 +1344,8 @@ impl StatsState {
         self.last_iface_tx_bytes = 0;
         self.iface_rx_rate_bps = 0.0;
         self.iface_tx_rate_bps = 0.0;
+        self.process_rss_bytes = None;
+        self.stats_revision = self.stats_revision.wrapping_add(1);
     }
 
     pub(crate) fn reset_for_start(&mut self) {
@@ -1221,7 +1361,9 @@ impl StatsState {
         self.last_iface_tx_bytes = 0;
         self.iface_rx_rate_bps = 0.0;
         self.iface_tx_rate_bps = 0.0;
+        self.process_rss_bytes = None;
         self.stats_note = "Fetching peer stats...".into();
+        self.stats_revision = self.stats_revision.wrapping_add(1);
     }
 
     pub(crate) fn set_stats_error(&mut self, message: impl Into<SharedString>) -> bool {

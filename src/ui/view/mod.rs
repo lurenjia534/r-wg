@@ -80,11 +80,9 @@ impl Render for WgApp {
                 .child({
                     let main_body = match self.ui_session.sidebar_active {
                         SidebarItem::Overview => {
-                            let data = root_data
-                                .as_ref()
-                                .expect("root data should exist outside Configs");
-                            let overview_data = data::OverviewData::new(self, &data);
-                            overview::render_overview(&overview_data, cx).into_any_element()
+                            let overview_page =
+                                overview::ensure_overview_page(cx.entity(), window, cx);
+                            overview_page.into_any_element()
                         }
                         SidebarItem::Configs => {
                             let workspace = self.ensure_configs_workspace(cx);
