@@ -32,9 +32,9 @@ pub(crate) enum ConfigStatusTone {
 /// Configs 页的局部渲染快照。
 ///
 /// 这个 ViewModel 的目标不是减少字段数量，而是把 “Configs 页需要的 editor 状态”
-/// 从 `WgApp` 根状态里显式裁一份出来：
-/// - 视图层后续只依赖这份快照，不再散落读取 `app.editor.*`；
-/// - 等 `draft / operation` 真正迁进 `ConfigsWorkspace` 时，Configs 视图不需要再改一轮。
+/// 从 `ConfigsWorkspace` 的局部状态里显式整理成一份视图快照：
+/// - 视图层只依赖这份快照，不再散落读取页面状态；
+/// - 页面级状态和共享派生信息也在这里清楚分层，避免渲染逻辑回退到根状态。
 pub(crate) struct ConfigsViewData {
     pub(crate) shared: ViewData,
     pub(crate) draft: ConfigDraftState,

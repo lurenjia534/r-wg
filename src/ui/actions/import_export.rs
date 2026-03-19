@@ -304,6 +304,7 @@ impl WgApp {
                                     });
                                 }
                             }
+                            this.refresh_configs_workspace_library_rows(cx);
                             // 使用状态文本作为轻量“进度提示”。
                             this.set_editor_operation(
                                 Some(EditorOperation::Importing { processed, total }),

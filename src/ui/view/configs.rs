@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use gpui::prelude::FluentBuilder as _;
 use gpui::{uniform_list, InteractiveElement as _, StatefulInteractiveElement as _, *};
 use gpui_component::{
+    button::ButtonGroup,
     button::{Button, ButtonVariants},
     description_list::DescriptionList,
     group_box::{GroupBox, GroupBoxVariants},
@@ -17,7 +20,7 @@ use gpui_component::{
 use super::super::format::{format_addresses, format_allowed_ips, format_dns, format_route_table};
 use super::super::state::{
     ConfigInspectorTab, ConfigSource, ConfigsLibraryRow, ConfigsWorkspace, DraftValidationState,
-    EndpointFamily, WgApp,
+    EndpointFamily, SidebarItem, WgApp,
 };
 use super::data::ConfigsViewData;
 use super::widgets::status_badge;
@@ -25,6 +28,262 @@ use super::widgets::status_badge;
 const CONFIGS_COMPACT_BREAKPOINT: f32 = 1260.0;
 const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 86.0;
 const CONFIGS_LIBRARY_SCROLL_STATE_ID: &str = "configs-library-scroll";
+
+struct ConfigsRuntimeView {
+    running: bool,
+    busy: bool,
+    selected_id: Option<u64>,
+    latest_status: String,
+    last_error: String,
+    running_name: String,
+}
+
+fn configs_vertical_divider(cx: &mut Context<ConfigsWorkspace>) -> Div {
+    let color = if cx.theme().is_dark() {
+        cx.theme().foreground.alpha(0.12)
+    } else {
+        cx.theme().border
+    };
+    div().w(px(1.0)).h(px(22.0)).bg(color)
+}
+
+fn configs_icon_button(id: &'static str, icon: IconName) -> Button {
+    Button::new(id).ghost().icon(Icon::new(icon).size_5())
+}
+
+fn render_configs_top_bar(
+    runtime: &ConfigsRuntimeView,
+    app_handle: &Entity<WgApp>,
+    data: &super::data::ViewData,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Div {
+    let ui_font = "Plus Jakarta Sans";
+
+    let config_valid = data.parse_error.is_none() && data.parsed_config.is_some();
+    let can_start = config_valid
+        && data.has_saved_source
+        && !data.draft_dirty
+        && !runtime.running
+        && !runtime.busy;
+    let can_stop = runtime.running && !runtime.busy;
+
+    let is_dark = cx.theme().is_dark();
+    let chip_bg = if is_dark {
+        cx.theme().background.alpha(0.45)
+    } else {
+        cx.theme().secondary
+    };
+    let chip_border = if is_dark {
+        cx.theme().foreground.alpha(0.12)
+    } else {
+        cx.theme().border
+    };
+
+    let theme_toggle = ButtonGroup::new("theme-group")
+        .outline()
+        .compact()
+        .small()
+        .child(
+            Button::new("theme-light")
+                .icon(Icon::new(IconName::Sun).size_4())
+                .selected(!is_dark)
+                .tooltip("Switch to light mode")
+                .on_click({
+                    let app = app_handle.clone();
+                    move |_, window, cx| {
+                        let _ = app.update(cx, |this, cx| {
+                            this.set_theme_mode_pref(
+                                gpui_component::theme::ThemeMode::Light,
+                                Some(window),
+                                cx,
+                            );
+                        });
+                    }
+                }),
+        )
+        .child(
+            Button::new("theme-dark")
+                .icon(Icon::new(IconName::Moon).size_4())
+                .selected(is_dark)
+                .tooltip("Switch to dark mode")
+                .on_click({
+                    let app = app_handle.clone();
+                    move |_, window, cx| {
+                        let _ = app.update(cx, |this, cx| {
+                            this.set_theme_mode_pref(
+                                gpui_component::theme::ThemeMode::Dark,
+                                Some(window),
+                                cx,
+                            );
+                        });
+                    }
+                }),
+        );
+
+    let on_tooltip = if !data.has_saved_source {
+        "Save this draft before starting"
+    } else if data.draft_dirty {
+        "Save changes before starting"
+    } else if config_valid {
+        "Start tunnel"
+    } else {
+        "Select a valid config first"
+    };
+    let off_tooltip = if runtime.running {
+        "Stop tunnel"
+    } else {
+        "Tunnel is not running"
+    };
+
+    let modes = ButtonGroup::new("mode-group")
+        .outline()
+        .compact()
+        .small()
+        .child(
+            Button::new("mode-on")
+                .label("On")
+                .selected(runtime.running)
+                .disabled(!can_start)
+                .tooltip(on_tooltip)
+                .on_click({
+                    let app = app_handle.clone();
+                    move |_, window, cx| {
+                        let _ = app.update(cx, |this, cx| {
+                            this.handle_start_stop(window, cx);
+                        });
+                    }
+                }),
+        )
+        .child(
+            Button::new("mode-off")
+                .label("Off")
+                .selected(!runtime.running)
+                .disabled(!can_stop)
+                .tooltip(off_tooltip)
+                .on_click({
+                    let app = app_handle.clone();
+                    move |_, window, cx| {
+                        let _ = app.update(cx, |this, cx| {
+                            this.handle_start_stop(window, cx);
+                        });
+                    }
+                }),
+        );
+
+    let status_chip = {
+        let (label, dot_color, text_color, bg, border) = if runtime.running {
+            (
+                "Connected",
+                cx.theme().accent,
+                cx.theme().accent,
+                cx.theme().accent.alpha(0.18),
+                cx.theme().accent.alpha(0.35),
+            )
+        } else {
+            (
+                "Idle",
+                cx.theme().muted_foreground,
+                cx.theme().muted_foreground,
+                chip_bg,
+                chip_border,
+            )
+        };
+
+        h_flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .rounded_full()
+            .border_1()
+            .border_color(border)
+            .bg(bg)
+            .child(div().size(px(6.0)).rounded_full().bg(dot_color))
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(text_color)
+                    .child(label),
+            )
+    };
+
+    let settings_button = Button::new("settings")
+        .ghost()
+        .icon(Icon::new(IconName::Settings).size_5())
+        .tooltip("Open preferences")
+        .on_click({
+            let app = app_handle.clone();
+            move |_, window, cx| {
+                let _ = app.update(cx, |this, cx| {
+                    this.request_sidebar_active(SidebarItem::Advanced, window, cx);
+                });
+            }
+        });
+
+    let tools = h_flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py_1()
+        .rounded_full()
+        .border_1()
+        .border_color(chip_border)
+        .bg(chip_bg)
+        .child(configs_icon_button("notif", IconName::Bell))
+        .child(configs_icon_button("health", IconName::CircleCheck))
+        .child(settings_button);
+
+    h_flex()
+        .items_center()
+        .justify_between()
+        .gap_6()
+        .child(div())
+        .child(
+            h_flex()
+                .items_center()
+                .gap_3()
+                .px_3()
+                .py_2()
+                .rounded_full()
+                .border_1()
+                .border_color(chip_border)
+                .bg(chip_bg)
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family(ui_font)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Theme"),
+                        )
+                        .child(theme_toggle),
+                )
+                .child(configs_vertical_divider(cx))
+                .child(
+                    h_flex().items_center().gap_2().child(
+                        div()
+                            .text_xs()
+                            .font_family(ui_font)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Tunnel"),
+                    ),
+                )
+                .child(modes),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .child(status_chip)
+                .child(tools),
+        )
+}
 
 impl WgApp {
     pub(crate) fn ensure_configs_workspace(
@@ -46,66 +305,83 @@ impl Render for ConfigsWorkspace {
         let workspace_handle = cx.entity();
         self.ensure_inputs(window, cx);
         let app_handle = self.app.clone();
-        {
+        let (data, runtime) = {
             let app = app_handle.read(cx);
             self.sync_from_app(&app);
-        }
+            (
+                ConfigsViewData::from_editor(
+                    &app,
+                    self.draft.clone(),
+                    self.operation.clone(),
+                    self.has_selection,
+                ),
+                ConfigsRuntimeView {
+                    running: app.runtime.running,
+                    busy: app.runtime.busy,
+                    selected_id: app.selection.selected_id,
+                    latest_status: app.ui.status.to_string(),
+                    last_error: app
+                        .ui
+                        .last_error
+                        .clone()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "None".to_string()),
+                    running_name: app
+                        .runtime
+                        .running_name
+                        .clone()
+                        .unwrap_or_else(|| "-".to_string()),
+                },
+            )
+        };
+        let name_input = self
+            .name_input
+            .clone()
+            .expect("name input should be initialized");
+        let config_input = self
+            .config_input
+            .clone()
+            .expect("config input should be initialized");
 
-        self.app.update(cx, |app, cx| {
-            let data = ConfigsViewData::from_editor(
-                app,
-                self.draft.clone(),
-                self.operation.clone(),
-                self.has_selection,
-            );
-            let name_input = self
-                .name_input
-                .clone()
-                .expect("name input should be initialized");
-            let config_input = self
-                .config_input
-                .clone()
-                .expect("config input should be initialized");
-
-            div()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .flex_1()
-                .min_h(px(0.0))
-                .child(super::top_bar::render_top_bar(app, &data.shared, cx))
-                .child(render_configs_page(
-                    app,
-                    &workspace_handle,
-                    self.inspector_tab,
-                    &self.library_rows,
-                    self.library_width,
-                    self.inspector_width,
-                    &data,
-                    &name_input,
-                    &config_input,
-                    window,
-                    cx,
-                ))
-        })
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(render_configs_top_bar(&runtime, &app_handle, &data.shared, cx))
+            .child(render_configs_page(
+                &app_handle,
+                &workspace_handle,
+                &runtime,
+                self.inspector_tab,
+                &self.library_rows,
+                self.library_width,
+                self.inspector_width,
+                &data,
+                &name_input,
+                &config_input,
+                window,
+                cx,
+            ))
     }
 }
 
-pub(crate) fn render_configs_page(
-    app: &mut WgApp,
+fn render_configs_page(
+    app_handle: &Entity<WgApp>,
     workspace: &Entity<ConfigsWorkspace>,
+    runtime: &ConfigsRuntimeView,
     inspector_tab: ConfigInspectorTab,
-    library_rows: &[ConfigsLibraryRow],
+    library_rows: &Arc<Vec<ConfigsLibraryRow>>,
     library_width: f32,
     inspector_width: f32,
     data: &ConfigsViewData,
     name_input: &Entity<InputState>,
     config_input: &Entity<InputState>,
     window: &mut Window,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     let compact = window.viewport_size().width < px(CONFIGS_COMPACT_BREAKPOINT);
-    let app_handle = cx.entity();
     let workspace = if compact {
         div()
             .flex()
@@ -115,16 +391,17 @@ pub(crate) fn render_configs_page(
             .min_h(px(0.0))
             .p_3()
             .child(render_library_panel(
-                app,
+                app_handle,
+                runtime.selected_id,
                 data,
                 workspace,
                 library_rows,
                 window,
                 cx,
             ))
-            .child(render_editor_panel(app, data, name_input, config_input, cx))
+            .child(render_editor_panel(app_handle, data, name_input, config_input, cx))
             .child(render_inspector_panel(
-                app,
+                runtime,
                 workspace,
                 inspector_tab,
                 compact,
@@ -172,7 +449,8 @@ pub(crate) fn render_configs_page(
                             .size(px(library_width))
                             .size_range(px(240.0)..px(420.0))
                             .child(div().h_full().p_3().child(render_library_panel(
-                                app,
+                                app_handle,
+                                runtime.selected_id,
                                 data,
                                 workspace,
                                 library_rows,
@@ -182,7 +460,7 @@ pub(crate) fn render_configs_page(
                     )
                     .child(resizable_panel().size_range(px(420.0)..Pixels::MAX).child(
                         div().h_full().p_3().child(render_editor_panel(
-                            app,
+                            app_handle,
                             data,
                             name_input,
                             config_input,
@@ -194,7 +472,7 @@ pub(crate) fn render_configs_page(
                             .size(px(inspector_width))
                             .size_range(px(280.0)..px(440.0))
                             .child(div().h_full().p_3().child(render_inspector_panel(
-                                app,
+                                runtime,
                                 workspace,
                                 inspector_tab,
                                 compact,
@@ -216,14 +494,13 @@ pub(crate) fn render_configs_page(
         .border_color(cx.theme().border)
         .bg(cx.theme().tiles)
         .overflow_hidden()
-        .child(render_configs_shell_header(app, data, cx))
+        .child(render_configs_shell_header(data, cx))
         .child(workspace)
 }
 
 fn render_configs_shell_header(
-    _app: &WgApp,
     data: &ConfigsViewData,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     let selected_name = data.title.clone();
 
@@ -284,16 +561,17 @@ fn render_configs_shell_header(
 }
 
 fn render_library_panel(
-    _app: &WgApp,
+    app_handle: &Entity<WgApp>,
+    selected_id: Option<u64>,
     data: &ConfigsViewData,
     _workspace: &Entity<ConfigsWorkspace>,
-    rows: &[ConfigsLibraryRow],
+    rows: &Arc<Vec<ConfigsLibraryRow>>,
     window: &mut Window,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     let count = rows.len();
-    let rows_for_list = rows.to_vec();
-    let app_entity = cx.entity();
+    let rows_for_list = rows.clone();
+    let app_for_list = app_handle.clone();
     let scroll_handle = window
         .use_keyed_state(CONFIGS_LIBRARY_SCROLL_STATE_ID, cx, |_, _| {
             UniformListScrollHandle::new()
@@ -304,11 +582,11 @@ fn render_library_panel(
         "configs-library-list",
         rows_for_list.len(),
         move |visible_range, _window, cx| {
-            app_entity.update(cx, |this, cx| {
-                visible_range
-                    .map(|ix| render_library_row(this, &rows_for_list[ix], cx))
-                    .collect::<Vec<_>>()
-            })
+            visible_range
+                .map(|ix| {
+                    render_library_row(&app_for_list, selected_id, &rows_for_list[ix], cx)
+                })
+                .collect::<Vec<_>>()
         },
     )
     .track_scroll(scroll_handle.clone())
@@ -354,9 +632,14 @@ fn render_library_panel(
                                         .small()
                                         .compact()
                                         .disabled(data.is_busy)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.handle_new_draft_click(window, cx);
-                                        })),
+                                        .on_click({
+                                            let app = app_handle.clone();
+                                            move |_, window, cx| {
+                                                let _ = app.update(cx, |this, cx| {
+                                                    this.handle_new_draft_click(window, cx);
+                                                });
+                                            }
+                                        }),
                                 )
                                 .child(
                                     Button::new("cfg-library-import")
@@ -366,9 +649,14 @@ fn render_library_panel(
                                         .small()
                                         .compact()
                                         .disabled(data.is_busy)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.handle_import_click(window, cx);
-                                        })),
+                                        .on_click({
+                                            let app = app_handle.clone();
+                                            move |_, window, cx| {
+                                                let _ = app.update(cx, |this, cx| {
+                                                    this.handle_import_click(window, cx);
+                                                });
+                                            }
+                                        }),
                                 )
                                 .child(
                                     Button::new("cfg-library-paste")
@@ -378,9 +666,14 @@ fn render_library_panel(
                                         .small()
                                         .compact()
                                         .disabled(data.is_busy)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.handle_paste_click(window, cx);
-                                        })),
+                                        .on_click({
+                                            let app = app_handle.clone();
+                                            move |_, window, cx| {
+                                                let _ = app.update(cx, |this, cx| {
+                                                    this.handle_paste_click(window, cx);
+                                                });
+                                            }
+                                        }),
                                 ),
                         )
                         .when(
@@ -433,11 +726,12 @@ fn render_library_panel(
 }
 
 fn render_library_row(
-    app: &WgApp,
+    app_handle: &Entity<WgApp>,
+    selected_id: Option<u64>,
     row: &ConfigsLibraryRow,
-    cx: &mut Context<WgApp>,
+    cx: &mut App,
 ) -> Stateful<Div> {
-    let is_selected = app.selection.selected_id == Some(row.id);
+    let is_selected = selected_id == Some(row.id);
 
     let bg = if is_selected {
         cx.theme().accent.alpha(0.14)
@@ -498,20 +792,25 @@ fn render_library_row(
                     this.child(Tag::warning().small().child("Dirty"))
                 }),
         )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            if this.configs_is_busy(cx) {
-                return;
+        .on_click({
+            let app = app_handle.clone();
+            move |_, window, cx| {
+                let _ = app.update(cx, |this, cx| {
+                    if this.configs_is_busy(cx) {
+                        return;
+                    }
+                    this.select_tunnel(config_id, window, cx);
+                });
             }
-            this.select_tunnel(config_id, window, cx);
-        }))
+        })
 }
 
 fn render_editor_panel(
-    _app: &WgApp,
+    app_handle: &Entity<WgApp>,
     data: &ConfigsViewData,
     name_input: &Entity<InputState>,
     config_input: &Entity<InputState>,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     div()
         .flex()
@@ -554,7 +853,7 @@ fn render_editor_panel(
                                                 .child(data.source_summary.clone()),
                                         ),
                                 )
-                                .child(editor_action_bar(data, cx)),
+                                .child(editor_action_bar(data, app_handle, cx)),
                         )
                         .child(
                             h_flex()
@@ -646,12 +945,12 @@ fn render_editor_panel(
 }
 
 fn render_inspector_panel(
-    app: &WgApp,
+    runtime: &ConfigsRuntimeView,
     workspace: &Entity<ConfigsWorkspace>,
     inspector_tab: ConfigInspectorTab,
     compact: bool,
     data: &ConfigsViewData,
-    cx: &mut Context<WgApp>,
+    cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     let preview_card = {
         let addresses = data
@@ -750,24 +1049,9 @@ fn render_inspector_panel(
     let activity_card = GroupBox::new().fill().title("Activity").child(
         DescriptionList::new()
             .columns(1)
-            .item("Latest Status", app.ui.status.to_string(), 1)
-            .item(
-                "Last Error",
-                app.ui
-                    .last_error
-                    .clone()
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "None".to_string()),
-                1,
-            )
-            .item(
-                "Running Tunnel",
-                app.runtime
-                    .running_name
-                    .clone()
-                    .unwrap_or_else(|| "-".to_string()),
-                1,
-            )
+            .item("Latest Status", runtime.latest_status.clone(), 1)
+            .item("Last Error", runtime.last_error.clone(), 1)
+            .item("Running Tunnel", runtime.running_name.clone(), 1)
             .item("Handshake", data.shared.last_handshake.clone(), 1),
     );
 
@@ -832,7 +1116,7 @@ fn render_inspector_panel(
 fn inspector_tab_row(
     workspace: &Entity<ConfigsWorkspace>,
     inspector_tab: ConfigInspectorTab,
-    _cx: &mut Context<WgApp>,
+    _cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     h_flex()
         .items_center()
@@ -916,7 +1200,7 @@ fn inspector_tab_row(
         )
 }
 
-fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> Div {
+fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<ConfigsWorkspace>) -> Div {
     let (tone_bg, tone_border, title, detail) = match &data.draft.validation {
         DraftValidationState::Idle => (
             cx.theme().secondary.alpha(0.45),
@@ -988,8 +1272,11 @@ fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> 
         )
 }
 
-fn editor_action_bar(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> Div {
-    let app_handle = cx.entity();
+fn editor_action_bar(
+    data: &ConfigsViewData,
+    app_handle: &Entity<WgApp>,
+    _cx: &mut Context<ConfigsWorkspace>,
+) -> Div {
     let manage_button = if data.is_busy || !data.has_saved_source || !data.has_selection {
         Button::new("cfg-manage")
             .icon(Icon::new(IconName::Menu).size_3())
@@ -1000,6 +1287,7 @@ fn editor_action_bar(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> Div {
             .disabled(true)
             .into_any_element()
     } else {
+        let menu_handle = app_handle.clone();
         Button::new("cfg-manage")
             .icon(Icon::new(IconName::Menu).size_3())
             .label("Manage")
@@ -1008,10 +1296,10 @@ fn editor_action_bar(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> Div {
             .compact()
             .dropdown_caret(true)
             .dropdown_menu_with_anchor(Corner::TopRight, move |menu: PopupMenu, _, _| {
-                let rename_handle = app_handle.clone();
-                let export_handle = app_handle.clone();
-                let copy_handle = app_handle.clone();
-                let delete_handle = app_handle.clone();
+                let rename_handle = menu_handle.clone();
+                let export_handle = menu_handle.clone();
+                let copy_handle = menu_handle.clone();
+                let delete_handle = menu_handle.clone();
                 menu.item(PopupMenuItem::new("Rename").on_click({
                     move |_, window, cx| {
                         let _ = rename_handle.update(cx, |this, cx| {
@@ -1057,9 +1345,14 @@ fn editor_action_bar(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> Div {
                 .small()
                 .compact()
                 .disabled(!data.can_save)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.handle_save_click(window, cx);
-                })),
+                .on_click({
+                    let app = app_handle.clone();
+                    move |_, window, cx| {
+                        let _ = app.update(cx, |this, cx| {
+                            this.handle_save_click(window, cx);
+                        });
+                    }
+                }),
         )
         .child(
             Button::new("cfg-save-as")
@@ -1069,9 +1362,14 @@ fn editor_action_bar(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> Div {
                 .small()
                 .compact()
                 .disabled(data.is_busy)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.handle_save_as_click(window, cx);
-                })),
+                .on_click({
+                    let app = app_handle.clone();
+                    move |_, window, cx| {
+                        let _ = app.update(cx, |this, cx| {
+                            this.handle_save_as_click(window, cx);
+                        });
+                    }
+                }),
         )
         .when(data.can_restart, |this| {
             this.child(
@@ -1081,9 +1379,14 @@ fn editor_action_bar(data: &ConfigsViewData, cx: &mut Context<WgApp>) -> Div {
                     .outline()
                     .small()
                     .compact()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.handle_save_and_restart_click(window, cx);
-                    })),
+                    .on_click({
+                        let app = app_handle.clone();
+                        move |_, window, cx| {
+                            let _ = app.update(cx, |this, cx| {
+                                this.handle_save_and_restart_click(window, cx);
+                            });
+                        }
+                    }),
             )
         })
         .child(manage_button)

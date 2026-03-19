@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{Entity, SharedString, Subscription, Window};
@@ -151,20 +152,6 @@ pub(crate) enum EditorOperation {
     Deleting,
 }
 
-pub(crate) struct EditorState {
-    pub(crate) draft: ConfigDraftState,
-    pub(crate) operation: Option<EditorOperation>,
-}
-
-impl EditorState {
-    fn new() -> Self {
-        Self {
-            draft: ConfigDraftState::new(),
-            operation: None,
-        }
-    }
-}
-
 pub(crate) struct ConfigsWorkspace {
     pub(crate) app: Entity<WgApp>,
     pub(crate) draft: ConfigDraftState,
@@ -173,7 +160,7 @@ pub(crate) struct ConfigsWorkspace {
     pub(crate) validation_generation: u64,
     pub(crate) has_selection: bool,
     pub(crate) inspector_tab: ConfigInspectorTab,
-    pub(crate) library_rows: Vec<ConfigsLibraryRow>,
+    pub(crate) library_rows: Arc<Vec<ConfigsLibraryRow>>,
     pub(crate) library_width: f32,
     pub(crate) inspector_width: f32,
     pub(crate) name_input: Option<Entity<InputState>>,
@@ -193,7 +180,7 @@ impl ConfigsWorkspace {
             validation_generation: 0,
             has_selection: false,
             inspector_tab: ConfigInspectorTab::Preview,
-            library_rows: Vec::new(),
+            library_rows: Arc::new(Vec::new()),
             library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,
             inspector_width: DEFAULT_CONFIGS_INSPECTOR_WIDTH,
             name_input: None,
@@ -210,50 +197,75 @@ impl ConfigsWorkspace {
             self.inspector_tab = app.ui_prefs.preferred_inspector_tab;
             self.library_width = app.ui_prefs.configs_library_width;
             self.inspector_width = app.ui_prefs.configs_inspector_width;
+            self.library_rows = build_configs_library_rows(&app.configs, &app.runtime, &self.draft);
             self.initialized = true;
-        }
-
-        let next_rows = app
-            .configs
-            .iter()
-            .map(|config| ConfigsLibraryRow {
-                id: config.id,
-                name: config.name.clone(),
-                subtitle: match &config.source {
-                    ConfigSource::File { origin_path } => origin_path
-                        .as_ref()
-                        .and_then(|path| path.file_name())
-                        .and_then(|name| name.to_str())
-                        .map(|name| format!("Imported • {name}"))
-                        .unwrap_or_else(|| "Imported config".to_string()),
-                    ConfigSource::Paste => "Saved in app storage".to_string(),
-                },
-                source: config.source.clone(),
-                endpoint_family: config.endpoint_family,
-                is_running: app.runtime.running_id == Some(config.id)
-                    || app.runtime.running_name.as_deref() == Some(config.name.as_str()),
-                is_dirty: self.draft.source_id == Some(config.id) && self.draft.is_dirty(),
-            })
-            .collect::<Vec<_>>();
-
-        if self.library_rows != next_rows {
-            self.library_rows = next_rows;
         }
     }
 
-    pub(crate) fn sync_editor_snapshot(
+    pub(crate) fn set_library_rows(&mut self, rows: Arc<Vec<ConfigsLibraryRow>>) -> bool {
+        if self.library_rows == rows {
+            return false;
+        }
+        self.library_rows = rows;
+        true
+    }
+
+    pub(crate) fn upsert_library_row(
         &mut self,
-        draft: ConfigDraftState,
-        operation: Option<EditorOperation>,
-        pending_action: Option<PendingDraftAction>,
-        validation_generation: u64,
-        has_selection: bool,
-    ) {
-        self.draft = draft;
-        self.operation = operation;
-        self.pending_action = pending_action;
-        self.validation_generation = validation_generation;
-        self.has_selection = has_selection;
+        config: &TunnelConfig,
+        running_id: Option<u64>,
+        running_name: Option<&str>,
+    ) -> bool {
+        let next_row = build_configs_library_row_with_runtime(
+            config,
+            running_id,
+            running_name,
+            &self.draft,
+        );
+        let rows = Arc::make_mut(&mut self.library_rows);
+        if let Some(existing) = rows.iter_mut().find(|row| row.id == config.id) {
+            if *existing == next_row {
+                return false;
+            }
+            *existing = next_row;
+            return true;
+        }
+        rows.push(next_row);
+        true
+    }
+
+    pub(crate) fn remove_library_rows(&mut self, ids: &HashSet<u64>) -> bool {
+        if ids.is_empty() {
+            return false;
+        }
+        let rows = Arc::make_mut(&mut self.library_rows);
+        let before = rows.len();
+        rows.retain(|row| !ids.contains(&row.id));
+        before != rows.len()
+    }
+
+    pub(crate) fn refresh_library_row_flags(
+        &mut self,
+        running_id: Option<u64>,
+        running_name: Option<&str>,
+    ) -> bool {
+        let dirty_source_id = self.draft.source_id;
+        let dirty = self.draft.is_dirty();
+        let mut changed = false;
+        for row in Arc::make_mut(&mut self.library_rows) {
+            let is_running =
+                running_id == Some(row.id) || running_name == Some(row.name.as_str());
+            let is_dirty = dirty_source_id == Some(row.id) && dirty;
+            if row.is_running != is_running {
+                row.is_running = is_running;
+                changed = true;
+            }
+            if row.is_dirty != is_dirty {
+                row.is_dirty = is_dirty;
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub(crate) fn refresh_draft_flags(&mut self, running_id: Option<u64>) {
@@ -361,6 +373,51 @@ fn workspace_text_hash(text: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
+}
+
+pub(crate) fn build_configs_library_rows(
+    configs: &ConfigsState,
+    runtime: &RuntimeState,
+    draft: &ConfigDraftState,
+) -> Arc<Vec<ConfigsLibraryRow>> {
+    Arc::new(
+        configs
+        .iter()
+        .map(|config| {
+            build_configs_library_row_with_runtime(
+                config,
+                runtime.running_id,
+                runtime.running_name.as_deref(),
+                draft,
+            )
+        })
+        .collect(),
+    )
+}
+
+fn build_configs_library_row_with_runtime(
+    config: &TunnelConfig,
+    running_id: Option<u64>,
+    running_name: Option<&str>,
+    draft: &ConfigDraftState,
+) -> ConfigsLibraryRow {
+    ConfigsLibraryRow {
+        id: config.id,
+        name: config.name.clone(),
+        subtitle: match &config.source {
+            ConfigSource::File { origin_path } => origin_path
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .map(|name| format!("Imported • {name}"))
+                .unwrap_or_else(|| "Imported config".to_string()),
+            ConfigSource::Paste => "Saved in app storage".to_string(),
+        },
+        source: config.source.clone(),
+        endpoint_family: config.endpoint_family,
+        is_running: running_id == Some(config.id) || running_name == Some(config.name.as_str()),
+        is_dirty: draft.source_id == Some(config.id) && draft.is_dirty(),
+    }
 }
 
 fn workspace_endpoint_family_hint_from_config(cfg: &config::WireGuardConfig) -> EndpointFamily {
@@ -1228,7 +1285,6 @@ pub(crate) struct WgApp {
     pub(crate) engine: Engine,
     pub(crate) configs: ConfigsState,
     pub(crate) selection: SelectionState,
-    pub(crate) editor: EditorState,
     pub(crate) runtime: RuntimeState,
     pub(crate) stats: StatsState,
     pub(crate) persistence: PersistenceState,
@@ -1244,7 +1300,6 @@ impl WgApp {
             engine,
             configs: ConfigsState::new(),
             selection: SelectionState::new(),
-            editor: EditorState::new(),
             runtime: RuntimeState::new(),
             stats: StatsState::new(),
             persistence: PersistenceState::new(),

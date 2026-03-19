@@ -15,7 +15,7 @@ mod widgets;
 use gpui::*;
 use gpui_component::{scroll::ScrollableElement as _, ActiveTheme as _, Root};
 
-use super::state::{SidebarItem, WgApp};
+use super::state::{ConfigDraftState, SidebarItem, WgApp};
 use data::ViewData;
 
 impl WgApp {
@@ -24,12 +24,13 @@ impl WgApp {
             let snapshot = workspace.read(cx);
             ViewData::from_editor(self, &snapshot.draft, snapshot.operation.as_ref())
         } else {
-            self.compat_editor_view_data()
+            self.fallback_shared_view_data()
         }
     }
 
-    fn compat_editor_view_data(&self) -> ViewData {
-        ViewData::from_editor(self, &self.editor.draft, self.editor.operation.as_ref())
+    fn fallback_shared_view_data(&self) -> ViewData {
+        let draft = ConfigDraftState::new();
+        ViewData::from_editor(self, &draft, None)
     }
 }
 

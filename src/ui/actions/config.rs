@@ -20,8 +20,9 @@ use r_wg::backend::wg::config;
 
 use super::super::persistence;
 use super::super::state::{
-    ConfigDraftState, ConfigSource, ConfigsWorkspace, DraftValidationState, EditorOperation,
-    EndpointFamily, LoadedConfigState, PendingDraftAction, SidebarItem, TunnelConfig, WgApp,
+    build_configs_library_rows, ConfigDraftState, ConfigSource, ConfigsWorkspace,
+    DraftValidationState, EditorOperation, EndpointFamily, LoadedConfigState,
+    PendingDraftAction, SidebarItem, TunnelConfig, WgApp,
 };
 
 const CONFIG_TEXT_CACHE_LIMIT: usize = 32;
@@ -39,6 +40,66 @@ enum DeletePolicy {
 }
 
 impl WgApp {
+    pub(crate) fn refresh_configs_workspace_library_rows(&mut self, cx: &mut Context<Self>) {
+        let Some(workspace) = self.ui.configs_workspace.clone() else {
+            return;
+        };
+        let draft = workspace.read(cx).draft.clone();
+        let rows = build_configs_library_rows(&self.configs, &self.runtime, &draft);
+        let _ = workspace.update(cx, |workspace, cx| {
+            if workspace.set_library_rows(rows) {
+                cx.notify();
+            }
+        });
+    }
+
+    pub(crate) fn upsert_configs_workspace_library_row(
+        &mut self,
+        config: &TunnelConfig,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.ui.configs_workspace.clone() else {
+            return;
+        };
+        let config = config.clone();
+        let running_id = self.runtime.running_id;
+        let running_name = self.runtime.running_name.clone();
+        let _ = workspace.update(cx, |workspace, cx| {
+            if workspace.upsert_library_row(&config, running_id, running_name.as_deref()) {
+                cx.notify();
+            }
+        });
+    }
+
+    pub(crate) fn remove_configs_workspace_library_rows(
+        &mut self,
+        ids: &HashSet<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.ui.configs_workspace.clone() else {
+            return;
+        };
+        let ids = ids.clone();
+        let _ = workspace.update(cx, |workspace, cx| {
+            if workspace.remove_library_rows(&ids) {
+                cx.notify();
+            }
+        });
+    }
+
+    pub(crate) fn refresh_configs_workspace_row_flags(&mut self, cx: &mut Context<Self>) {
+        let Some(workspace) = self.ui.configs_workspace.clone() else {
+            return;
+        };
+        let running_id = self.runtime.running_id;
+        let running_name = self.runtime.running_name.clone();
+        let _ = workspace.update(cx, |workspace, cx| {
+            if workspace.refresh_library_row_flags(running_id, running_name.as_deref()) {
+                cx.notify();
+            }
+        });
+    }
+
     pub(crate) fn set_selected_config_id(
         &mut self,
         selected_id: Option<u64>,
@@ -70,15 +131,11 @@ impl WgApp {
         operation: Option<EditorOperation>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.operation = operation;
-                cx.notify();
-            });
-            self.mirror_editor_from_workspace(cx);
-        } else {
-            self.editor.operation = operation;
-        }
+        let workspace = self.ensure_configs_workspace(cx);
+        let _ = workspace.update(cx, |workspace, cx| {
+            workspace.operation = operation;
+            cx.notify();
+        });
     }
 
     pub(crate) fn configs_draft_snapshot(&self, cx: &mut Context<Self>) -> ConfigDraftState {
@@ -86,7 +143,7 @@ impl WgApp {
             .configs_workspace
             .as_ref()
             .map(|workspace| workspace.read(cx).draft.clone())
-            .unwrap_or_else(|| self.editor.draft.clone())
+            .unwrap_or_else(ConfigDraftState::new)
     }
 
     pub(crate) fn configs_operation_snapshot(
@@ -97,20 +154,11 @@ impl WgApp {
             .configs_workspace
             .as_ref()
             .map(|workspace| workspace.read(cx).operation.clone())
-            .unwrap_or_else(|| self.editor.operation.clone())
+            .unwrap_or(None)
     }
 
     pub(crate) fn configs_is_busy(&self, cx: &mut Context<Self>) -> bool {
         self.configs_operation_snapshot(cx).is_some()
-    }
-
-    fn mirror_editor_from_workspace(&mut self, cx: &mut Context<Self>) {
-        let Some(workspace) = self.ui.configs_workspace.clone() else {
-            return;
-        };
-        let snapshot = workspace.read(cx);
-        self.editor.draft = snapshot.draft.clone();
-        self.editor.operation = snapshot.operation.clone();
     }
 
     pub(crate) fn set_configs_pending_action(
@@ -126,7 +174,6 @@ impl WgApp {
                 workspace.pending_action = action;
                 cx.notify();
             });
-            self.mirror_editor_from_workspace(cx);
         }
     }
 
@@ -140,7 +187,6 @@ impl WgApp {
                 action = workspace.pending_action.take();
                 cx.notify();
             });
-            self.mirror_editor_from_workspace(cx);
             return action;
         }
         None
@@ -194,20 +240,11 @@ impl WgApp {
                 cx.notify();
             }
         });
-        self.mirror_editor_from_workspace(cx);
+        self.refresh_configs_workspace_row_flags(cx);
     }
 }
 
 impl ConfigsWorkspace {
-    fn sync_editor_mirror_to_app(&self, cx: &mut Context<Self>) {
-        let draft = self.draft.clone();
-        let operation = self.operation.clone();
-        let _ = self.app.update(cx, |app, _| {
-            app.editor.draft = draft;
-            app.editor.operation = operation;
-        });
-    }
-
     fn schedule_draft_validation(&mut self, cx: &mut Context<Self>) {
         if self.draft.text.as_ref().trim().is_empty() || self.operation.is_some() {
             return;
@@ -224,8 +261,9 @@ impl ConfigsWorkspace {
                     return;
                 }
                 let running_id = this.app.read(cx).runtime.running_id;
+                let running_name = this.app.read(cx).runtime.running_name.clone();
                 this.apply_draft_validation(running_id);
-                this.sync_editor_mirror_to_app(cx);
+                this.refresh_library_row_flags(running_id, running_name.as_deref());
                 cx.notify();
             });
         })
@@ -245,16 +283,14 @@ impl ConfigsWorkspace {
                         let Some(config_input) = this.config_input.as_ref() else {
                             return;
                         };
-                        let name = name_input.read(cx).value();
-                        let text = config_input.read(cx).value();
-                        let running_id = this.app.read(cx).runtime.running_id;
-                        let has_selection = this.app.read(cx).selection.selected_id.is_some();
-                        if this.sync_draft_from_values(name, text, running_id) {
-                            this.sync_editor_mirror_to_app(cx);
-                        }
-                        this.has_selection = has_selection;
-                        this.schedule_draft_validation(cx);
-                        cx.notify();
+                    let name = name_input.read(cx).value();
+                    let text = config_input.read(cx).value();
+                    let running_id = this.app.read(cx).runtime.running_id;
+                    let has_selection = this.app.read(cx).selection.selected_id.is_some();
+                    this.sync_draft_from_values(name, text, running_id);
+                    this.has_selection = has_selection;
+                    this.schedule_draft_validation(cx);
+                    cx.notify();
                     }
                 },
             );
@@ -280,16 +316,14 @@ impl ConfigsWorkspace {
                         let Some(config_input) = this.config_input.as_ref() else {
                             return;
                         };
-                        let name = name_input.read(cx).value();
-                        let text = config_input.read(cx).value();
-                        let running_id = this.app.read(cx).runtime.running_id;
-                        let has_selection = this.app.read(cx).selection.selected_id.is_some();
-                        if this.sync_draft_from_values(name, text, running_id) {
-                            this.sync_editor_mirror_to_app(cx);
-                        }
-                        this.has_selection = has_selection;
-                        this.schedule_draft_validation(cx);
-                        cx.notify();
+                    let name = name_input.read(cx).value();
+                    let text = config_input.read(cx).value();
+                    let running_id = this.app.read(cx).runtime.running_id;
+                    let has_selection = this.app.read(cx).selection.selected_id.is_some();
+                    this.sync_draft_from_values(name, text, running_id);
+                    this.has_selection = has_selection;
+                    this.schedule_draft_validation(cx);
+                    cx.notify();
                     }
                 },
             );
@@ -350,7 +384,7 @@ impl WgApp {
             workspace.apply_draft_validation(self.runtime.running_id);
             cx.notify();
         });
-        self.mirror_editor_from_workspace(cx);
+        self.refresh_configs_workspace_row_flags(cx);
     }
 
     fn set_saved_draft(
@@ -367,7 +401,7 @@ impl WgApp {
             workspace.set_saved_draft(source_id, workspace_name, workspace_text);
             cx.notify();
         });
-        self.mirror_editor_from_workspace(cx);
+        self.refresh_configs_workspace_row_flags(cx);
         self.apply_draft_validation(cx);
     }
 
@@ -384,7 +418,7 @@ impl WgApp {
             workspace.set_unsaved_draft(workspace_name, workspace_text);
             cx.notify();
         });
-        self.mirror_editor_from_workspace(cx);
+        self.refresh_configs_workspace_row_flags(cx);
         self.apply_draft_validation(cx);
     }
 
@@ -635,6 +669,8 @@ impl WgApp {
 
         let config_id = self.configs[idx].id;
         self.set_selected_config_id(Some(config_id), cx);
+        let updated_config = self.configs[idx].clone();
+        self.upsert_configs_workspace_library_row(&updated_config, cx);
         if let Some(text) = self.configs[idx].text.clone() {
             self.set_saved_draft(config_id, self.configs[idx].name.clone().into(), text, cx);
         }
@@ -1099,6 +1135,8 @@ impl WgApp {
 
         self.configs[idx].name = new_name.to_string();
         self.configs[idx].name_lower = new_name.to_lowercase();
+        let updated_config = self.configs[idx].clone();
+        self.upsert_configs_workspace_library_row(&updated_config, cx);
         if let Some(loaded) = &mut self.selection.loaded_config {
             if loaded.name == old_name {
                 loaded.name = new_name.to_string();
@@ -1111,7 +1149,6 @@ impl WgApp {
                 workspace.draft.base_name = base_name;
                 cx.notify();
             });
-            self.mirror_editor_from_workspace(cx);
             self.apply_draft_validation(cx);
         }
         if self.runtime.running_name.as_deref() == Some(old_name.as_str()) {
@@ -1241,6 +1278,7 @@ impl WgApp {
         }
 
         self.configs.retain(|cfg| !to_delete_ids.contains(&cfg.id));
+        self.remove_configs_workspace_library_rows(&to_delete_ids, cx);
 
         let deleted_paths_set: HashSet<PathBuf> = deleted_paths.iter().cloned().collect();
         self.selection
@@ -1383,7 +1421,7 @@ impl WgApp {
             workspace.draft = ConfigDraftState::new();
             cx.notify();
         });
-        self.mirror_editor_from_workspace(cx);
+        self.refresh_configs_workspace_row_flags(cx);
         self.set_editor_operation(None, cx);
         if let Some(name_input) = self.configs_name_input(cx) {
             name_input.update(cx, |input, cx| input.set_value("", window, cx));
@@ -1449,6 +1487,8 @@ impl WgApp {
                 };
                 if config.endpoint_family != family {
                     config.endpoint_family = family;
+                    let updated_config = config.clone();
+                    this.upsert_configs_workspace_library_row(&updated_config, cx);
                     cx.notify();
                 }
             })

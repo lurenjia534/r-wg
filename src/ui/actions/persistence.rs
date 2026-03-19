@@ -54,6 +54,7 @@ impl WgApp {
                                     &mut this.stats,
                                     &mut this.ui_prefs,
                                 );
+                                this.refresh_configs_workspace_library_rows(cx);
                                 this.ui_session.sync_from_prefs(&this.ui_prefs);
                                 if let Some(theme_mode) = summary.theme_mode {
                                     Theme::change(theme_mode, Some(window), cx);

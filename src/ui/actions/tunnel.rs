@@ -58,6 +58,7 @@ impl WgApp {
                         #[cfg(target_os = "windows")]
                         Ok(()) | Err(EngineError::NotRunning) | Err(EngineError::ChannelClosed) => {
                             this.runtime.finish_stop_success();
+                            this.refresh_configs_workspace_row_flags(cx);
                             this.set_status("Stopped");
                             // 停止成功后发送系统通知，让最小化到托盘时也能感知状态变更。
                             tray::notify_system("r-wg", "Tunnel disconnected", false);
@@ -79,6 +80,7 @@ impl WgApp {
                         #[cfg(not(target_os = "windows"))]
                         Ok(()) => {
                             this.runtime.finish_stop_success();
+                            this.refresh_configs_workspace_row_flags(cx);
                             this.set_status("Stopped");
                             // 停止成功后发送系统通知，让最小化到托盘时也能感知状态变更。
                             tray::notify_system("r-wg", "Tunnel disconnected", false);
@@ -235,6 +237,7 @@ impl WgApp {
                     Ok(()) => {
                         // 启动成功：刷新运行态与统计。
                         this.runtime.mark_started(&selected);
+                        this.refresh_configs_workspace_row_flags(cx);
                         this.stats.reset_for_start();
                         this.set_status(format!("Running {}", selected.name));
                         // 启动成功后通知当前已连接的隧道名称，便于多配置场景快速确认。

@@ -80,6 +80,7 @@ impl WgApp {
                                     EngineError::NotRunning | EngineError::ChannelClosed
                                 ) {
                                     this.runtime.finish_stop_success();
+                                    this.refresh_configs_workspace_row_flags(cx);
                                     this.stats.clear_runtime_metrics();
                                     status_changed = this.set_status("Stopped");
                                     if status_changed {
