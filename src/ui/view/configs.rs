@@ -56,7 +56,7 @@ impl Render for ConfigsWorkspace {
         let app_handle = self.app.clone();
         let (data, runtime) = {
             let app = app_handle.read(cx);
-            self.sync_from_app(&app);
+            self.initialize_from_app(&app);
             (
                 ConfigsViewData::from_editor(
                     &app,
@@ -151,7 +151,13 @@ fn render_configs_page(
                 window,
                 cx,
             ))
-            .child(render_editor_panel(app_handle, data, name_input, config_input, cx))
+            .child(render_editor_panel(
+                app_handle,
+                data,
+                name_input,
+                config_input,
+                cx,
+            ))
             .child(render_inspector_panel(
                 runtime,
                 workspace,
@@ -251,10 +257,7 @@ fn render_configs_page(
         .child(workspace)
 }
 
-fn render_configs_shell_header(
-    data: &ConfigsViewData,
-    cx: &mut Context<ConfigsWorkspace>,
-) -> Div {
+fn render_configs_shell_header(data: &ConfigsViewData, cx: &mut Context<ConfigsWorkspace>) -> Div {
     let selected_name = data.title.clone();
 
     div()
@@ -330,21 +333,11 @@ fn render_library_panel(
         rows.iter()
             .enumerate()
             .filter_map(|(ix, row)| {
-                let family_label = match row.endpoint_family {
-                    EndpointFamily::V4 => "ipv4",
-                    EndpointFamily::V6 => "ipv6",
-                    EndpointFamily::Dual => "dual",
-                    EndpointFamily::Unknown => "unknown",
-                };
-                let source_label = match row.source {
-                    ConfigSource::File { .. } => "imported",
-                    ConfigSource::Paste => "saved",
-                };
                 let matches_query = query.is_empty()
-                    || row.name.to_lowercase().contains(&query)
-                    || row.subtitle.to_lowercase().contains(&query)
-                    || family_label.contains(&query)
-                    || source_label.contains(&query);
+                    || row.name_lower.contains(&query)
+                    || row.subtitle_lower.contains(&query)
+                    || row.family_label.contains(&query)
+                    || row.source_label.contains(&query);
                 matches_query.then_some(ix)
             })
             .collect::<Vec<_>>(),
@@ -398,13 +391,11 @@ fn render_library_panel(
                                 .items_center()
                                 .justify_between()
                                 .child(div().text_lg().font_semibold().child("Library"))
-                                .child(
-                                    Tag::secondary().small().child(if query.is_empty() {
-                                        format!("{count} configs")
-                                    } else {
-                                        format!("{count}/{total_count} configs")
-                                    }),
-                                ),
+                                .child(Tag::secondary().small().child(if query.is_empty() {
+                                    format!("{count} configs")
+                                } else {
+                                    format!("{count}/{total_count} configs")
+                                })),
                         )
                         .child(
                             div()
@@ -714,7 +705,10 @@ fn render_editor_panel(
                                 .flex_wrap()
                                 .when(!data.has_saved_source, |this| {
                                     this.child(
-                                        Tag::secondary().small().rounded_full().child("Unsaved draft"),
+                                        Tag::secondary()
+                                            .small()
+                                            .rounded_full()
+                                            .child("Unsaved draft"),
                                     )
                                 })
                                 .child(if data.shared.draft_dirty {
@@ -729,10 +723,9 @@ fn render_editor_panel(
                                     DraftValidationState::Invalid { .. } => {
                                         Tag::danger().small().rounded_full().child("Invalid")
                                     }
-                                    DraftValidationState::Idle => Tag::secondary()
-                                        .small()
-                                        .rounded_full()
-                                        .child("Draft"),
+                                    DraftValidationState::Idle => {
+                                        Tag::secondary().small().rounded_full().child("Draft")
+                                    }
                                 })
                                 .when(data.shared.needs_restart, |this| {
                                     this.child(
@@ -747,7 +740,7 @@ fn render_editor_panel(
                                         Tag::success().small().rounded_full().child("Running"),
                                     )
                                 }),
-                        )
+                        ),
                 ),
         )
         .child(
@@ -902,13 +895,11 @@ fn render_inspector_panel(
                         .gap_2()
                         .flex_wrap()
                         .child(Tag::secondary().small().child(format!("Line {line}")))
-                        .child(
-                            Tag::secondary().small().child(if data.shared.draft_dirty {
-                                "Unsaved changes"
-                            } else {
-                                "Saved"
-                            }),
-                        ),
+                        .child(Tag::secondary().small().child(if data.shared.draft_dirty {
+                            "Unsaved changes"
+                        } else {
+                            "Saved"
+                        })),
                 ),
             cx,
         )
@@ -919,8 +910,16 @@ fn render_inspector_panel(
         "Recent runtime notes",
         v_flex()
             .gap_3()
-            .child(inspector_activity_row("Latest Status", runtime.latest_status.clone(), cx))
-            .child(inspector_activity_row("Last Error", runtime.last_error.clone(), cx))
+            .child(inspector_activity_row(
+                "Latest Status",
+                runtime.latest_status.clone(),
+                cx,
+            ))
+            .child(inspector_activity_row(
+                "Last Error",
+                runtime.last_error.clone(),
+                cx,
+            ))
             .child(inspector_activity_row(
                 "Running Tunnel",
                 runtime.running_name.clone(),
@@ -1181,7 +1180,7 @@ fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<ConfigsWork
                         .when(
                             matches!(data.draft.validation, DraftValidationState::Valid { .. }),
                             |this| this.child(Tag::success().small().child("Ready")),
-                        )
+                        ),
                 ),
         )
 }
@@ -1355,13 +1354,7 @@ fn inspector_activity_row(
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
-        .child(
-            div()
-                .text_sm()
-                .text_right()
-                .max_w(px(180.0))
-                .child(value),
-        )
+        .child(div().text_sm().text_right().max_w(px(180.0)).child(value))
 }
 
 fn source_tag(source: &ConfigSource) -> Tag {

@@ -195,7 +195,7 @@ impl ConfigsWorkspace {
         }
     }
 
-    pub(crate) fn sync_from_app(&mut self, app: &WgApp) {
+    pub(crate) fn initialize_from_app(&mut self, app: &WgApp) {
         if !self.initialized {
             self.has_selection = app.selection.selected_id.is_some();
             self.inspector_tab = app.ui_prefs.preferred_inspector_tab;
@@ -220,12 +220,8 @@ impl ConfigsWorkspace {
         running_id: Option<u64>,
         running_name: Option<&str>,
     ) -> bool {
-        let next_row = build_configs_library_row_with_runtime(
-            config,
-            running_id,
-            running_name,
-            &self.draft,
-        );
+        let next_row =
+            build_configs_library_row_with_runtime(config, running_id, running_name, &self.draft);
         let rows = Arc::make_mut(&mut self.library_rows);
         if let Some(existing) = rows.iter_mut().find(|row| row.id == config.id) {
             if *existing == next_row {
@@ -273,8 +269,7 @@ impl ConfigsWorkspace {
         let dirty = self.draft.is_dirty();
         let mut changed = false;
         for row in Arc::make_mut(&mut self.library_rows) {
-            let is_running =
-                running_id == Some(row.id) || running_name == Some(row.name.as_str());
+            let is_running = running_id == Some(row.id) || running_name == Some(row.name.as_str());
             let is_dirty = dirty_source_id == Some(row.id) && dirty;
             if row.is_running != is_running {
                 row.is_running = is_running;
@@ -375,7 +370,9 @@ impl ConfigsWorkspace {
     }
 
     pub(crate) fn has_inputs(&self) -> bool {
-        self.library_search_input.is_some() && self.name_input.is_some() && self.config_input.is_some()
+        self.library_search_input.is_some()
+            && self.name_input.is_some()
+            && self.config_input.is_some()
     }
 
     pub(crate) fn set_panel_widths(&mut self, library_width: f32, inspector_width: f32) -> bool {
@@ -402,16 +399,16 @@ pub(crate) fn build_configs_library_rows(
 ) -> Arc<Vec<ConfigsLibraryRow>> {
     Arc::new(
         configs
-        .iter()
-        .map(|config| {
-            build_configs_library_row_with_runtime(
-                config,
-                runtime.running_id,
-                runtime.running_name.as_deref(),
-                draft,
-            )
-        })
-        .collect(),
+            .iter()
+            .map(|config| {
+                build_configs_library_row_with_runtime(
+                    config,
+                    runtime.running_id,
+                    runtime.running_name.as_deref(),
+                    draft,
+                )
+            })
+            .collect(),
     )
 }
 
@@ -421,22 +418,44 @@ fn build_configs_library_row_with_runtime(
     running_name: Option<&str>,
     draft: &ConfigDraftState,
 ) -> ConfigsLibraryRow {
+    let subtitle = match &config.source {
+        ConfigSource::File { origin_path } => origin_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .map(|name| format!("Imported • {name}"))
+            .unwrap_or_else(|| "Imported config".to_string()),
+        ConfigSource::Paste => "Saved in app storage".to_string(),
+    };
+
     ConfigsLibraryRow {
         id: config.id,
         name: config.name.clone(),
-        subtitle: match &config.source {
-            ConfigSource::File { origin_path } => origin_path
-                .as_ref()
-                .and_then(|path| path.file_name())
-                .and_then(|name| name.to_str())
-                .map(|name| format!("Imported • {name}"))
-                .unwrap_or_else(|| "Imported config".to_string()),
-            ConfigSource::Paste => "Saved in app storage".to_string(),
-        },
+        name_lower: config.name.to_lowercase(),
+        subtitle: subtitle.clone(),
+        subtitle_lower: subtitle.to_lowercase(),
         source: config.source.clone(),
+        source_label: configs_source_search_label(&config.source),
         endpoint_family: config.endpoint_family,
+        family_label: configs_family_search_label(config.endpoint_family),
         is_running: running_id == Some(config.id) || running_name == Some(config.name.as_str()),
         is_dirty: draft.source_id == Some(config.id) && draft.is_dirty(),
+    }
+}
+
+fn configs_source_search_label(source: &ConfigSource) -> &'static str {
+    match source {
+        ConfigSource::File { .. } => "imported",
+        ConfigSource::Paste => "saved",
+    }
+}
+
+fn configs_family_search_label(family: EndpointFamily) -> &'static str {
+    match family {
+        EndpointFamily::V4 => "ipv4",
+        EndpointFamily::V6 => "ipv6",
+        EndpointFamily::Dual => "dual",
+        EndpointFamily::Unknown => "unknown",
     }
 }
 
@@ -477,9 +496,13 @@ fn workspace_endpoint_family_hint_from_config(cfg: &config::WireGuardConfig) -> 
 pub(crate) struct ConfigsLibraryRow {
     pub(crate) id: u64,
     pub(crate) name: String,
+    pub(crate) name_lower: String,
     pub(crate) subtitle: String,
+    pub(crate) subtitle_lower: String,
     pub(crate) source: ConfigSource,
+    pub(crate) source_label: &'static str,
     pub(crate) endpoint_family: EndpointFamily,
+    pub(crate) family_label: &'static str,
     pub(crate) is_running: bool,
     pub(crate) is_dirty: bool,
 }
