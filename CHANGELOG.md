@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.8 - 2026-03-20
+
+- Added a route map planned/apply data model, refined its layout and navigation, and restored inspector panel scrolling for deeper route diagnostics.
+- Reworked the configs workspace into a more local-state-driven editor flow with incremental library updates, cached search fields, and tighter input/render ownership.
+- Expanded theme and preferences support with palette preferences, preview flow cleanup, vendored upstream GPUI themes, and steadier diagnostics/persistence behavior.
+- Hardened desktop integration with app icon shell wiring, Windows tray fallback safety fixes, and Linux socket-group handling cleanup.
+- Cleared the remaining all-target Clippy warnings and tightened release/build hygiene before publishing.
+
 ## 0.2.7 - 2026-03-17
 
 - Added a socket-activated privileged backend on Linux, along with lifecycle hardening, startup repair recovery, socket permission fixes, and PATH-independent DNS tool resolution.
