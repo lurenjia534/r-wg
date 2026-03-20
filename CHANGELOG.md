@@ -4,11 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## 0.2.8 - 2026-03-20
 
-- Added a route map planned/apply data model, refined its layout and navigation, and restored inspector panel scrolling for deeper route diagnostics.
-- Reworked the configs workspace into a more local-state-driven editor flow with incremental library updates, cached search fields, and tighter input/render ownership.
-- Expanded theme and preferences support with palette preferences, preview flow cleanup, vendored upstream GPUI themes, and steadier diagnostics/persistence behavior.
-- Hardened desktop integration with app icon shell wiring, Windows tray fallback safety fixes, and Linux socket-group handling cleanup.
-- Cleared the remaining all-target Clippy warnings and tightened release/build hygiene before publishing.
+- Added a first-class route-map planning and apply pipeline: the backend now builds a shared route-plan truth model, Linux and Windows apply flows consume that plan directly, and the UI can render planned routes, applied results, explain views, graph steps, and richer inventory/inspector details from the same source.
+- Expanded and polished the route-map experience with stronger layout/navigation, better data flow, clearer status presentation, and restored inspector scrolling so larger explain/result payloads remain usable.
+- Reworked the Configs workspace around more local page ownership: draft/input handling was normalized, library rows now update incrementally, search fields are cached, re-entrant reads were removed, and the editor/render flow is more stable under import, save, and tunnel state changes.
+- Refined the Overview experience with a more formal page shell, unified cards/chrome, and a much deeper traffic summary presentation, including a dedicated trend chart and clearer 24h / monthly hierarchy.
+- Expanded theme and preferences support with semantic palette policy, palette preferences and preview flow, vendored upstream GPUI themes, tighter theme linting, and more reliable persistence/diagnostics behavior across the settings surfaces.
+- Improved desktop integration and UX details by wiring the app icon into shell integration, hardening the Windows tray fallback path, and tightening settings/about copy, feedback, and diagnostics presentation.
+- Hardened Linux behavior by removing the implicit privileged-backend socket-group fallback, so service installation/repair follows explicit configuration more predictably.
+- Updated release/build hygiene for publishing, including the Node 24 release workflow refresh, broader Clippy cleanup across all targets/features, and a final round of route-plan/policy warning fixes before tagging.
 
 ## 0.2.7 - 2026-03-17
 
