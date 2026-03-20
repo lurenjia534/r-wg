@@ -128,6 +128,11 @@ pub(crate) struct TrafficTrendPoint {
 pub(crate) struct TrafficTrendData {
     pub(crate) points: Vec<TrafficTrendPoint>,
     pub(crate) average_bytes: f64,
+    pub(crate) total_bytes: u64,
+    pub(crate) max_bytes: u64,
+    pub(crate) peak_label: String,
+    pub(crate) peak_bytes: u64,
+    pub(crate) non_zero_days: usize,
 }
 
 /// Traffic Summary 区块的完整输入。
@@ -490,10 +495,24 @@ impl StatsState {
 
         let total: u64 = points.iter().map(|point| point.bytes).sum();
         let average_bytes = total as f64 / TRAFFIC_TREND_DAYS as f64;
+        let peak = points
+            .iter()
+            .max_by_key(|point| point.bytes)
+            .map(|point| (point.label.clone(), point.bytes));
+        let (peak_label, peak_bytes) = peak
+            .filter(|(_, bytes)| *bytes > 0)
+            .unwrap_or_else(|| ("—".to_string(), 0));
+        let max_bytes = peak_bytes;
+        let non_zero_days = points.iter().filter(|point| point.bytes > 0).count();
 
         TrafficTrendData {
             points,
             average_bytes,
+            total_bytes: total,
+            max_bytes,
+            peak_label,
+            peak_bytes,
+            non_zero_days,
         }
     }
 }
@@ -916,6 +935,26 @@ mod tests {
         let today_point = trend.points.last().expect("today should be present");
         assert!(today_point.is_today);
         assert_eq!(today_point.bytes, 150);
+        assert_eq!(trend.total_bytes, 180);
+        assert_eq!(trend.average_bytes, 180.0 / TRAFFIC_TREND_DAYS as f64);
+        assert_eq!(trend.max_bytes, 150);
+        assert_eq!(trend.peak_bytes, 150);
+        assert_eq!(trend.peak_label, "Fri");
+        assert_eq!(trend.non_zero_days, 2);
+    }
+
+    #[test]
+    fn traffic_trend_reports_sparse_zero_window() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date");
+        let app = make_app();
+
+        let trend = app.stats.overview_traffic_trend(today);
+
+        assert_eq!(trend.total_bytes, 0);
+        assert_eq!(trend.max_bytes, 0);
+        assert_eq!(trend.peak_bytes, 0);
+        assert_eq!(trend.peak_label, "—");
+        assert_eq!(trend.non_zero_days, 0);
     }
 
     #[test]
