@@ -320,7 +320,7 @@ fn animated_connector(
     cx: &mut Context<WgApp>,
 ) -> Div {
     let palette = step_kind_palette(step.kind, cx);
-    let connector = div()
+    div()
         .relative()
         .w_full()
         .h_full()
@@ -356,9 +356,7 @@ fn animated_connector(
                 .when(vertical, |this| this.rounded_full())
                 .when(!vertical, |this| this.rounded_full())
                 .into_any_element()
-        });
-
-    connector
+        })
 }
 
 fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {

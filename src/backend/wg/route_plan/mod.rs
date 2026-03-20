@@ -993,7 +993,7 @@ fn build_inventory_groups(
             }
 
             let destination_text = route_text(allowed.addr, allowed.cidr);
-            let family = Some(family_from_ip(allowed.addr));
+            let family = family_from_ip(allowed.addr);
             let is_full = is_full_tunnel_route(allowed);
             let effective_table = effective_route_table_label(
                 platform,
@@ -1019,7 +1019,7 @@ fn build_inventory_groups(
                 id: item_id("allowed", &destination_text),
                 title: destination_text.clone(),
                 subtitle: format!("{peer_label} via {endpoint_text}"),
-                family,
+                family: Some(family),
                 static_status: table_off.then_some(RoutePlanStaticStatus::Skipped),
                 event_patterns: vec![destination_text.clone()],
                 chips: vec![
@@ -1035,10 +1035,7 @@ fn build_inventory_groups(
                             RoutePlanTone::Secondary
                         },
                     ),
-                    chip(
-                        family.expect("route family should exist").label(),
-                        RoutePlanTone::Secondary,
-                    ),
+                    chip(family.label(), RoutePlanTone::Secondary),
                     chip(peer_label.clone(), RoutePlanTone::Secondary),
                 ],
                 inspector: RoutePlanInspector {
@@ -1069,10 +1066,7 @@ fn build_inventory_groups(
                 ),
                 route_row: Some(RoutePlanRouteRow {
                     destination: destination_text.clone(),
-                    family: family
-                        .expect("route family should exist")
-                        .label()
-                        .to_string(),
+                    family: family.label().to_string(),
                     kind: route_kind.to_string(),
                     peer: peer_label.clone(),
                     endpoint: endpoint_text.clone(),

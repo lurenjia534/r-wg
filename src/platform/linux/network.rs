@@ -128,7 +128,7 @@ pub async fn apply_network_config(
     let policy = if interface.table != Some(RouteTable::Off) && route_plan.full_tunnel.any() {
         let table_id = route_plan
             .linux_policy_table_id
-            .unwrap_or_else(|| match interface.table {
+            .unwrap_or(match interface.table {
                 Some(RouteTable::Id(value)) => value,
                 _ => DEFAULT_POLICY_TABLE,
             });
