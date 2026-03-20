@@ -801,8 +801,8 @@ fn config_share_donut<T>(
                             )
                             .child(
                                 div()
-                                    .text_xl()
-                                    .font_semibold()
+                                    .text_lg()
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(cx.theme().foreground)
                                     .font_family(cx.theme().mono_font_family.clone())
                                     .child(format_bytes(saved_total)),
@@ -811,7 +811,7 @@ fn config_share_donut<T>(
                                 div()
                                     .text_xs()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .text_color(cx.theme().muted_foreground)
+                                    .text_color(cx.theme().muted_foreground.opacity(0.82))
                                     .child(if summary.active_configs == 1 {
                                         "1 config".to_string()
                                     } else {
@@ -857,8 +857,9 @@ fn config_share_list<T>(
         };
 
         v_flex()
-            .gap_1p5()
-            .p_2()
+            .gap_1()
+            .px_3()
+            .py_1()
             .rounded_lg()
             .border_1()
             .border_color(row_border)
@@ -867,7 +868,7 @@ fn config_share_list<T>(
                 h_flex()
                     .items_start()
                     .justify_between()
-                    .gap_2()
+                    .gap_1p5()
                     .child(
                         h_flex()
                             .items_center()
@@ -933,7 +934,7 @@ fn config_share_list<T>(
                 h_flex()
                     .items_center()
                     .flex_wrap()
-                    .gap_2()
+                    .gap_1p5()
                     .child(direction_value("Up", row.tx_bytes, upload_color, cx))
                     .child(direction_value("Down", row.rx_bytes, download_color, cx))
                     .into_any_element()
@@ -1015,11 +1016,10 @@ fn config_share_rows<T>(
             rx_bytes: 0,
             tx_bytes: 0,
             share_pct: percent(summary.others_total, saved_total),
-            color: cx.theme().muted_foreground.alpha(if cx.theme().is_dark() {
-                0.48
-            } else {
-                0.36
-            }),
+            color: cx
+                .theme()
+                .muted_foreground
+                .alpha(if cx.theme().is_dark() { 0.3 } else { 0.22 }),
             is_other: true,
         });
     }
