@@ -70,7 +70,7 @@ impl RouteMapInventoryTreeCache {
             self.signature = next.signature;
             self.rows = Arc::new(next.rows);
             let items = next.tree_items;
-            let _ = self.tree.update(cx, |tree, cx| {
+            self.tree.update(cx, |tree, cx| {
                 tree.set_items(items, cx);
             });
         }
@@ -78,7 +78,7 @@ impl RouteMapInventoryTreeCache {
         if self.selected_ix != next.selected_ix {
             self.selected_ix = next.selected_ix;
             let selected_ix = self.selected_ix;
-            let _ = self.tree.update(cx, |tree, cx| {
+            self.tree.update(cx, |tree, cx| {
                 tree.set_selected_index(selected_ix, cx);
                 if let Some(ix) = selected_ix {
                     tree.scroll_to_item(ix, ScrollStrategy::Top);
@@ -122,7 +122,7 @@ pub(super) fn render_inventory(
         let tree_cache = window.use_keyed_state("route-map-inventory-tree", cx, |_, cx| {
             RouteMapInventoryTreeCache::new(cx)
         });
-        let _ = tree_cache.update(cx, |state, cx| {
+        tree_cache.update(cx, |state, cx| {
             state.sync(model, cx);
         });
 
@@ -243,7 +243,7 @@ fn render_tree_row(
                 .selected(selected)
                 .secondary_selected(*explain_matched && !selected)
                 .on_click(move |_, _, cx| {
-                    let _ = app_handle.update(cx, |app, cx| {
+                    app_handle.update(cx, |app, cx| {
                         app.set_route_map_selected_item(Some(item_id.clone()), cx);
                     });
                 })
@@ -290,7 +290,7 @@ fn sync_tree_selection(
 
     let app_handle = app.clone();
     cx.defer(move |cx| {
-        let _ = app_handle.update(cx, |app, cx| {
+        app_handle.update(cx, |app, cx| {
             app.set_route_map_selected_item(Some(target_item_id.clone()), cx);
         });
     });
@@ -318,7 +318,7 @@ fn build_inventory_tree_model(model: &RouteMapData) -> InventoryTreeModel {
     let mut rows = HashMap::new();
     let mut tree_items = Vec::new();
     let mut selected_ix = None;
-    let mut flat_ix = 0usize;
+    let mut group_offset = 0usize;
 
     for group in &model.inventory_groups {
         hash_group(group, &mut hasher);
@@ -337,7 +337,8 @@ fn build_inventory_tree_model(model: &RouteMapData) -> InventoryTreeModel {
         let children = group
             .items
             .iter()
-            .map(|item| {
+            .enumerate()
+            .map(|(item_ix, item)| {
                 hash_item(item, &mut hasher);
                 rows.insert(
                     item.id.clone(),
@@ -354,9 +355,8 @@ fn build_inventory_tree_model(model: &RouteMapData) -> InventoryTreeModel {
                     },
                 );
                 if model.selected_item_id.as_ref() == Some(&item.id) {
-                    selected_ix = Some(flat_ix + 1);
+                    selected_ix = Some(group_offset + item_ix + 1);
                 }
-                flat_ix += 1;
                 TreeItem::new(item.id.clone(), item.title.clone())
             })
             .collect::<Vec<_>>();
@@ -366,7 +366,7 @@ fn build_inventory_tree_model(model: &RouteMapData) -> InventoryTreeModel {
                 .expanded(expanded)
                 .children(children),
         );
-        flat_ix += 1;
+        group_offset += group.items.len() + 1;
     }
 
     InventoryTreeModel {

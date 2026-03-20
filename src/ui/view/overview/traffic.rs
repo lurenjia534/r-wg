@@ -295,7 +295,7 @@ pub(super) fn traffic_summary_card<T>(
                 .on_click({
                     let app_handle = app_handle.clone();
                     move |_, _, cx| {
-                        let _ = app_handle.update(cx, |app, cx| {
+                        app_handle.update(cx, |app, cx| {
                             app.set_session_traffic_period(TrafficPeriod::Today, cx);
                         });
                     }
@@ -309,7 +309,7 @@ pub(super) fn traffic_summary_card<T>(
                 .on_click({
                     let app_handle = app_handle.clone();
                     move |_, _, cx| {
-                        let _ = app_handle.update(cx, |app, cx| {
+                        app_handle.update(cx, |app, cx| {
                             app.set_session_traffic_period(TrafficPeriod::ThisMonth, cx);
                         });
                     }
@@ -323,7 +323,7 @@ pub(super) fn traffic_summary_card<T>(
                 .on_click({
                     let app_handle = app_handle.clone();
                     move |_, _, cx| {
-                        let _ = app_handle.update(cx, |app, cx| {
+                        app_handle.update(cx, |app, cx| {
                             app.set_session_traffic_period(TrafficPeriod::LastMonth, cx);
                         });
                     }

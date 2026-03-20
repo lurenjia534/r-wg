@@ -1,9 +1,6 @@
 use std::path::Path;
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine as _;
-
 use r_wg::backend::wg::config::{self, RouteTable};
 use r_wg::backend::wg::PeerStats;
 
@@ -24,24 +21,6 @@ pub fn summarize_peers(peers: &[PeerStats]) -> PeerSummary {
         tx_bytes,
         last_handshake,
     }
-}
-
-pub fn format_peer_line(peer: &PeerStats) -> String {
-    let key = format_public_key(&peer.public_key);
-    let (handshake, handshake_suffix) = match peer.last_handshake {
-        Some(duration) => (format_duration(duration), " ago"),
-        None => ("never".to_string(), ""),
-    };
-    let rx = format_bytes(peer.rx_bytes);
-    let tx = format_bytes(peer.tx_bytes);
-    let endpoint = peer
-        .endpoint
-        .map(|addr| addr.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    format!(
-        "{key}  handshake: {handshake}{handshake_suffix}  rx: {rx}  tx: {tx}  endpoint: {endpoint}"
-    )
 }
 
 pub fn format_duration(duration: Duration) -> String {
@@ -156,10 +135,4 @@ pub fn name_from_path(path: &Path) -> String {
         .filter(|name| !name.is_empty())
         .unwrap_or("tunnel")
         .to_string()
-}
-
-fn format_public_key(key: &[u8; 32]) -> String {
-    let encoded = STANDARD.encode(key);
-    let short = encoded.get(0..8).unwrap_or(&encoded);
-    format!("{short}...")
 }

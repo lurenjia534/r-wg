@@ -50,7 +50,7 @@ impl WgApp {
         let config = config.clone();
         let running_id = self.runtime.running_id;
         let running_name = self.runtime.running_name.clone();
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             if workspace.upsert_library_row(&config, running_id, running_name.as_deref()) {
                 cx.notify();
             }
@@ -66,7 +66,7 @@ impl WgApp {
             return;
         };
         let ids = ids.clone();
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             if workspace.remove_library_rows(&ids) {
                 cx.notify();
             }
@@ -84,7 +84,7 @@ impl WgApp {
         let configs = configs.to_vec();
         let running_id = self.runtime.running_id;
         let running_name = self.runtime.running_name.clone();
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             if workspace.append_library_rows(&configs, running_id, running_name.as_deref()) {
                 cx.notify();
             }
@@ -97,7 +97,7 @@ impl WgApp {
         };
         let running_id = self.runtime.running_id;
         let running_name = self.runtime.running_name.clone();
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             if workspace.refresh_library_row_flags(running_id, running_name.as_deref()) {
                 cx.notify();
             }
@@ -123,7 +123,7 @@ impl WgApp {
             return;
         };
         let has_selection = self.selection.selected_id.is_some();
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             if workspace.has_selection != has_selection {
                 workspace.has_selection = has_selection;
                 cx.notify();
@@ -137,7 +137,7 @@ impl WgApp {
         cx: &mut Context<Self>,
     ) {
         let workspace = self.ensure_configs_workspace(cx);
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             workspace.operation = operation;
             cx.notify();
         });
@@ -175,7 +175,7 @@ impl WgApp {
             let _ = self.ensure_configs_workspace(cx);
         }
         if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let _ = workspace.update(cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 workspace.pending_action = action;
                 cx.notify();
             });
@@ -188,7 +188,7 @@ impl WgApp {
     ) -> Option<PendingDraftAction> {
         if let Some(workspace) = self.ui.configs_workspace.clone() {
             let mut action = None;
-            let _ = workspace.update(cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 action = workspace.pending_action.take();
                 cx.notify();
             });
@@ -228,7 +228,7 @@ impl WgApp {
         if has_inputs {
             return;
         }
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             workspace.ensure_inputs(window, cx);
         });
     }
@@ -240,7 +240,7 @@ impl WgApp {
         cx: &mut Context<Self>,
     ) {
         let workspace = self.ensure_configs_workspace(cx);
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             if workspace.sync_draft_from_values(name, text, self.runtime.running_id) {
                 cx.notify();
             }
@@ -421,7 +421,7 @@ impl WgApp {
 
     fn apply_draft_validation(&mut self, cx: &mut Context<Self>) {
         let workspace = self.ensure_configs_workspace(cx);
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             workspace.apply_draft_validation(self.runtime.running_id);
             cx.notify();
         });
@@ -438,7 +438,7 @@ impl WgApp {
         let workspace = self.ensure_configs_workspace(cx);
         let workspace_name = name.clone();
         let workspace_text = text.clone();
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             workspace.set_saved_draft(source_id, workspace_name, workspace_text);
             cx.notify();
         });
@@ -455,7 +455,7 @@ impl WgApp {
         let workspace = self.ensure_configs_workspace(cx);
         let workspace_name = name.clone();
         let workspace_text = text.clone();
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             workspace.set_unsaved_draft(workspace_name, workspace_text);
             cx.notify();
         });
@@ -570,7 +570,7 @@ impl WgApp {
                     let discard_handle = app_handle_discard.clone();
                     let save_button = Button::new("draft-dialog-save").label("Save").on_click(
                         move |_, window, cx| {
-                            let _ = save_handle.update(cx, |app, cx| {
+                            save_handle.update(cx, |app, cx| {
                                 app.set_configs_pending_action(Some(action), cx);
                                 app.save_draft(false, window, cx);
                             });
@@ -584,7 +584,7 @@ impl WgApp {
                             window.on_next_frame({
                                 let discard_handle = discard_handle.clone();
                                 move |window, cx| {
-                                    let _ = discard_handle.update(cx, |app, cx| {
+                                    discard_handle.update(cx, |app, cx| {
                                         app.set_configs_pending_action(None, cx);
                                         app.discard_current_draft(window, cx);
                                         app.run_pending_draft_action(action, window, cx);
@@ -606,7 +606,7 @@ impl WgApp {
                     ]
                 })
                 .on_ok(move |_, window, cx| {
-                    let _ = app_handle_ok.update(cx, |app, cx| {
+                    app_handle_ok.update(cx, |app, cx| {
                         app.set_configs_pending_action(Some(action), cx);
                         app.save_draft(false, window, cx);
                     });
@@ -673,7 +673,7 @@ impl WgApp {
                         .child(format!("Delete \"{config_name}\"? This cannot be undone.")),
                 )
                 .on_ok(move |_, window, cx| {
-                    let _ = delete_handle.update(cx, |app, cx| {
+                    delete_handle.update(cx, |app, cx| {
                         app.handle_confirmed_delete_current(window, cx);
                     });
                     true
@@ -1186,7 +1186,7 @@ impl WgApp {
         if draft.source_id == Some(config_id) {
             let workspace = self.ensure_configs_workspace(cx);
             let base_name: SharedString = new_name.to_string().into();
-            let _ = workspace.update(cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 workspace.draft.base_name = base_name;
                 cx.notify();
             });
@@ -1458,7 +1458,7 @@ impl WgApp {
         self.selection.loading_config_id = None;
         self.selection.loading_config_path = None;
         let workspace = self.ensure_configs_workspace(cx);
-        let _ = workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             workspace.draft = ConfigDraftState::new();
             cx.notify();
         });
@@ -1512,9 +1512,7 @@ impl WgApp {
                     Some(text) => Some(text.to_string()),
                     None => std::fs::read_to_string(&storage_path).ok(),
                 };
-                let Some(text) = text else {
-                    return None;
-                };
+                let text = text?;
                 Some(resolve_endpoint_family_from_text(text).await)
             });
             let family = refresh_task.await;

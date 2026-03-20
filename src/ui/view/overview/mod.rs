@@ -91,13 +91,13 @@ impl OverviewPageState {
 
     fn refresh_snapshot(&mut self, cx: &mut Context<Self>) {
         let app = self.app.read(cx);
-        let next_key = OverviewCacheKey::from_app(&app);
+        let next_key = OverviewCacheKey::from_app(app);
         if self.cache_key.as_ref() == Some(&next_key) {
             return;
         }
 
         self.cache_key = Some(next_key);
-        self.snapshot = Some(Arc::new(OverviewData::new(&app)));
+        self.snapshot = Some(Arc::new(OverviewData::new(app)));
     }
 }
 

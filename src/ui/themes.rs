@@ -797,14 +797,15 @@ fn file_theme_key(
     name: &str,
 ) -> SharedString {
     format!(
-        "{}:{}#{}",
+        "{}:{}#{}-{}",
         match collection {
             ThemeCollection::Builtin => "builtin",
             ThemeCollection::Curated => "curated",
             ThemeCollection::Custom => "custom",
         },
         sanitize_key(file_name),
-        format!("{}-{}", theme_mode_key(mode), sanitize_key(name))
+        theme_mode_key(mode),
+        sanitize_key(name)
     )
     .into()
 }
@@ -813,9 +814,7 @@ fn sanitize_key(value: &str) -> String {
     let value = value.trim().to_lowercase();
     let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-        } else if ch == '-' || ch == '_' || ch == '.' {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
             out.push(ch);
         } else {
             out.push('-');

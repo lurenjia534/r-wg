@@ -75,7 +75,7 @@ pub(crate) fn render_route_map(
     let workspace = window.use_keyed_state("route-map-workspace", cx, |_, _| {
         RouteMapWorkspaceState::default()
     });
-    let _ = workspace.update(cx, |state, _| {
+    workspace.update(cx, |state, _| {
         state.refresh(app, data);
     });
     let model = workspace.read(cx).model(app, &query);
@@ -124,6 +124,7 @@ pub(crate) fn render_route_map(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_standard_layout(
     app: &mut WgApp,
     model: &RouteMapData,
@@ -140,7 +141,7 @@ fn render_standard_layout(
             if sizes.len() < 3 {
                 return;
             }
-            let _ = app_handle.update(cx, |app, cx| {
+            app_handle.update(cx, |app, cx| {
                 let changed =
                     app.persist_route_map_panel_widths(sizes[0].as_f32(), sizes[2].as_f32(), cx);
                 if changed {
@@ -188,7 +189,7 @@ fn render_events_layout(
             let Some(inventory_size) = sizes.first() else {
                 return;
             };
-            let _ = app_handle.update(cx, |app, cx| {
+            app_handle.update(cx, |app, cx| {
                 let changed = app.persist_route_map_panel_widths(
                     inventory_size.as_f32(),
                     app.ui_prefs.route_map_inspector_width,

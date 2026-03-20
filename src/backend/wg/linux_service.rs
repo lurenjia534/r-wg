@@ -82,6 +82,12 @@ pub struct Engine {
     inner: Arc<RemoteEngine>,
 }
 
+impl Default for Engine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone)]
 struct RemoteEngine {
     socket_path: Arc<PathBuf>,
@@ -256,6 +262,8 @@ pub fn manage_privileged_service(action: PrivilegedServiceAction) -> Result<(), 
 pub fn maybe_run_service_mode() -> bool {
     // 和 Windows helper 一样，Linux 的 service/install/remove 都必须在 UI 初始化前分流：
     // 一旦已经进入 GPUI 应用生命周期，再切换成 system service / root 管理命令就太晚了。
+    crate::log::init();
+
     let entry = match parse_linux_entry_command(env::args_os()) {
         Ok(entry) => entry,
         Err(err) => exit_linux_entry_error("linux privileged backend command parse failed", err),
@@ -263,8 +271,6 @@ pub fn maybe_run_service_mode() -> bool {
     let Some(entry) = entry else {
         return false;
     };
-
-    crate::log::init();
 
     let result = match entry {
         LinuxEntryCommand::ServiceMode(options) => {
@@ -739,11 +745,11 @@ fn parse_linux_entry_command(
         return Ok(None);
     };
 
-    if first == OsString::from(SERVICE_ARG) {
+    if first == SERVICE_ARG {
         let options = parse_service_mode_args(args)?;
         return Ok(Some(LinuxEntryCommand::ServiceMode(options)));
     }
-    if first == OsString::from(SERVICE_SUBCOMMAND) {
+    if first == SERVICE_SUBCOMMAND {
         let command = parse_manage_command(args)?;
         return Ok(Some(LinuxEntryCommand::Manage(command)));
     }
@@ -1389,7 +1395,6 @@ fn is_running_as_root() -> bool {
 }
 
 fn exit_linux_entry_error(context: &str, err: EngineError) -> ! {
-    eprintln!("{context}: {err}");
     tracing::error!("{context}: {err}");
     std::process::exit(1);
 }

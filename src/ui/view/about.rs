@@ -408,6 +408,7 @@ fn render_readiness_strip(wide_layout: bool, cx: &mut Context<WgApp>) -> impl In
         .child(content)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn readiness_tile(
     icon: IconName,
     label: &'static str,

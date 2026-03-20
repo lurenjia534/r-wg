@@ -55,10 +55,10 @@ impl Render for ConfigsWorkspace {
         let app_handle = self.app.clone();
         let (data, runtime) = {
             let app = app_handle.read(cx);
-            self.initialize_from_app(&app);
+            self.initialize_from_app(app);
             (
                 ConfigsViewData::from_editor(
-                    &app,
+                    app,
                     self.draft.clone(),
                     self.operation.clone(),
                     self.has_selection,
@@ -117,6 +117,7 @@ impl Render for ConfigsWorkspace {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_configs_page(
     app_handle: &Entity<WgApp>,
     workspace: &Entity<ConfigsWorkspace>,
@@ -183,14 +184,14 @@ fn render_configs_page(
                             }
                             let library_width = sizes[0].as_f32();
                             let inspector_width = sizes[2].as_f32();
-                            let _ = app.update(cx, |app, cx| {
+                            app.update(cx, |app, cx| {
                                 let changed = app.persist_configs_panel_widths(
                                     library_width,
                                     inspector_width,
                                     cx,
                                 );
                                 if let Some(workspace) = app.ui.configs_workspace.clone() {
-                                    let _ = workspace.update(cx, |workspace, cx| {
+                                    workspace.update(cx, |workspace, cx| {
                                         if workspace
                                             .set_panel_widths(library_width, inspector_width)
                                         {
@@ -318,6 +319,7 @@ fn render_configs_shell_header(data: &ConfigsViewData, cx: &mut Context<ConfigsW
         )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_library_panel(
     app_handle: &Entity<WgApp>,
     selected_id: Option<u64>,
@@ -436,7 +438,7 @@ fn render_library_panel(
                                         .on_click({
                                             let app = app_handle.clone();
                                             move |_, window, cx| {
-                                                let _ = app.update(cx, |this, cx| {
+                                                app.update(cx, |this, cx| {
                                                     this.handle_new_draft_click(window, cx);
                                                 });
                                             }
@@ -453,7 +455,7 @@ fn render_library_panel(
                                         .on_click({
                                             let app = app_handle.clone();
                                             move |_, window, cx| {
-                                                let _ = app.update(cx, |this, cx| {
+                                                app.update(cx, |this, cx| {
                                                     this.handle_import_click(window, cx);
                                                 });
                                             }
@@ -470,7 +472,7 @@ fn render_library_panel(
                                         .on_click({
                                             let app = app_handle.clone();
                                             move |_, window, cx| {
-                                                let _ = app.update(cx, |this, cx| {
+                                                app.update(cx, |this, cx| {
                                                     this.handle_paste_click(window, cx);
                                                 });
                                             }
@@ -627,7 +629,7 @@ fn render_library_row(
         .on_click({
             let app = app_handle.clone();
             move |_, window, cx| {
-                let _ = app.update(cx, |this, cx| {
+                app.update(cx, |this, cx| {
                     if this.configs_is_busy(cx) {
                         return;
                     }
@@ -679,7 +681,7 @@ fn render_editor_panel(
                     .child(data.title.clone()),
             )
             .on_click(move |_, window, cx| {
-                let _ = workspace.update(cx, |workspace, cx| {
+                workspace.update(cx, |workspace, cx| {
                     let changed = workspace.set_title_editing(true);
                     name_input.update(cx, |input, cx| {
                         input.focus(window, cx);
@@ -1099,9 +1101,9 @@ fn inspector_tab_button(
         .on_click({
             let workspace = workspace.clone();
             move |_, _, cx| {
-                let _ = workspace.update(cx, |workspace, cx| {
+                workspace.update(cx, |workspace, cx| {
                     let changed = workspace.set_inspector_tab(value);
-                    let _ = workspace.app.update(cx, |app, cx| {
+                    workspace.app.update(cx, |app, cx| {
                         app.persist_preferred_inspector_tab(value, cx);
                     });
                     if changed {
@@ -1244,21 +1246,21 @@ fn editor_action_bar(
                 let delete_handle = menu_handle.clone();
                 menu.item(PopupMenuItem::new("Rename").on_click({
                     move |_, window, cx| {
-                        let _ = rename_handle.update(cx, |this, cx| {
+                        rename_handle.update(cx, |this, cx| {
                             this.handle_rename_click(window, cx);
                         });
                     }
                 }))
                 .item(PopupMenuItem::new("Export").on_click({
                     move |_, _, cx| {
-                        let _ = export_handle.update(cx, |this, cx| {
+                        export_handle.update(cx, |this, cx| {
                             this.handle_export_click(cx);
                         });
                     }
                 }))
                 .item(PopupMenuItem::new("Copy").on_click({
                     move |_, _, cx| {
-                        let _ = copy_handle.update(cx, |this, cx| {
+                        copy_handle.update(cx, |this, cx| {
                             this.handle_copy_click(cx);
                         });
                     }
@@ -1266,7 +1268,7 @@ fn editor_action_bar(
                 .item(PopupMenuItem::separator())
                 .item(PopupMenuItem::new("Delete").on_click({
                     move |_, window, cx| {
-                        let _ = delete_handle.update(cx, |this, cx| {
+                        delete_handle.update(cx, |this, cx| {
                             this.handle_delete_click(window, cx);
                         });
                     }
@@ -1290,7 +1292,7 @@ fn editor_action_bar(
                 .on_click({
                     let app = app_handle.clone();
                     move |_, window, cx| {
-                        let _ = app.update(cx, |this, cx| {
+                        app.update(cx, |this, cx| {
                             this.handle_save_click(window, cx);
                         });
                     }
@@ -1307,7 +1309,7 @@ fn editor_action_bar(
                 .on_click({
                     let app = app_handle.clone();
                     move |_, window, cx| {
-                        let _ = app.update(cx, |this, cx| {
+                        app.update(cx, |this, cx| {
                             this.handle_save_as_click(window, cx);
                         });
                     }
@@ -1324,7 +1326,7 @@ fn editor_action_bar(
                     .on_click({
                         let app = app_handle.clone();
                         move |_, window, cx| {
-                            let _ = app.update(cx, |this, cx| {
+                            app.update(cx, |this, cx| {
                                 this.handle_save_and_restart_click(window, cx);
                             });
                         }

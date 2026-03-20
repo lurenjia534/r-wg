@@ -123,10 +123,10 @@ fn parse_ipv6_hex(hex: &str) -> Option<Ipv6Addr> {
         return None;
     }
     let mut bytes = [0u8; 16];
-    for idx in 0..16 {
+    for (idx, byte) in bytes.iter_mut().enumerate() {
         let start = idx * 2;
         let chunk = &hex[start..start + 2];
-        bytes[idx] = u8::from_str_radix(chunk, 16).ok()?;
+        *byte = u8::from_str_radix(chunk, 16).ok()?;
     }
     Some(Ipv6Addr::from(bytes))
 }

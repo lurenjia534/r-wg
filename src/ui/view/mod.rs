@@ -142,13 +142,12 @@ impl Render for WgApp {
                                     .flex_1()
                                     .min_h(px(0.0))
                                     .child(main_body);
-                                let body =
-                                    if self.ui_session.sidebar_active == SidebarItem::Overview {
-                                        body.overflow_y_scrollbar().into_any_element()
-                                    } else {
-                                        body.into_any_element()
-                                    };
-                                body
+
+                                if self.ui_session.sidebar_active == SidebarItem::Overview {
+                                    body.overflow_y_scrollbar().into_any_element()
+                                } else {
+                                    body.into_any_element()
+                                }
                             })
                             .into_any_element()
                     }

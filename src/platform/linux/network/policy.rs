@@ -191,16 +191,13 @@ async fn cleanup_policy_rules_family(
 
 fn is_policy_rule(rule: &RuleMessage) -> bool {
     // 通过优先级筛选，避免误删系统或其他组件的规则。
-    match rule_priority(rule) {
+    matches!(
+        rule_priority(rule),
         Some(priority)
             if priority == RULE_PRIORITY_FWMARK
                 || priority == RULE_PRIORITY_TUNNEL
-                || priority == RULE_PRIORITY_SUPPRESS =>
-        {
-            true
-        }
-        _ => false,
-    }
+                || priority == RULE_PRIORITY_SUPPRESS
+    )
 }
 
 fn rule_priority(rule: &RuleMessage) -> Option<u32> {
@@ -227,7 +224,7 @@ fn push_policy_rule_messages(
     fwmark: u32,
     table_id: u32,
 ) {
-    let main_table = RouteHeader::RT_TABLE_MAIN as u8;
+    let main_table = RouteHeader::RT_TABLE_MAIN;
 
     let mut fwmark_rule = RuleMessage::default();
     fwmark_rule.header.family = family;

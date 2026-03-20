@@ -202,7 +202,7 @@ fn animated_connector(
                     animation_id,
                     Animation::new(Duration::from_secs(2)).repeat(),
                     move |this, delta| {
-                        let pulse = 0.18 + (0.42 * (1.0 - ((delta as f32 * 2.0) - 1.0).abs()));
+                        let pulse = 0.18 + (0.42 * (1.0 - ((delta * 2.0) - 1.0).abs()));
                         this.opacity(pulse)
                             .when(vertical, |this| this.rounded_full())
                             .when(!vertical, |this| this.rounded_full())

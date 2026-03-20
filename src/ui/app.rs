@@ -39,7 +39,7 @@ pub fn run() {
             let mut startup_theme = load_startup_theme_prefs(cx);
             let storage = persistence::ensure_storage_dirs().ok();
             if let Some(storage) = storage.as_ref() {
-                let _ = themes::ensure_theme_registry(&storage, cx);
+                let _ = themes::ensure_theme_registry(storage, cx);
             }
             let light_theme = themes::resolve_theme_preference(
                 gpui_component::theme::ThemeMode::Light,
@@ -88,7 +88,7 @@ pub fn run() {
                             startup_theme.dark_name.clone(),
                         )
                     });
-                    let _ = view.update(cx, |this, cx| {
+                    view.update(cx, |this, cx| {
                         this.refresh_privileged_backend_status(cx);
                     });
                     // 弱引用：窗口关闭后不会阻止资源释放。
@@ -190,7 +190,7 @@ pub fn run() {
                             .detach();
 
                             // 返回 false 阻止立即关闭，等待异步 stop 完成后手动关闭窗口。
-                            return false;
+                            false
                         }
                     });
 

@@ -100,7 +100,7 @@ pub(crate) fn render_logs(
             let app_handle = cx.entity();
             let log_input = log_input.clone();
             move |checked: &bool, window, cx| {
-                let _ = app_handle.update(cx, |app, cx| {
+                app_handle.update(cx, |app, cx| {
                     app.set_log_auto_follow_pref(*checked, cx);
                     if *checked {
                         let latest_lines = log::snapshot();

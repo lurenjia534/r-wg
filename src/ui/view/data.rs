@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use chrono::{Duration as ChronoDuration, Local, NaiveDate};
@@ -468,7 +469,7 @@ impl StatsState {
 
         // 最终排行统一按总流量倒序，并截断到 UI 预设数量。
         let mut ranked = ranked;
-        ranked.sort_by(|a, b| b.total_bytes().cmp(&a.total_bytes()));
+        ranked.sort_by_key(|item| Reverse(item.total_bytes()));
         let active_configs = ranked.len();
         let top_config_name = ranked.first().map(|item| item.name.clone());
         let top_config_total = ranked
@@ -1089,7 +1090,7 @@ mod tests {
         app.runtime.running_id = Some(9);
         app.runtime.running_name = Some("beta".to_string());
 
-        let overview = OverviewData::new(&mut app);
+        let overview = OverviewData::new(&app);
 
         assert!(overview.runtime.is_running);
         assert_eq!(overview.runtime.running_name_text, "beta");

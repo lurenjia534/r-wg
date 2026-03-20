@@ -64,7 +64,7 @@ impl WgApp {
                                         &this.runtime,
                                         &workspace.read(cx).draft,
                                     );
-                                    let _ = workspace.update(cx, |workspace, cx| {
+                                    workspace.update(cx, |workspace, cx| {
                                         if workspace.set_library_rows(rows) {
                                             cx.notify();
                                         }
@@ -566,7 +566,7 @@ fn merge_config_day_buckets(
         }
         let entry = map
             .entry(day.config_id)
-            .or_insert_with(BTreeMap::new)
+            .or_default()
             .entry(day.day_key)
             .or_insert((0, 0));
         entry.0 = entry.0.saturating_add(day.rx_bytes);
@@ -599,7 +599,7 @@ fn merge_config_hour_buckets(
         }
         let entry = map
             .entry(hour.config_id)
-            .or_insert_with(BTreeMap::new)
+            .or_default()
             .entry(hour.hour_key)
             .or_insert((0, 0));
         entry.0 = entry.0.saturating_add(hour.rx_bytes);

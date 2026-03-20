@@ -155,18 +155,6 @@ impl WgApp {
             .detach();
     }
 
-    /// 从指定路径导入配置。
-    ///
-    /// 说明：读取与解析放到后台线程，完成后再回到 UI 线程写入模型并更新状态。
-    pub(crate) fn start_import_from_path(
-        &mut self,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.start_import_from_paths(vec![path], window, cx);
-    }
-
     /// 从多个路径导入配置。
     ///
     /// 说明：读取与解析放到后台线程，完成后再回到 UI 线程写入模型并更新状态。

@@ -1240,6 +1240,7 @@ fn column_value(text: impl Into<SharedString>) -> Div {
     div().text_sm().truncate().child(text.into())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_delete_dialog(
     window: &mut Window,
     cx: &mut Context<WgApp>,
@@ -1330,7 +1331,6 @@ fn perform_delete(
     let app_handle = app_handle.clone();
     let ids = ids.to_vec();
     let note_skip = skip_running;
-    let clear_selection = clear_selection;
     window.on_next_frame(move |window, cx| {
         app_handle.update(cx, |this, cx| {
             if note_skip {

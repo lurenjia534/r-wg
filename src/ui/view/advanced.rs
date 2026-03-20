@@ -147,7 +147,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                             .label("Follow System")
                             .selected(current == AppearancePolicy::System)
                             .on_click(move |_, _, cx| {
-                                let _ = system_handle.update(cx, |app, cx| {
+                                system_handle.update(cx, |app, cx| {
                                     app.set_appearance_policy_pref(
                                         AppearancePolicy::System,
                                         None,
@@ -161,7 +161,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                             .label("Light")
                             .selected(current == AppearancePolicy::Light)
                             .on_click(move |_, _, cx| {
-                                let _ = light_handle.update(cx, |app, cx| {
+                                light_handle.update(cx, |app, cx| {
                                     app.set_appearance_policy_pref(
                                         AppearancePolicy::Light,
                                         None,
@@ -175,7 +175,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                             .label("Dark")
                             .selected(current == AppearancePolicy::Dark)
                             .on_click(move |_, _, cx| {
-                                let _ = dark_handle.update(cx, |app, cx| {
+                                dark_handle.update(cx, |app, cx| {
                                     app.set_appearance_policy_pref(
                                         AppearancePolicy::Dark,
                                         None,
@@ -222,7 +222,7 @@ fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
                     .on_click({
                         let app = app.clone();
                         move |_, window, cx| {
-                            let _ = app.update(cx, |app, cx| {
+                            app.update(cx, |app, cx| {
                                 app.reset_theme_prefs(Some(window), cx);
                             });
                         }
@@ -362,7 +362,7 @@ fn render_theme_palette_field(app: Entity<WgApp>, mode: ThemeMode, cx: &mut gpui
                         .on_click({
                             let set_handle = set_handle.clone();
                             move |_, window, cx| {
-                                let _ = set_handle.update(cx, |app, cx| {
+                                set_handle.update(cx, |app, cx| {
                                     app.set_theme_palette_pref(mode, None, Some(window), cx);
                                 });
                             }
@@ -447,7 +447,7 @@ fn render_theme_preview_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
                     .small()
                     .compact()
                     .on_click(move |_, _, cx| {
-                        let _ = toggle_handle.update(cx, |app, cx| {
+                        toggle_handle.update(cx, |app, cx| {
                             app.set_show_alternate_theme_preview(
                                 !app.ui_session.show_alternate_theme_preview,
                                 cx,
@@ -488,7 +488,7 @@ fn render_theme_file_workflow_field(app: Entity<WgApp>, cx: &mut gpui::App) -> D
                         .small()
                         .compact()
                         .on_click(move |_, window, cx| {
-                            let _ = open_handle.update(cx, |app, cx| {
+                            open_handle.update(cx, |app, cx| {
                                 app.open_themes_folder(window, cx);
                             });
                         }),
@@ -500,7 +500,7 @@ fn render_theme_file_workflow_field(app: Entity<WgApp>, cx: &mut gpui::App) -> D
                         .small()
                         .compact()
                         .on_click(move |_, window, cx| {
-                            let _ = import_handle.update(cx, |app, cx| {
+                            import_handle.update(cx, |app, cx| {
                                 app.handle_theme_import_click(window, cx);
                             });
                         }),
@@ -512,7 +512,7 @@ fn render_theme_file_workflow_field(app: Entity<WgApp>, cx: &mut gpui::App) -> D
                         .small()
                         .compact()
                         .on_click(move |_, window, cx| {
-                            let _ = duplicate_handle.update(cx, |app, cx| {
+                            duplicate_handle.update(cx, |app, cx| {
                                 app.duplicate_current_theme_template(window, cx);
                             });
                         }),
@@ -524,7 +524,7 @@ fn render_theme_file_workflow_field(app: Entity<WgApp>, cx: &mut gpui::App) -> D
                         .small()
                         .compact()
                         .on_click(move |_, window, cx| {
-                            let _ = restore_handle.update(cx, |app, cx| {
+                            restore_handle.update(cx, |app, cx| {
                                 app.restore_curated_theme_files(window, cx);
                             });
                         }),
@@ -653,7 +653,7 @@ fn add_theme_menu_section(
                     let set_handle = set_handle.clone();
                     let key = theme.key.clone();
                     move |_, window, cx| {
-                        let _ = set_handle.update(cx, |app, cx| {
+                        set_handle.update(cx, |app, cx| {
                             app.set_theme_palette_pref(mode, Some(key.clone()), Some(window), cx);
                         });
                     }
@@ -1358,7 +1358,7 @@ fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {
         SettingField::switch(
             move |cx| get_handle.read(cx).ui_prefs.log_auto_follow,
             move |value, cx| {
-                let _ = set_handle.update(cx, |app, cx| {
+                set_handle.update(cx, |app, cx| {
                     app.set_log_auto_follow_pref(value, cx);
                 });
             },
@@ -1379,7 +1379,7 @@ fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
             move |cx| dns_mode_value(get_handle.read(cx).ui_prefs.dns_mode),
             move |value, cx| {
                 let next = dns_mode_from_value(&value);
-                let _ = set_handle.update(cx, |app, cx| {
+                set_handle.update(cx, |app, cx| {
                     app.set_dns_mode_pref(next, cx);
                 });
             },
@@ -1415,7 +1415,7 @@ fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
                             .label("Today")
                             .selected(current == TrafficPeriod::Today)
                             .on_click(move |_, _, cx| {
-                                let _ = today_handle.update(cx, |app, cx| {
+                                today_handle.update(cx, |app, cx| {
                                     app.set_preferred_traffic_period(TrafficPeriod::Today, cx);
                                 });
                             }),
@@ -1425,7 +1425,7 @@ fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
                             .label("This Month")
                             .selected(current == TrafficPeriod::ThisMonth)
                             .on_click(move |_, _, cx| {
-                                let _ = month_handle.update(cx, |app, cx| {
+                                month_handle.update(cx, |app, cx| {
                                     app.set_preferred_traffic_period(TrafficPeriod::ThisMonth, cx);
                                 });
                             }),
@@ -1435,7 +1435,7 @@ fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
                             .label("Last Month")
                             .selected(current == TrafficPeriod::LastMonth)
                             .on_click(move |_, _, cx| {
-                                let _ = last_month_handle.update(cx, |app, cx| {
+                                last_month_handle.update(cx, |app, cx| {
                                     app.set_preferred_traffic_period(TrafficPeriod::LastMonth, cx);
                                 });
                             }),
@@ -1465,7 +1465,7 @@ fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
                             .label("Preview")
                             .selected(current == ConfigInspectorTab::Preview)
                             .on_click(move |_, _, cx| {
-                                let _ = preview_handle.update(cx, |app, cx| {
+                                preview_handle.update(cx, |app, cx| {
                                     app.set_preferred_inspector_tab(
                                         ConfigInspectorTab::Preview,
                                         cx,
@@ -1478,7 +1478,7 @@ fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
                             .label("Diagnostics")
                             .selected(current == ConfigInspectorTab::Diagnostics)
                             .on_click(move |_, _, cx| {
-                                let _ = diagnostics_handle.update(cx, |app, cx| {
+                                diagnostics_handle.update(cx, |app, cx| {
                                     app.set_preferred_inspector_tab(
                                         ConfigInspectorTab::Diagnostics,
                                         cx,
@@ -1491,7 +1491,7 @@ fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
                             .label("Activity")
                             .selected(current == ConfigInspectorTab::Activity)
                             .on_click(move |_, _, cx| {
-                                let _ = activity_handle.update(cx, |app, cx| {
+                                activity_handle.update(cx, |app, cx| {
                                     app.set_preferred_inspector_tab(
                                         ConfigInspectorTab::Activity,
                                         cx,
@@ -1579,7 +1579,7 @@ fn render_dns_preset_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
                                     let value = value.clone();
                                     move |_, _, cx| {
                                         let next = dns_preset_from_value(&value);
-                                        let _ = set_handle.update(cx, |app, cx| {
+                                        set_handle.update(cx, |app, cx| {
                                             app.set_dns_preset_pref(next, cx);
                                         });
                                     }
@@ -1699,7 +1699,7 @@ fn render_privileged_backend_panel(
                                         ))
                                         .disabled(busy)
                                         .on_click(move |_, _, cx| {
-                                            let _ = refresh_handle.update(cx, |app, cx| {
+                                            refresh_handle.update(cx, |app, cx| {
                                                 app.refresh_privileged_backend_status(cx);
                                             });
                                         }),
@@ -1717,8 +1717,7 @@ fn render_privileged_backend_panel(
                                                 ))
                                                 .disabled(busy)
                                                 .on_click(move |_, _, cx| {
-                                                    let _ =
-                                                        install_handle.update(cx, |app, cx| {
+                                                    install_handle.update(cx, |app, cx| {
                                                             app.run_privileged_backend_action(
                                                                 PrivilegedServiceAction::Install,
                                                                 cx,
@@ -1740,7 +1739,7 @@ fn render_privileged_backend_panel(
                                             ))
                                             .disabled(busy)
                                             .on_click(move |_, _, cx| {
-                                                let _ = repair_handle.update(cx, |app, cx| {
+                                                repair_handle.update(cx, |app, cx| {
                                                     app.run_privileged_backend_action(
                                                         PrivilegedServiceAction::Repair,
                                                         cx,
@@ -1757,7 +1756,7 @@ fn render_privileged_backend_panel(
                                         .compact()
                                         .on_click({
                                             move |_, window, cx| {
-                                                let _ = copy_handle.update(cx, |app, cx| {
+                                                copy_handle.update(cx, |app, cx| {
                                                     cx.write_to_clipboard(
                                                         gpui::ClipboardItem::new_string(
                                                             build_backend_diagnostics_text(app),
@@ -1783,7 +1782,7 @@ fn render_privileged_backend_panel(
                                         .small()
                                         .compact()
                                         .on_click(move |_, _, cx| {
-                                            let _ = details_handle.update(cx, |open, _| {
+                                            details_handle.update(cx, |open, _| {
                                                 *open = !*open;
                                             });
                                         }),
@@ -1843,7 +1842,7 @@ fn open_backend_remove_dialog(app_handle: Entity<WgApp>, window: &mut Window, cx
                 ),
             )
             .on_ok(move |_, _window, cx| {
-                let _ = remove_handle.update(cx, |app, cx| {
+                remove_handle.update(cx, |app, cx| {
                     app.run_privileged_backend_action(PrivilegedServiceAction::Remove, cx);
                 });
                 true
@@ -1871,7 +1870,7 @@ fn ensure_backend_freshness_ticker(app: Entity<WgApp>, window: &mut Window, cx: 
     if *ticker_running.read(cx) {
         return;
     }
-    let _ = ticker_running.update(cx, |running, _| {
+    ticker_running.update(cx, |running, _| {
         *running = true;
     });
 

@@ -198,20 +198,20 @@ impl WgApp {
             }
         }
 
-        log_stats::snapshot(
-            self.runtime.running_name.as_deref(),
+        log_stats::snapshot(log_stats::SnapshotArgs {
+            tun_name: self.runtime.running_name.as_deref(),
             elapsed_secs,
             total_rx,
             total_tx,
             rx_delta,
             tx_delta,
-            self.stats.rx_rate_bps,
-            self.stats.tx_rate_bps,
+            rx_rate_bps: self.stats.rx_rate_bps,
+            tx_rate_bps: self.stats.tx_rate_bps,
             iface_rx,
             iface_tx,
-            self.stats.iface_rx_rate_bps,
-            self.stats.iface_tx_rate_bps,
-        );
+            iface_rx_rate_bps: self.stats.iface_rx_rate_bps,
+            iface_tx_rate_bps: self.stats.iface_tx_rate_bps,
+        });
 
         persist_due
     }
@@ -243,6 +243,70 @@ impl WgApp {
             Some(last) => last.elapsed() >= Duration::from_secs(60),
             None => true,
         }
+    }
+}
+
+/// 读取内核统计的网卡字节数。
+///
+/// 说明：直接访问 /sys/class/net，避免外部命令依赖，代价低且稳定。
+fn read_interface_stats(tun: &str) -> Option<(u64, u64)> {
+    let base = format!("/sys/class/net/{tun}/statistics");
+    let rx = std::fs::read_to_string(format!("{base}/rx_bytes")).ok()?;
+    let tx = std::fs::read_to_string(format!("{base}/tx_bytes")).ok()?;
+    let rx = rx.trim().parse::<u64>().ok()?;
+    let tx = tx.trim().parse::<u64>().ok()?;
+    Some((rx, tx))
+}
+
+/// 写入一个速率采样点。
+///
+/// 说明：保持固定长度队列，保证 sparkline 始终有稳定的样本数。
+fn push_rate_sample(history: &mut VecDeque<f32>, value: f64) {
+    let value = if value.is_finite() && value > 0.0 {
+        value as f32
+    } else {
+        0.0
+    };
+    if history.len() >= SPARKLINE_SAMPLES {
+        history.pop_front();
+    }
+    history.push_back(value);
+}
+
+fn read_process_rss_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                let mut parts = rest.split_whitespace();
+                let kb = parts.next()?.parse::<u64>().ok()?;
+                return Some(kb.saturating_mul(1024));
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+        use windows::Win32::System::Threading::GetCurrentProcess;
+
+        let process = unsafe { GetCurrentProcess() };
+        let mut counters = PROCESS_MEMORY_COUNTERS::default();
+        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+
+        unsafe {
+            GetProcessMemoryInfo(process, &mut counters, counters.cb).ok()?;
+        }
+        return Some(counters.WorkingSetSize as u64);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        None
     }
 }
 
@@ -298,69 +362,5 @@ mod tests {
 
         assert_eq!(sampled.iface_rx, None);
         assert_eq!(sampled.iface_tx, None);
-    }
-}
-
-/// 读取内核统计的网卡字节数。
-///
-/// 说明：直接访问 /sys/class/net，避免外部命令依赖，代价低且稳定。
-fn read_interface_stats(tun: &str) -> Option<(u64, u64)> {
-    let base = format!("/sys/class/net/{tun}/statistics");
-    let rx = std::fs::read_to_string(format!("{base}/rx_bytes")).ok()?;
-    let tx = std::fs::read_to_string(format!("{base}/tx_bytes")).ok()?;
-    let rx = rx.trim().parse::<u64>().ok()?;
-    let tx = tx.trim().parse::<u64>().ok()?;
-    Some((rx, tx))
-}
-
-/// 写入一个速率采样点。
-///
-/// 说明：保持固定长度队列，保证 sparkline 始终有稳定的样本数。
-fn push_rate_sample(history: &mut VecDeque<f32>, value: f64) {
-    let value = if value.is_finite() && value > 0.0 {
-        value as f32
-    } else {
-        0.0
-    };
-    if history.len() >= SPARKLINE_SAMPLES {
-        history.pop_front();
-    }
-    history.push_back(value);
-}
-
-fn read_process_rss_bytes() -> Option<u64> {
-    #[cfg(target_os = "linux")]
-    {
-        let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        for line in status.lines() {
-            if let Some(rest) = line.strip_prefix("VmRSS:") {
-                let mut parts = rest.split_whitespace();
-                let kb = parts.next()?.parse::<u64>().ok()?;
-                return Some(kb.saturating_mul(1024));
-            }
-        }
-        return None;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use windows::Win32::System::ProcessStatus::{
-            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
-        };
-        use windows::Win32::System::Threading::GetCurrentProcess;
-
-        let process = unsafe { GetCurrentProcess() };
-        let mut counters = PROCESS_MEMORY_COUNTERS::default();
-        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-
-        unsafe {
-            GetProcessMemoryInfo(process, &mut counters, counters.cb).ok()?;
-        }
-        return Some(counters.WorkingSetSize as u64);
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        None
     }
 }

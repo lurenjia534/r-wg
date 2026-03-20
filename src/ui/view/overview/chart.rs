@@ -69,6 +69,7 @@ pub(super) struct TrafficTrendOverlay {
 }
 
 impl TrafficTrendOverlay {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         points: Vec<TrafficTrendPoint>,
         average_bytes: f64,

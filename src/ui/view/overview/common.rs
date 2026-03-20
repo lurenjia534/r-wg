@@ -171,6 +171,7 @@ pub(super) fn metric_cell<T>(
         )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn copyable_metric_cell<T>(
     app_handle: &Entity<WgApp>,
     id: &'static str,
@@ -203,7 +204,7 @@ pub(super) fn copyable_metric_cell<T>(
                 }
                 let copy_value = copy_value.clone();
                 let copy_label = copy_label.clone();
-                let _ = app_handle.update(cx, |app, cx| {
+                app_handle.update(cx, |app, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(copy_value));
                     app.push_success_toast(format!("{copy_label} copied"), window, cx);
                     app.set_status(format!("{copy_label} copied"));

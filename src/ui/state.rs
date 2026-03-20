@@ -76,22 +76,6 @@ pub(crate) struct PendingStart {
     pub(crate) config_id: u64,
 }
 
-impl TunnelConfig {
-    pub(crate) fn label(&self) -> String {
-        match &self.source {
-            ConfigSource::File { origin_path } => {
-                let file = origin_path
-                    .as_ref()
-                    .and_then(|path| path.file_name())
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("file");
-                format!("{} ({})", self.name, file)
-            }
-            ConfigSource::Paste => format!("{} (pasted)", self.name),
-        }
-    }
-}
-
 /// 最近一次载入到输入框的配置，避免重复 set_value。
 pub(crate) struct LoadedConfigState {
     pub(crate) name: String,
@@ -1805,7 +1789,7 @@ impl WgApp {
     ) {
         self.persist_preferred_inspector_tab(value, cx);
         if let Some(workspace) = self.ui.configs_workspace.clone() {
-            let _ = workspace.update(cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 if workspace.set_inspector_tab(value) {
                     cx.notify();
                 }
