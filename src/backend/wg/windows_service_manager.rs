@@ -110,6 +110,7 @@ struct InstallOptions {
 
 struct RemoveOptions {
     binary_path: PathBuf,
+    wintun_path: PathBuf,
 }
 
 fn parse_manage_command(args: &[String]) -> Result<ManageCommand, EngineError> {
@@ -152,7 +153,10 @@ fn parse_manage_command(args: &[String]) -> Result<ManageCommand, EngineError> {
                 .ok_or_else(|| remote_error("service repair requires --source".to_string()))?,
             binary_path,
         })),
-        "remove" => Ok(ManageCommand::Remove(RemoveOptions { binary_path })),
+        "remove" => Ok(ManageCommand::Remove(RemoveOptions {
+            wintun_path: installed_wintun_path(),
+            binary_path,
+        })),
         other => Err(remote_error(format!("unknown service action: {other}"))),
     }
 }
@@ -208,6 +212,17 @@ fn remove_installation(options: RemoveOptions) -> Result<(), EngineError> {
         }
     }
 
+    match fs::remove_file(&options.wintun_path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(remote_error(format!(
+                "failed to remove installed Wintun DLL {}: {err}",
+                options.wintun_path.display()
+            )));
+        }
+    }
+
     if let Some(parent) = options.binary_path.parent() {
         match fs::remove_dir(parent) {
             Ok(()) => {}
@@ -255,8 +270,20 @@ fn install_binary(source: &Path, binary: &Path) -> Result<(), EngineError> {
         fs::create_dir_all(parent)
             .map_err(|err| remote_error(format!("failed to create install dir: {err}")))?;
     }
+
     fs::copy(source, binary)
         .map_err(|err| remote_error(format!("failed to copy installed binary: {err}")))?;
+
+    let source_wintun = source_wintun_path(source)?;
+    let installed_wintun = installed_wintun_path();
+    fs::copy(&source_wintun, &installed_wintun).map_err(|err| {
+        remote_error(format!(
+            "failed to copy installed Wintun DLL from {} to {}: {err}",
+            source_wintun.display(),
+            installed_wintun.display()
+        ))
+    })?;
+
     Ok(())
 }
 
@@ -381,6 +408,22 @@ fn installed_binary_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(env::temp_dir);
     base.join("r-wg").join("r-wg.exe")
+}
+
+fn installed_wintun_path() -> PathBuf {
+    installed_binary_path().with_file_name("wintun.dll")
+}
+
+fn source_wintun_path(source: &Path) -> Result<PathBuf, EngineError> {
+    let path = source.with_file_name("wintun.dll");
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(remote_error(format!(
+            "wintun.dll not found next to source binary: {}",
+            path.display()
+        )))
+    }
 }
 
 fn service_binary_path(binary_path: &Path) -> String {
