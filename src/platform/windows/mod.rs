@@ -258,6 +258,37 @@ pub async fn apply_network_config(
         }
     };
 
+    let recovery = match RecoveryGuard::begin(tun_name, adapter) {
+        Ok(guard) => guard,
+        Err(error) => {
+            report.push_failed_kind(
+                "apply:recovery_init",
+                RouteApplyKind::RecoveryJournal,
+                Some(RouteApplyFailureKind::Persistence),
+                vec![format!(
+                    "failed to initialize Windows recovery journal: {error}"
+                )],
+            );
+            skip_remaining_route_plan_ops(
+                &mut report,
+                route_plan,
+                0,
+                0,
+                0,
+                "Windows apply aborted before any planned network operation ran.",
+            );
+            skip_remaining_windows_stages(
+                &mut report,
+                true,
+                true,
+                true,
+                true,
+                "Windows apply aborted before any planned network operation ran.",
+            );
+            return Err(abort_with_report(error, report));
+        }
+    };
+
     let mut state = AppliedNetworkState {
         tun_name: tun_name.to_string(),
         adapter,
@@ -268,36 +299,7 @@ pub async fn apply_network_config(
         dns: None,
         nrpt: None,
         dns_guard: None,
-        recovery: Some(match RecoveryGuard::begin(tun_name, adapter) {
-            Ok(guard) => guard,
-            Err(error) => {
-                report.push_failed_kind(
-                    "apply:recovery_init",
-                    RouteApplyKind::RecoveryJournal,
-                    Some(RouteApplyFailureKind::Persistence),
-                    vec![format!(
-                        "failed to initialize Windows recovery journal: {error}"
-                    )],
-                );
-                skip_remaining_route_plan_ops(
-                    &mut report,
-                    route_plan,
-                    0,
-                    0,
-                    0,
-                    "Windows apply aborted before any planned network operation ran.",
-                );
-                skip_remaining_windows_stages(
-                    &mut report,
-                    true,
-                    true,
-                    true,
-                    true,
-                    "Windows apply aborted before any planned network operation ran.",
-                );
-                return abort_with_cleanup(state, error, report).await;
-            }
-        }),
+        recovery: Some(recovery),
     };
 
     // 3) 先清理旧地址，避免历史残留影响路由决策。
