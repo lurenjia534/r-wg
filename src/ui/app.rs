@@ -93,6 +93,7 @@ pub fn run() {
                     });
                     // 弱引用：窗口关闭后不会阻止资源释放。
                     let view_handle = view.downgrade();
+                    sync_apply_report(view_handle.clone(), engine.clone(), cx);
                     // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。
                     #[cfg(target_os = "windows")]
                     sync_engine_status(view_handle.clone(), engine.clone(), cx);
@@ -209,13 +210,20 @@ pub fn run() {
 #[cfg(target_os = "windows")]
 fn sync_engine_status(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut App) {
     cx.spawn(async move |cx| {
-        let result = cx.background_spawn(async move { engine.status() }).await;
+        let (status_result, apply_report) = cx
+            .background_spawn(async move {
+                let status = engine.status();
+                let apply_report = engine.apply_report().ok().flatten();
+                (status, apply_report)
+            })
+            .await;
         let _ = view.update(cx, |this, cx| {
-            if !matches!(result, Ok(r_wg::backend::wg::EngineStatus::Running)) {
+            if !matches!(status_result, Ok(r_wg::backend::wg::EngineStatus::Running)) {
                 return;
             }
             this.runtime.running = true;
             this.runtime.busy = false;
+            this.runtime.set_last_apply_report(apply_report);
             // helper 恢复场景下不一定拿得到原始配置名，先放通用占位避免 UI 空白。
             if this.runtime.running_name.is_none() {
                 this.runtime.running_name = Some("Tunnel".to_string());
@@ -229,6 +237,22 @@ fn sync_engine_status(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut Ap
     })
     .detach();
 }
+
+fn sync_apply_report(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let result = cx
+            .background_spawn(async move { engine.apply_report() })
+            .await;
+        let _ = view.update(cx, |this, cx| {
+            if let Ok(report) = result {
+                this.runtime.set_last_apply_report(report);
+                cx.notify();
+            }
+        });
+    })
+    .detach();
+}
+
 fn load_startup_theme_prefs(_cx: &App) -> StartupThemePrefs {
     // 读取持久化主题；读取失败则回退深色模式与默认 palette。
     let storage = match persistence::ensure_storage_dirs() {

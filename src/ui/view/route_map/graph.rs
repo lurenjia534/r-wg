@@ -54,10 +54,12 @@ fn render_flow(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgApp
         ));
     };
 
+    let animate_connectors = window.is_window_active();
     let steps = if window.viewport_size().width >= px(1500.0) {
-        render_horizontal_flow_steps(&selected.graph_steps, cx).into_any_element()
+        render_horizontal_flow_steps(&selected.graph_steps, animate_connectors, cx)
+            .into_any_element()
     } else {
-        render_vertical_flow_steps(&selected.graph_steps, cx).into_any_element()
+        render_vertical_flow_steps(&selected.graph_steps, animate_connectors, cx).into_any_element()
     };
 
     div()
@@ -114,12 +116,34 @@ fn render_flow(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgApp
                                 .text_color(cx.theme().muted_foreground)
                                 .child(selected_summary(selected)),
                         )
-                        .child(steps),
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_h(px(0.0))
+                                .w_full()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .max_w(px(1120.0))
+                                        .flex_col()
+                                        .gap_4()
+                                        .child(steps)
+                                        .child(render_flow_band(selected, cx)),
+                                ),
+                        ),
                 ),
         )
 }
 
-fn render_vertical_flow_steps(steps: &[RouteMapGraphStep], cx: &mut Context<WgApp>) -> Div {
+fn render_vertical_flow_steps(
+    steps: &[RouteMapGraphStep],
+    animate_connectors: bool,
+    cx: &mut Context<WgApp>,
+) -> Div {
     steps
         .iter()
         .enumerate()
@@ -134,6 +158,7 @@ fn render_vertical_flow_steps(steps: &[RouteMapGraphStep], cx: &mut Context<WgAp
                         .child(animated_connector(
                             ("route-map-flow-v", index),
                             true,
+                            animate_connectors,
                             step,
                             cx,
                         )),
@@ -143,10 +168,13 @@ fn render_vertical_flow_steps(steps: &[RouteMapGraphStep], cx: &mut Context<WgAp
             }
         })
         .w_full()
-        .flex_grow()
 }
 
-fn render_horizontal_flow_steps(steps: &[RouteMapGraphStep], cx: &mut Context<WgApp>) -> Div {
+fn render_horizontal_flow_steps(
+    steps: &[RouteMapGraphStep],
+    animate_connectors: bool,
+    cx: &mut Context<WgApp>,
+) -> Div {
     steps
         .iter()
         .enumerate()
@@ -164,6 +192,7 @@ fn render_horizontal_flow_steps(steps: &[RouteMapGraphStep], cx: &mut Context<Wg
                                 .child(animated_connector(
                                     ("route-map-flow-h", index),
                                     false,
+                                    animate_connectors,
                                     step,
                                     cx,
                                 )),
@@ -177,20 +206,126 @@ fn render_horizontal_flow_steps(steps: &[RouteMapGraphStep], cx: &mut Context<Wg
         .min_h(px(0.0))
 }
 
+fn render_flow_band(selected: &RouteMapInventoryItem, cx: &mut Context<WgApp>) -> Div {
+    let facts = flow_band_text(
+        "Facts",
+        selected_summary(selected).to_string(),
+        cx.theme().accent,
+        cx.theme().accent_foreground,
+        cx.theme().accent.alpha(0.18),
+        cx.theme().accent.alpha(0.36),
+        cx,
+    );
+    let evidence = flow_band_text(
+        "Evidence",
+        if selected.inspector.runtime_evidence.is_empty() {
+            "No runtime evidence captured yet.".to_string()
+        } else {
+            selected
+                .inspector
+                .runtime_evidence
+                .iter()
+                .take(2)
+                .map(|item| item.as_ref())
+                .collect::<Vec<_>>()
+                .join(" · ")
+        },
+        cx.theme().info,
+        cx.theme().info_foreground,
+        cx.theme().info.alpha(0.16),
+        cx.theme().info.alpha(0.34),
+        cx,
+    );
+    let risk = flow_band_text(
+        "Risk",
+        if selected.inspector.risk_assessment.is_empty() {
+            "No additional risk notes.".to_string()
+        } else {
+            selected
+                .inspector
+                .risk_assessment
+                .iter()
+                .take(2)
+                .map(|item| item.as_ref())
+                .collect::<Vec<_>>()
+                .join(" · ")
+        },
+        cx.theme().warning,
+        cx.theme().warning_foreground,
+        cx.theme().warning.alpha(0.12),
+        cx.theme().warning.alpha(0.34),
+        cx,
+    );
+
+    div()
+        .flex()
+        .flex_wrap()
+        .gap_2()
+        .w_full()
+        .child(facts)
+        .child(evidence)
+        .child(risk)
+}
+
+fn flow_band_text(
+    label: &str,
+    body: String,
+    surface: Hsla,
+    foreground: Hsla,
+    fill: Hsla,
+    border: Hsla,
+    cx: &mut Context<WgApp>,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .flex_1()
+        .min_w(px(220.0))
+        .rounded_lg()
+        .border_1()
+        .border_color(border)
+        .bg(fill)
+        .px_3()
+        .py_2()
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .child(div().size(px(7.0)).rounded_full().bg(surface.alpha(0.88)))
+                .child(
+                    div()
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(surface)
+                        .child(label.to_string()),
+                ),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(foreground)
+                .child(body)
+                .when(cx.theme().mode == ThemeMode::Light, |this| {
+                    this.opacity(0.94)
+                }),
+        )
+}
+
 fn animated_connector(
     animation_id: impl Into<ElementId>,
     vertical: bool,
+    animate: bool,
     step: &RouteMapGraphStep,
     cx: &mut Context<WgApp>,
 ) -> Div {
     let palette = step_kind_palette(step.kind, cx);
-
-    div()
+    let connector = div()
         .relative()
         .w_full()
         .h_full()
         .bg(palette.connector_base)
-        .child(
+        .child(if animate {
             div()
                 .absolute()
                 .top_0()
@@ -207,8 +342,23 @@ fn animated_connector(
                             .when(vertical, |this| this.rounded_full())
                             .when(!vertical, |this| this.rounded_full())
                     },
-                ),
-        )
+                )
+                .into_any_element()
+        } else {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(palette.connector_glow)
+                .opacity(0.18)
+                .when(vertical, |this| this.rounded_full())
+                .when(!vertical, |this| this.rounded_full())
+                .into_any_element()
+        });
+
+    connector
 }
 
 fn render_flow_step(step: &RouteMapGraphStep, cx: &mut Context<WgApp>) -> Div {
@@ -522,11 +672,6 @@ fn step_kind_palette(kind: RouteMapGraphStepKind, cx: &mut Context<WgApp>) -> Fl
 
     let connector_strength = if is_light { 0.5 } else { 0.34 };
     let connector_glow = if is_light { 0.82 } else { 0.62 };
-    let neutral_border = if is_light {
-        cx.theme().list_active_border
-    } else {
-        cx.theme().border.alpha(0.92)
-    };
 
     match kind {
         RouteMapGraphStepKind::Interface => FlowStepPalette {
@@ -556,8 +701,14 @@ fn step_kind_palette(kind: RouteMapGraphStepKind, cx: &mut Context<WgApp>) -> Fl
         RouteMapGraphStepKind::Peer | RouteMapGraphStepKind::Endpoint => FlowStepPalette {
             icon_foreground: cx.theme().secondary_foreground,
             icon_background: cx.theme().secondary,
-            icon_border: neutral_border,
-            card_border: neutral_border,
+            icon_border: cx
+                .theme()
+                .secondary_foreground
+                .alpha(if is_light { 0.64 } else { 0.5 }),
+            card_border: cx
+                .theme()
+                .secondary_foreground
+                .alpha(if is_light { 0.44 } else { 0.32 }),
             connector_base: cx.theme().secondary_foreground.alpha(if is_light {
                 0.34
             } else {
@@ -580,8 +731,8 @@ fn step_kind_palette(kind: RouteMapGraphStepKind, cx: &mut Context<WgApp>) -> Fl
         RouteMapGraphStepKind::Destination => FlowStepPalette {
             icon_foreground: cx.theme().secondary_foreground,
             icon_background: cx.theme().muted,
-            icon_border: neutral_border,
-            card_border: neutral_border,
+            icon_border: cx.theme().border.alpha(if is_light { 0.98 } else { 0.82 }),
+            card_border: cx.theme().border.alpha(if is_light { 0.84 } else { 0.62 }),
             connector_base: cx.theme().secondary_foreground.alpha(if is_light {
                 0.3
             } else {

@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use super::engine::Engine as LocalEngine;
 use super::ipc::{
-    map_backend_error, protocol_mismatch, read_json_line, unexpected_reply, write_json_line,
-    BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
+    map_backend_error, option_reply, protocol_mismatch, read_json_line, unexpected_reply,
+    write_json_line, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
 };
 use super::{EngineError, EngineStats, EngineStatus, StartRequest};
 
@@ -309,12 +309,29 @@ impl Engine {
     pub fn stats(&self) -> Result<EngineStats, EngineError> {
         self.inner.stats()
     }
+
+    pub fn apply_report(
+        &self,
+    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+        self.inner.apply_report()
+    }
 }
 
 impl RemoteEngine {
     fn new() -> Self {
         Self {
             socket_path: Arc::new(control_socket_path()),
+        }
+    }
+
+    fn info(&self) -> Result<u32, EngineError> {
+        match self.send_command_raw(BackendCommand::Info) {
+            Ok(BackendReply::Info { protocol_version }) => Ok(protocol_version),
+            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
+            Ok(other) => Err(unexpected_reply(other)),
+            Err(err) if is_missing_backend_error(&err) => Err(EngineError::ChannelClosed),
+            Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
+            Err(err) => Err(connect_error(self.socket_path.as_path(), err)),
         }
     }
 
@@ -351,6 +368,33 @@ impl RemoteEngine {
             Err(err) if is_missing_backend_error(&err) => Err(EngineError::NotRunning),
             Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
             Err(err) => Err(connect_error(self.socket_path.as_path(), err)),
+        }
+    }
+
+    fn apply_report(
+        &self,
+    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+        self.check_protocol()?;
+        match self.send_command_raw(BackendCommand::ApplyReport) {
+            Ok(BackendReply::ApplyReport { report }) => Ok(report),
+            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
+            Ok(other) => Err(unexpected_reply(other)),
+            Err(err) if is_missing_backend_error(&err) => Err(EngineError::NotRunning),
+            Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
+            Err(err) => Err(connect_error(self.socket_path.as_path(), err)),
+        }
+    }
+
+    fn check_protocol(&self) -> Result<(), EngineError> {
+        match self.info() {
+            Ok(protocol_version) => {
+                if protocol_version == IPC_PROTOCOL_VERSION {
+                    Ok(())
+                } else {
+                    Err(protocol_mismatch(IPC_PROTOCOL_VERSION, protocol_version))
+                }
+            }
+            Err(err) => Err(err),
         }
     }
 
@@ -642,6 +686,7 @@ fn handle_command(stream: &mut UnixStream, engine: &LocalEngine) -> io::Result<B
             Ok(stats) => BackendReply::Stats { stats },
             Err(err) => super::ipc::error_reply(err),
         },
+        BackendCommand::ApplyReport => option_reply(engine.apply_report()),
     })
 }
 

@@ -5,12 +5,14 @@ use std::net::IpAddr;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use chrono::NaiveDate;
-use gpui::{Entity, SharedString, Subscription, Window};
+use gpui::{Entity, SharedString, Subscription, Timer, Window};
 use gpui_component::theme::ThemeMode;
 use gpui_component::{input::InputState, notification::Notification, IconName, WindowExt};
+use r_wg::backend::wg::route_plan::RouteApplyReport;
 use r_wg::backend::wg::{
     config, Engine, PeerStats, PrivilegedServiceAction, PrivilegedServiceStatus,
 };
@@ -1186,7 +1188,27 @@ pub(crate) struct RuntimeState {
     pub(crate) last_stop_at: Option<Instant>,
     pub(crate) running_name: Option<String>,
     pub(crate) running_id: Option<u64>,
+    pub(crate) last_apply_report: Option<RouteApplyReport>,
     pub(crate) runtime_revision: u64,
+}
+
+static LAST_APPLY_REPORT: OnceLock<Mutex<Option<RouteApplyReport>>> = OnceLock::new();
+
+fn last_apply_report_cell() -> &'static Mutex<Option<RouteApplyReport>> {
+    LAST_APPLY_REPORT.get_or_init(|| Mutex::new(None))
+}
+
+fn set_current_apply_report(report: Option<RouteApplyReport>) {
+    if let Ok(mut slot) = last_apply_report_cell().lock() {
+        *slot = report;
+    }
+}
+
+pub(crate) fn current_apply_report() -> Option<RouteApplyReport> {
+    last_apply_report_cell()
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
 }
 
 impl RuntimeState {
@@ -1198,6 +1220,7 @@ impl RuntimeState {
             last_stop_at: None,
             running_name: None,
             running_id: None,
+            last_apply_report: None,
             runtime_revision: 0,
         }
     }
@@ -1230,6 +1253,7 @@ impl RuntimeState {
         self.running = false;
         self.running_name = None;
         self.running_id = None;
+        self.clear_last_apply_report();
         self.last_stop_at = Some(Instant::now());
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
@@ -1255,6 +1279,17 @@ impl RuntimeState {
         self.running_name = Some(selected.name.clone());
         self.running_id = Some(selected.id);
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
+    }
+
+    pub(crate) fn set_last_apply_report(&mut self, report: Option<RouteApplyReport>) {
+        self.last_apply_report = report.clone();
+        set_current_apply_report(report);
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
+    }
+
+    pub(crate) fn clear_last_apply_report(&mut self) {
+        self.last_apply_report = None;
+        set_current_apply_report(None);
     }
 }
 
@@ -1430,6 +1465,7 @@ pub(crate) struct UiSessionState {
     pub(crate) route_map_mode: RouteMapMode,
     pub(crate) route_map_family_filter: RouteFamilyFilter,
     pub(crate) route_map_selected_item: Option<SharedString>,
+    pub(crate) route_map_glossary_open: bool,
 }
 
 impl UiSessionState {
@@ -1441,6 +1477,7 @@ impl UiSessionState {
             route_map_mode: RouteMapMode::Flow,
             route_map_family_filter: RouteFamilyFilter::All,
             route_map_selected_item: None,
+            route_map_glossary_open: false,
         }
     }
 
@@ -1479,10 +1516,41 @@ impl PersistenceState {
     }
 }
 
+pub(crate) struct RouteMapSearchState {
+    pub(crate) raw_query: SharedString,
+    pub(crate) debounced_query: SharedString,
+    next_revision: u64,
+    queued_revision: Option<u64>,
+    pub(crate) worker_active: bool,
+}
+
+impl RouteMapSearchState {
+    fn new() -> Self {
+        Self {
+            raw_query: SharedString::default(),
+            debounced_query: SharedString::default(),
+            next_revision: 0,
+            queued_revision: None,
+            worker_active: false,
+        }
+    }
+
+    fn enqueue(&mut self) -> u64 {
+        self.next_revision = self.next_revision.saturating_add(1);
+        self.queued_revision = Some(self.next_revision);
+        self.next_revision
+    }
+
+    fn take_queued_revision(&mut self) -> Option<u64> {
+        self.queued_revision.take()
+    }
+}
+
 pub(crate) struct UiState {
     pub(crate) log_input: Option<Entity<InputState>>,
     pub(crate) proxy_search_input: Option<Entity<InputState>>,
     pub(crate) route_map_search_input: Option<Entity<InputState>>,
+    pub(crate) route_map_search: RouteMapSearchState,
     pub(crate) configs_workspace: Option<Entity<ConfigsWorkspace>>,
     // 日志状态与提示。
     pub(crate) status: SharedString,
@@ -1498,6 +1566,7 @@ impl UiState {
             log_input: None,
             proxy_search_input: None,
             route_map_search_input: None,
+            route_map_search: RouteMapSearchState::new(),
             configs_workspace: None,
             status: "Ready".into(),
             last_error: None,
@@ -1868,6 +1937,62 @@ impl WgApp {
             self.ui_session.route_map_selected_item = value;
             cx.notify();
         }
+    }
+
+    pub(crate) fn set_route_map_glossary_open(
+        &mut self,
+        value: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_session.route_map_glossary_open != value {
+            self.ui_session.route_map_glossary_open = value;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn sync_route_map_search_query(
+        &mut self,
+        value: impl Into<SharedString>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let value = value.into();
+        if self.ui.route_map_search.raw_query == value {
+            return;
+        }
+        self.ui.route_map_search.raw_query = value;
+        self.ui.route_map_search.enqueue();
+        if self.ui.route_map_search.worker_active {
+            return;
+        }
+        self.ui.route_map_search.worker_active = true;
+
+        cx.spawn(async move |view, cx| loop {
+            Timer::after(Duration::from_millis(150)).await;
+
+            let Some(query) = view
+                .update(cx, |this, _| {
+                    match this.ui.route_map_search.take_queued_revision() {
+                        Some(_) => Some(this.ui.route_map_search.raw_query.clone()),
+                        None => {
+                            this.ui.route_map_search.worker_active = false;
+                            None
+                        }
+                    }
+                })
+                .ok()
+                .flatten()
+            else {
+                break;
+            };
+
+            let _ = view.update(cx, |this, cx| {
+                if this.ui.route_map_search.debounced_query != query {
+                    this.ui.route_map_search.debounced_query = query;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn set_show_alternate_theme_preview(

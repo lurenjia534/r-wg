@@ -29,8 +29,9 @@ use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
 use super::engine::Engine as LocalEngine;
 use super::ipc::{
-    error_reply, map_backend_error, read_json_line, unexpected_reply, unit_reply, write_json_line,
-    BackendCommand, BackendReply,
+    error_reply, map_backend_error, option_reply, protocol_mismatch, read_json_line,
+    unexpected_reply, unit_reply, write_json_line, BackendCommand, BackendReply,
+    IPC_PROTOCOL_VERSION,
 };
 use super::{EngineError, EngineStats, EngineStatus, StartRequest};
 
@@ -157,6 +158,15 @@ impl Engine {
             EngineMode::Remote(engine) => engine.stats(),
         }
     }
+
+    pub fn apply_report(
+        &self,
+    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+        match &*self.inner {
+            EngineMode::Local(engine) => engine.apply_report(),
+            EngineMode::Remote(engine) => engine.apply_report(),
+        }
+    }
 }
 
 impl RemoteEngine {
@@ -237,6 +247,35 @@ impl RemoteEngine {
         };
         match self.send_command(&session, BackendCommand::Stats) {
             Ok(BackendReply::Stats { stats }) => Ok(stats),
+            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
+            Ok(other) => Err(unexpected_reply(other)),
+            Err(err) => {
+                self.clear_session_file();
+                Err(err)
+            }
+        }
+    }
+
+    fn apply_report(
+        &self,
+    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+        let Some(session) = self.load_session() else {
+            return Ok(None);
+        };
+        let protocol_version = match self.send_command(&session, BackendCommand::Info) {
+            Ok(BackendReply::Info { protocol_version }) => protocol_version,
+            Ok(BackendReply::Error { kind, message }) => return Err(map_backend_error(kind, message)),
+            Ok(other) => return Err(unexpected_reply(other)),
+            Err(err) => {
+                self.clear_session_file();
+                return Err(err);
+            }
+        };
+        if protocol_version != IPC_PROTOCOL_VERSION {
+            return Err(protocol_mismatch(IPC_PROTOCOL_VERSION, protocol_version));
+        }
+        match self.send_command(&session, BackendCommand::ApplyReport) {
+            Ok(BackendReply::ApplyReport { report }) => Ok(report),
             Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
             Ok(other) => Err(unexpected_reply(other)),
             Err(err) => {
@@ -453,6 +492,7 @@ fn handle_helper_client(
                 Ok(stats) => BackendReply::Stats { stats },
                 Err(err) => error_reply(err),
             },
+            BackendCommand::ApplyReport => option_reply(engine.apply_report()),
         }
     };
 

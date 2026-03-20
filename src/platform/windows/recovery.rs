@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::wg::config::InterfaceAddress;
+use crate::backend::wg::route_plan::RouteApplyReport;
 
 use super::adapter::{AdapterInfo, AdapterSnapshot};
 use super::addresses::delete_unicast_address;
@@ -17,6 +18,7 @@ use super::routes::{delete_route, RouteEntry, RouteSnapshot};
 use super::NetworkError;
 
 const RECOVERY_JOURNAL_FILE: &str = "windows-recovery.json";
+const LAST_APPLY_REPORT_FILE: &str = "last-apply-report.json";
 const RECOVERY_JOURNAL_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -148,6 +150,7 @@ impl RecoveryGuard {
     }
 
     pub(super) fn clear(self) -> Result<(), NetworkError> {
+        clear_persisted_apply_report()?;
         clear_recovery_journal_at(self.path.as_path())
     }
 
@@ -245,4 +248,50 @@ fn recovery_journal_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(env::temp_dir);
     base.join("r-wg").join(RECOVERY_JOURNAL_FILE)
+}
+
+pub(super) fn write_persisted_apply_report(report: &RouteApplyReport) -> Result<(), NetworkError> {
+    let path = persisted_apply_report_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_vec(report).map_err(|err| {
+        NetworkError::Io(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+    })?;
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, json)?;
+    fs::rename(tmp_path, path)?;
+    Ok(())
+}
+
+pub(super) fn load_persisted_apply_report() -> Result<Option<RouteApplyReport>, NetworkError> {
+    let path = persisted_apply_report_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(NetworkError::Io(err)),
+    };
+    let report = serde_json::from_str(&text).map_err(|err| {
+        NetworkError::Io(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+    })?;
+    Ok(Some(report))
+}
+
+pub(super) fn clear_persisted_apply_report() -> Result<(), NetworkError> {
+    clear_persisted_apply_report_at(persisted_apply_report_path().as_path())
+}
+
+fn clear_persisted_apply_report_at(path: &Path) -> Result<(), NetworkError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(NetworkError::Io(err)),
+    }
+}
+
+fn persisted_apply_report_path() -> PathBuf {
+    let base = env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir);
+    base.join("r-wg").join(LAST_APPLY_REPORT_FILE)
 }

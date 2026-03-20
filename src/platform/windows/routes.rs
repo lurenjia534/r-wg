@@ -1,8 +1,7 @@
 //! Windows 路由收集、解析与下发。
 //!
 //! 职责：
-//! - 汇总 Peer 的 AllowedIPs；
-//! - 判断是否为全隧道（0.0.0.0/0 或 ::/0）；
+//! - 复用共享 route plan 的 AllowedIPs 汇总与全隧道判断；
 //! - 解析 Endpoint 主机名并生成 bypass route；
 //! - 统一封装路由增删所需的 Win32 结构。
 
@@ -19,7 +18,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows::Win32::Networking::WinSock::{MIB_IPPROTO_NETMGMT, SOCKADDR_INET};
 
-use crate::backend::wg::config::{AllowedIp, PeerConfig};
+use crate::backend::wg::route_plan::RoutePlanBypassOp;
 
 use super::sockaddr::{ip_from_sockaddr_inet, sockaddr_inet_from_ip};
 use super::{is_already_exists, NetworkError, TUNNEL_METRIC};
@@ -102,55 +101,33 @@ pub(super) fn delete_route(entry: &RouteEntry) -> Result<(), NetworkError> {
     }
 }
 
-/// 汇总并去重所有 Peer 的 AllowedIPs。
-pub(super) fn collect_allowed_routes(peers: &[PeerConfig]) -> Vec<AllowedIp> {
+/// 解析单个 bypass 目标，返回去重后的 IP 列表。
+pub(super) async fn resolve_bypass_ips_for_op(
+    op: &RoutePlanBypassOp,
+) -> Result<Vec<IpAddr>, NetworkError> {
+    let host = op.host.trim();
+    if host.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let lookup = lookup_host((host, op.port))
+        .await
+        .map_err(|_| NetworkError::EndpointResolve(format!("failed to resolve {host}")))?;
     let mut seen = HashSet::new();
-    let mut routes = Vec::new();
-    for peer in peers {
-        for allowed in &peer.allowed_ips {
-            if seen.insert((allowed.addr, allowed.cidr)) {
-                routes.push(AllowedIp {
-                    addr: allowed.addr,
-                    cidr: allowed.cidr,
-                });
-            }
-        }
+    for addr in lookup {
+        seen.insert(addr.ip());
     }
-    routes
+    Ok(seen.into_iter().collect())
 }
 
-/// 判断是否包含 IPv4 / IPv6 全隧道路由。
-pub(super) fn detect_full_tunnel(routes: &[AllowedIp]) -> (bool, bool) {
-    let mut v4 = false;
-    let mut v6 = false;
-    for route in routes {
-        match route.addr {
-            IpAddr::V4(addr) if addr.is_unspecified() && route.cidr == 0 => v4 = true,
-            IpAddr::V6(addr) if addr.is_unspecified() && route.cidr == 0 => v6 = true,
-            _ => {}
-        }
-    }
-    (v4, v6)
-}
-
-/// 解析所有 Endpoint 主机名，返回去重后的 IP 列表。
-pub(super) async fn resolve_endpoint_ips(
-    peers: &[PeerConfig],
+/// 解析所有计划中的 bypass 目标，返回去重后的 IP 列表。
+pub(super) async fn resolve_bypass_ips(
+    bypass_ops: &[RoutePlanBypassOp],
 ) -> Result<Vec<IpAddr>, NetworkError> {
     let mut seen = HashSet::new();
-    for peer in peers {
-        let Some(endpoint) = &peer.endpoint else {
-            continue;
-        };
-        let host = endpoint.host.trim();
-        if host.is_empty() {
-            continue;
-        }
-        let lookup = lookup_host((host, endpoint.port))
-            .await
-            .map_err(|_| NetworkError::EndpointResolve(format!("failed to resolve {host}")))?;
-        for addr in lookup {
-            seen.insert(addr.ip());
+    for op in bypass_ops {
+        for ip in resolve_bypass_ips_for_op(op).await? {
+            seen.insert(ip);
         }
     }
     Ok(seen.into_iter().collect())

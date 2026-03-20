@@ -12,7 +12,8 @@ pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-use crate::backend::wg::config::{InterfaceConfig, PeerConfig};
+use crate::backend::wg::config::WireGuardConfig;
+use crate::backend::wg::route_plan::{RouteApplyReport, RoutePlan};
 
 /// Linux 平台：直接复用 linux 模块的状态与错误类型。
 #[cfg(target_os = "linux")]
@@ -26,6 +27,26 @@ pub use windows::{AppliedNetworkState as NetworkState, NetworkError};
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 #[derive(Debug)]
 pub struct NetworkState;
+
+pub struct NetworkApplyResult {
+    pub state: NetworkState,
+    pub report: RouteApplyReport,
+}
+
+pub struct NetworkApplyError {
+    pub error: NetworkError,
+    pub report: RouteApplyReport,
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+impl From<NetworkError> for NetworkApplyError {
+    fn from(error: NetworkError) -> Self {
+        Self {
+            error,
+            report: RouteApplyReport::default(),
+        }
+    }
+}
 
 /// 其他平台：占位错误类型（提示未实现）。
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
@@ -52,30 +73,33 @@ impl std::error::Error for NetworkError {}
 #[cfg(target_os = "linux")]
 pub async fn apply_network_config(
     tun_name: &str,
-    interface: &InterfaceConfig,
-    peers: &[PeerConfig],
-) -> Result<NetworkState, NetworkError> {
-    linux::apply_network_config(tun_name, interface, peers).await
+    config: &WireGuardConfig,
+    route_plan: &RoutePlan,
+) -> Result<NetworkApplyResult, NetworkApplyError> {
+    linux::apply_network_config(tun_name, config, route_plan).await
 }
 
 /// Windows 平台的网络配置入口。
 #[cfg(target_os = "windows")]
 pub async fn apply_network_config(
     tun_name: &str,
-    interface: &InterfaceConfig,
-    peers: &[PeerConfig],
-) -> Result<NetworkState, NetworkError> {
-    windows::apply_network_config(tun_name, interface, peers).await
+    config: &WireGuardConfig,
+    route_plan: &RoutePlan,
+) -> Result<NetworkApplyResult, NetworkApplyError> {
+    windows::apply_network_config(tun_name, config, route_plan).await
 }
 
 /// 其他平台：占位实现。
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 pub async fn apply_network_config(
     _tun_name: &str,
-    _interface: &InterfaceConfig,
-    _peers: &[PeerConfig],
-) -> Result<NetworkState, NetworkError> {
-    Ok(NetworkState)
+    _config: &WireGuardConfig,
+    _route_plan: &RoutePlan,
+) -> Result<NetworkApplyResult, NetworkApplyError> {
+    Ok(NetworkApplyResult {
+        state: NetworkState,
+        report: RouteApplyReport::default(),
+    })
 }
 
 /// 回滚系统网络配置。
@@ -96,4 +120,19 @@ pub async fn cleanup_network_config(state: NetworkState) -> Result<(), NetworkEr
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 pub async fn cleanup_network_config(_state: NetworkState) -> Result<(), NetworkError> {
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn load_persisted_apply_report() -> Option<RouteApplyReport> {
+    linux::load_persisted_apply_report()
+}
+
+#[cfg(target_os = "windows")]
+pub fn load_persisted_apply_report() -> Option<RouteApplyReport> {
+    windows::load_persisted_apply_report()
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+pub fn load_persisted_apply_report() -> Option<RouteApplyReport> {
+    None
 }

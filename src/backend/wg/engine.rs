@@ -12,11 +12,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use super::config::{self, ConfigError};
-use crate::dns::{apply_dns_selection, DnsSelection};
+use super::route_plan::{
+    normalize_config_for_runtime, RouteApplyReport, RoutePlan, RoutePlanPlatform,
+    DEFAULT_FULL_TUNNEL_FWMARK,
+};
+use crate::dns::DnsSelection;
 use crate::log::events::engine as log_engine;
 use crate::platform;
-
-const DEFAULT_FWMARK: u32 = 0x5257;
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn trim_allocator() {
@@ -181,6 +183,8 @@ enum Command {
     Status(oneshot::Sender<EngineStatus>),
     /// 查询 gotatun 运行时统计信息。
     Stats(oneshot::Sender<Result<EngineStats, EngineError>>),
+    /// 查询最近一次结构化路由应用报告。
+    ApplyReport(oneshot::Sender<Option<RouteApplyReport>>),
 }
 
 impl Engine {
@@ -262,6 +266,17 @@ impl Engine {
             .blocking_recv()
             .map_err(|_| EngineError::ChannelClosed)?
     }
+
+    pub fn apply_report(&self) -> Result<Option<RouteApplyReport>, EngineError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.inner
+            .tx
+            .blocking_send(Command::ApplyReport(reply_tx))
+            .map_err(|_| EngineError::ChannelClosed)?;
+        reply_rx
+            .blocking_recv()
+            .map_err(|_| EngineError::ChannelClosed)
+    }
 }
 
 /// 后台线程维护的运行态状态。
@@ -273,6 +288,8 @@ struct EngineState {
     device: Option<DeviceSlot>,
     /// 系统网络配置状态，用于停止时回滚。
     net_state: Option<platform::NetworkState>,
+    /// 最近一次成功应用的结构化报告。
+    route_apply_report: Option<RouteApplyReport>,
     /// 是否处于“已启动并生效”的状态。
     running: bool,
 }
@@ -293,20 +310,18 @@ impl EngineState {
         if self.running {
             return Err(EngineError::AlreadyRunning);
         }
+        self.route_apply_report = None;
 
         log_engine::start(&request.tun_name, request.config_text.len());
 
         // 解析配置并映射为 gotatun 的 DeviceSettings。
-        let mut parsed = config::parse_config(&request.config_text)?;
-        apply_dns_selection(
-            &mut parsed.interface.dns_servers,
-            &mut parsed.interface.dns_search,
-            request.dns,
-        );
-        if wants_full_tunnel(&parsed.peers) && parsed.interface.fwmark.is_none() {
-            parsed.interface.fwmark = Some(DEFAULT_FWMARK);
-            log_engine::auto_fwmark(DEFAULT_FWMARK);
+        let parsed = config::parse_config(&request.config_text)?;
+        let inserted_fwmark = wants_full_tunnel(&parsed.peers) && parsed.interface.fwmark.is_none();
+        let parsed = normalize_config_for_runtime(parsed, request.dns);
+        if inserted_fwmark {
+            log_engine::auto_fwmark(DEFAULT_FULL_TUNNEL_FWMARK);
         }
+        let route_plan = RoutePlan::build(RoutePlanPlatform::current(), &parsed);
         let settings = parsed.to_device_settings().await?;
         log_engine::config_parsed();
 
@@ -367,27 +382,24 @@ impl EngineState {
         log_engine::device_configured();
 
         // 应用系统网络配置；失败时回滚 gotatun 设备。
-        let net_state = match platform::apply_network_config(
-            &request.tun_name,
-            &parsed.interface,
-            &parsed.peers,
-        )
-        .await
-        {
-            Ok(state) => state,
-            Err(err) => {
-                if created_new {
-                    self.shutdown_device().await;
-                } else {
-                    let _ = device.clear_peers().await;
+        let net_result =
+            match platform::apply_network_config(&request.tun_name, &parsed, &route_plan).await {
+                Ok(result) => result,
+                Err(err) => {
+                    self.route_apply_report = Some(err.report);
+                    if created_new {
+                        self.shutdown_device().await;
+                    } else {
+                        let _ = device.clear_peers().await;
+                    }
+                    return Err(EngineError::Network(err.error));
                 }
-                return Err(EngineError::Network(err));
-            }
-        };
+            };
         log_engine::network_configured();
 
         // 保存运行态状态，便于后续 stop/cleanup。
-        self.net_state = Some(net_state);
+        self.route_apply_report = Some(net_result.report);
+        self.net_state = Some(net_result.state);
         self.running = true;
 
         Ok(())
@@ -416,6 +428,7 @@ impl EngineState {
         if let Some(slot) = &self.device {
             slot.device.clear_peers().await?;
         }
+        self.route_apply_report = None;
         self.running = false;
 
         trim_allocator();
@@ -432,6 +445,7 @@ impl EngineState {
         }
         self.running = false;
         self.net_state = None;
+        self.route_apply_report = None;
         trim_allocator();
     }
 
@@ -469,6 +483,10 @@ impl EngineState {
 
         Ok(EngineStats { peers })
     }
+
+    fn apply_report(&self) -> Option<RouteApplyReport> {
+        self.route_apply_report.clone()
+    }
 }
 
 fn wants_full_tunnel(peers: &[config::PeerConfig]) -> bool {
@@ -484,7 +502,10 @@ fn wants_full_tunnel(peers: &[config::PeerConfig]) -> bool {
 ///
 /// 该循环是引擎的“串行化核心”，避免并发修改内部状态。
 async fn run(mut rx: mpsc::Receiver<Command>) {
-    let mut state = EngineState::default();
+    let mut state = EngineState {
+        route_apply_report: platform::load_persisted_apply_report(),
+        ..Default::default()
+    };
 
     while let Some(command) = rx.recv().await {
         match command {
@@ -506,6 +527,9 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
                 // 统计信息：返回运行态统计。
                 let result = state.stats().await;
                 let _ = reply.send(result);
+            }
+            Command::ApplyReport(reply) => {
+                let _ = reply.send(state.apply_report());
             }
         }
     }

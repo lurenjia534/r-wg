@@ -127,6 +127,12 @@ impl Engine {
     pub fn stats(&self) -> Result<EngineStats, EngineError> {
         self.inner.stats()
     }
+
+    pub fn apply_report(
+        &self,
+    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+        self.inner.apply_report()
+    }
 }
 
 impl RemoteEngine {
@@ -175,6 +181,20 @@ impl RemoteEngine {
             Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
             Ok(other) => Err(unexpected_reply(other)),
             Err(err) if is_missing_backend_error(&err) => Err(EngineError::NotRunning),
+            Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
+            Err(err) => Err(connect_error(err)),
+        }
+    }
+
+    fn apply_report(
+        &self,
+    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+        self.check_protocol()?;
+        match self.send_command_raw(BackendCommand::ApplyReport) {
+            Ok(BackendReply::ApplyReport { report }) => Ok(report),
+            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
+            Ok(other) => Err(unexpected_reply(other)),
+            Err(err) if is_missing_backend_error(&err) => Err(EngineError::ChannelClosed),
             Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
             Err(err) => Err(connect_error(err)),
         }

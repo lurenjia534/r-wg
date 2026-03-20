@@ -12,6 +12,7 @@ use gpui_component::{
     h_flex,
     input::Input,
     resizable::{h_resizable, resizable_panel, ResizableState},
+    tab::{Tab, TabBar},
     tag::Tag,
     v_flex, ActiveTheme as _, PixelsExt as _, Selectable, Sizable as _, StyledExt as _,
 };
@@ -69,7 +70,9 @@ pub(crate) fn render_route_map(
         .route_map_search_input
         .clone()
         .expect("route map search input should be initialized");
-    let query = search_input.read(cx).value().to_string();
+    let raw_query = search_input.read(cx).value().to_string();
+    app.sync_route_map_search_query(raw_query, cx);
+    let query = app.ui.route_map_search.debounced_query.to_string();
     let inventory_width = app.ui_prefs.route_map_inventory_width;
     let inspector_width = app.ui_prefs.route_map_inspector_width;
     let workspace = window.use_keyed_state("route-map-workspace", cx, |_, _| {
@@ -169,7 +172,7 @@ fn render_standard_layout(
                 .size(px(inspector_width))
                 .size_range(px(280.0)..px(420.0))
                 .child(panel_shell(
-                    inspector::render_inspector(model, cx).into_any_element(),
+                    inspector::render_inspector(app, model, cx).into_any_element(),
                 )),
         )
         .into_any_element()
@@ -377,30 +380,33 @@ fn render_toolbar(
     search_input: &Entity<gpui_component::input::InputState>,
     cx: &mut Context<WgApp>,
 ) -> Div {
-    let mode_group = ButtonGroup::new("route-map-mode")
-        .outline()
-        .compact()
+    let app_handle = cx.entity();
+    let mode_group = TabBar::new("route-map-mode")
+        .underline()
         .small()
-        .child(mode_button(
-            RouteMapMode::Flow,
-            app.ui_session.route_map_mode,
-            cx,
-        ))
-        .child(mode_button(
-            RouteMapMode::Routes,
-            app.ui_session.route_map_mode,
-            cx,
-        ))
-        .child(mode_button(
-            RouteMapMode::Explain,
-            app.ui_session.route_map_mode,
-            cx,
-        ))
-        .child(mode_button(
-            RouteMapMode::Events,
-            app.ui_session.route_map_mode,
-            cx,
-        ));
+        .selected_index(match app.ui_session.route_map_mode {
+            RouteMapMode::Flow => 0,
+            RouteMapMode::Routes => 1,
+            RouteMapMode::Explain => 2,
+            RouteMapMode::Events => 3,
+        })
+        .on_click(move |index, _window, app| {
+            let next_mode = match *index {
+                0 => RouteMapMode::Flow,
+                1 => RouteMapMode::Routes,
+                2 => RouteMapMode::Explain,
+                3 => RouteMapMode::Events,
+                _ => return,
+            };
+
+            app.update_entity(&app_handle, |this, cx| {
+                this.set_route_map_mode(next_mode, cx);
+            });
+        })
+        .child(Tab::new().label(RouteMapMode::Flow.label()).small())
+        .child(Tab::new().label(RouteMapMode::Routes.label()).small())
+        .child(Tab::new().label(RouteMapMode::Explain.label()).small())
+        .child(Tab::new().label(RouteMapMode::Events.label()).small());
 
     let family_group = ButtonGroup::new("route-map-family")
         .outline()
@@ -458,23 +464,6 @@ fn render_toolbar(
         )
 }
 
-fn mode_button(mode: RouteMapMode, current: RouteMapMode, cx: &mut Context<WgApp>) -> Button {
-    let id = match mode {
-        RouteMapMode::Flow => "route-map-mode-flow",
-        RouteMapMode::Routes => "route-map-mode-routes",
-        RouteMapMode::Explain => "route-map-mode-explain",
-        RouteMapMode::Events => "route-map-mode-events",
-    };
-
-    Button::new(id)
-        .label(mode.label())
-        .tooltip(mode_tooltip(mode))
-        .selected(current == mode)
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.set_route_map_mode(mode, cx);
-        }))
-}
-
 fn family_button(
     family: RouteFamilyFilter,
     current: RouteFamilyFilter,
@@ -493,15 +482,6 @@ fn family_button(
         .on_click(cx.listener(move |this, _, _, cx| {
             this.set_route_map_family_filter(family, cx);
         }))
-}
-
-fn mode_tooltip(mode: RouteMapMode) -> &'static str {
-    match mode {
-        RouteMapMode::Flow => "Decision path view. Shortcut: 1",
-        RouteMapMode::Routes => "Planned route table view. Shortcut: 2",
-        RouteMapMode::Explain => "Explain the current search target. Shortcut: 3",
-        RouteMapMode::Events => "Recent runtime evidence stream. Shortcut: 4",
-    }
 }
 
 fn family_tooltip(family: RouteFamilyFilter) -> &'static str {

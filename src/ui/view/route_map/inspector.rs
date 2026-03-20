@@ -1,8 +1,11 @@
 use gpui::*;
 use gpui_component::{
+    button::{Button, ButtonCustomVariant, ButtonVariants as _},
+    collapsible::Collapsible,
     group_box::{GroupBox, GroupBoxVariants},
+    h_flex,
     scroll::ScrollableElement as _,
-    v_flex, ActiveTheme as _, StyledExt as _,
+    v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
 use crate::ui::state::WgApp;
@@ -10,7 +13,7 @@ use crate::ui::state::WgApp;
 use super::data::{RouteMapData, RouteMapGraphStepKind, RouteMapItemStatus};
 use super::{empty_group, status_chip, summary_chip};
 
-pub(super) fn render_inspector(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
+pub(super) fn render_inspector(app: &WgApp, model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
     let Some(selected) = model.selected_item.as_ref() else {
         return div().child(empty_group(
             "Inspector",
@@ -92,12 +95,6 @@ pub(super) fn render_inspector(model: &RouteMapData, cx: &mut Context<WgApp>) ->
                                             {
                                                 v_flex()
                                                     .gap_3()
-                                                    .child(render_card_section(
-                                                        "Risk Assessment",
-                                                        &selected.inspector.risk_assessment,
-                                                        true,
-                                                        cx,
-                                                    ))
                                                     .child(render_plain_section(
                                                         "Why It Matches",
                                                         &selected.inspector.why_match,
@@ -108,14 +105,21 @@ pub(super) fn render_inspector(model: &RouteMapData, cx: &mut Context<WgApp>) ->
                                                         &selected.inspector.platform_details,
                                                         cx,
                                                     ))
-                                                    .child(render_glossary_section(
-                                                        &selected.graph_steps,
-                                                        cx,
-                                                    ))
                                                     .child(render_card_section(
                                                         "Runtime Evidence",
                                                         &selected.inspector.runtime_evidence,
                                                         false,
+                                                        cx,
+                                                    ))
+                                                    .child(render_card_section(
+                                                        "Risk Assessment",
+                                                        &selected.inspector.risk_assessment,
+                                                        true,
+                                                        cx,
+                                                    ))
+                                                    .child(render_glossary_section(
+                                                        app.ui_session.route_map_glossary_open,
+                                                        &selected.graph_steps,
                                                         cx,
                                                     ))
                                             } else {
@@ -131,10 +135,6 @@ pub(super) fn render_inspector(model: &RouteMapData, cx: &mut Context<WgApp>) ->
                                                         &selected.inspector.platform_details,
                                                         cx,
                                                     ))
-                                                    .child(render_glossary_section(
-                                                        &selected.graph_steps,
-                                                        cx,
-                                                    ))
                                                     .child(render_card_section(
                                                         "Runtime Evidence",
                                                         &selected.inspector.runtime_evidence,
@@ -145,6 +145,11 @@ pub(super) fn render_inspector(model: &RouteMapData, cx: &mut Context<WgApp>) ->
                                                         "Risk Assessment",
                                                         &selected.inspector.risk_assessment,
                                                         false,
+                                                        cx,
+                                                    ))
+                                                    .child(render_glossary_section(
+                                                        app.ui_session.route_map_glossary_open,
+                                                        &selected.graph_steps,
                                                         cx,
                                                     ))
                                             },
@@ -209,6 +214,7 @@ fn render_card_section(
 }
 
 fn render_glossary_section(
+    open: bool,
     steps: &[super::data::RouteMapGraphStep],
     cx: &mut Context<WgApp>,
 ) -> Div {
@@ -219,12 +225,58 @@ fn render_glossary_section(
         }
     }
 
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(section_title("Glossary", cx))
-        .child(kinds.into_iter().fold(v_flex().gap_2(), |list, kind| {
+    if kinds.is_empty() {
+        return div();
+    }
+
+    let header = Button::new("route-map-glossary-toggle")
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(cx.theme().group_box.alpha(0.58))
+                .foreground(cx.theme().foreground)
+                .border(cx.theme().border.alpha(0.6))
+                .hover(cx.theme().group_box.alpha(0.82))
+                .active(cx.theme().group_box.alpha(0.92)),
+        )
+        .compact()
+        .w_full()
+        .child(
+            h_flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .w_full()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(section_title("Glossary", cx))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("{} terms", kinds.len())),
+                        ),
+                )
+                .child(
+                    Icon::new(if open {
+                        IconName::ChevronUp
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .small()
+                    .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            let next_open = !this.ui_session.route_map_glossary_open;
+            this.set_route_map_glossary_open(next_open, cx);
+        }));
+
+    let content = kinds
+        .into_iter()
+        .fold(v_flex().gap_2().pt_2(), |list, kind| {
             let (label, body) = glossary_entry(kind);
             list.child(
                 div()
@@ -233,8 +285,8 @@ fn render_glossary_section(
                     .gap_1()
                     .rounded_lg()
                     .border_1()
-                    .border_color(cx.theme().border.alpha(0.7))
-                    .bg(cx.theme().group_box.alpha(0.62))
+                    .border_color(cx.theme().border.alpha(0.6))
+                    .bg(cx.theme().group_box.alpha(0.5))
                     .p_3()
                     .child(
                         div()
@@ -245,7 +297,13 @@ fn render_glossary_section(
                     )
                     .child(div().text_sm().child(body)),
             )
-        }))
+        });
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(Collapsible::new().open(open).child(header).content(content))
 }
 
 fn glossary_entry(kind: RouteMapGraphStepKind) -> (&'static str, &'static str) {

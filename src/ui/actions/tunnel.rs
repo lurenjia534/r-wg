@@ -227,14 +227,19 @@ impl WgApp {
 
             // 组装 start 请求并交给后台线程。
             let request = StartRequest::new(selected.name.clone(), text.to_string(), dns_selection);
-            let start_task = cx.background_spawn(async move { engine.start(request) });
-            let result = start_task.await;
+            let start_task = cx.background_spawn(async move {
+                let result = engine.start(request);
+                let apply_report = engine.apply_report().ok().flatten();
+                (result, apply_report)
+            });
+            let (result, apply_report) = start_task.await;
             view.update(cx, |this, cx| {
                 this.runtime.finish_start_attempt();
                 match result {
                     Ok(()) => {
                         // 启动成功：刷新运行态与统计。
                         this.runtime.mark_started(&selected);
+                        this.runtime.set_last_apply_report(apply_report);
                         this.refresh_configs_workspace_row_flags(cx);
                         this.stats.reset_for_start();
                         this.set_status(format!("Running {}", selected.name));
@@ -249,6 +254,7 @@ impl WgApp {
                     }
                     Err(err) => {
                         // 启动失败：保持停止态并提示错误。
+                        this.runtime.set_last_apply_report(apply_report);
                         let message = format!("Start failed: {err}");
                         this.set_error(message.clone());
                         // 启动失败直接推送错误原因，避免用户必须切回主窗口查看。

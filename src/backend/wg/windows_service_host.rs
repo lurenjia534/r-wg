@@ -16,7 +16,8 @@ use windows::Win32::System::Services::{
 
 use super::engine::Engine as LocalEngine;
 use super::ipc::{
-    error_reply, read_json_line, unit_reply, write_json_line, BackendCommand, BackendReply,
+    error_reply, option_reply, read_json_line, unit_reply, write_json_line, BackendCommand,
+    BackendReply,
 };
 use super::windows_service::SERVICE_NAME;
 use super::{EngineError, EngineStatus};
@@ -167,6 +168,7 @@ fn handle_pipe_client(
             Ok(stats) => BackendReply::Stats { stats },
             Err(err) => error_reply(err),
         },
+        BackendCommand::ApplyReport => option_reply(engine.apply_report()),
     };
     write_json_line(&mut stream, &reply)
 }

@@ -7,9 +7,10 @@ use std::io::{self, BufRead, Write};
 use serde::{Deserialize, Serialize};
 
 use super::engine::{EngineError, EngineStats, EngineStatus, StartRequest};
+use super::route_plan::RouteApplyReport;
 
 /// 当前 IPC 协议版本。
-pub const IPC_PROTOCOL_VERSION: u32 = 1;
+pub const IPC_PROTOCOL_VERSION: u32 = 3;
 
 /// UI -> 特权后端的命令集合。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +28,8 @@ pub enum BackendCommand {
     Status,
     /// 查询当前 peer 统计。
     Stats,
+    /// 查询最近一次网络应用报告。
+    ApplyReport,
 }
 
 /// 特权后端 -> UI 的响应集合。
@@ -41,6 +44,8 @@ pub enum BackendReply {
     Status { status: EngineStatus },
     /// 统计信息查询结果。
     Stats { stats: EngineStats },
+    /// 最近一次网络应用报告。
+    ApplyReport { report: Option<RouteApplyReport> },
     /// 远端执行失败；`kind` 负责分类，`message` 保留可读细节。
     Error {
         kind: BackendErrorKind,
@@ -63,6 +68,16 @@ pub enum BackendErrorKind {
 pub fn unit_reply(result: Result<(), EngineError>) -> BackendReply {
     match result {
         Ok(()) => BackendReply::Ok,
+        Err(err) => error_reply(err),
+    }
+}
+
+/// `Result<Option<T>>` -> 通用 IPC 响应。
+pub fn option_reply(
+    result: Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError>,
+) -> BackendReply {
+    match result {
+        Ok(report) => BackendReply::ApplyReport { report },
         Err(err) => error_reply(err),
     }
 }
