@@ -4,18 +4,18 @@ use gpui_component::{
     button::{Button, ButtonGroup},
     chart::{BarChart, PieChart},
     group_box::GroupBox,
-    h_flex,
-    v_flex, ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _,
+    h_flex, v_flex, ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _,
+    StyledExt as _,
 };
 
 use crate::ui::format::format_bytes;
 use crate::ui::state::{TrafficPeriod, WgApp};
-use crate::ui::view::data::{OverviewData, TrafficRankItem, TrafficTrendData};
+use crate::ui::view::data::{OverviewData, TrafficSummaryData, TrafficTrendData};
 
 use super::chart::{format_avg_bytes, TrafficTrendOverlay};
 use super::common::{
-    overview_section, section_title, tile_border, tile_header, tile_icon, tile_shell,
-    tile_surface, vertical_rule, OverviewSectionTone,
+    overview_section, section_title, tile_border, tile_header, tile_icon, tile_shell, tile_surface,
+    OverviewSectionTone,
 };
 
 pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T>) -> GroupBox {
@@ -38,10 +38,10 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
     } else {
         "No traffic".to_string()
     };
-    let bar_base =
-        cx.theme()
-            .muted_foreground
-            .alpha(if cx.theme().is_dark() { 0.16 } else { 0.1 });
+    let bar_base = cx
+        .theme()
+        .muted_foreground
+        .alpha(if cx.theme().is_dark() { 0.16 } else { 0.1 });
     let bar_today = cx
         .theme()
         .chart_3
@@ -50,7 +50,10 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
         .theme()
         .chart_2
         .alpha(if cx.theme().is_dark() { 0.26 } else { 0.18 });
-    let avg_rule = cx.theme().chart_4.alpha(if cx.theme().is_dark() { 0.68 } else { 0.54 });
+    let avg_rule = cx
+        .theme()
+        .chart_4
+        .alpha(if cx.theme().is_dark() { 0.68 } else { 0.54 });
     let trend_line = cx.theme().chart_2;
     let label_peak = trend.peak_bytes;
 
@@ -103,13 +106,29 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
                     .items_center()
                     .flex_wrap()
                     .gap_3()
-                    .child(trend_legend_item("Daily total", bar_base, LegendKind::Bar, cx))
+                    .child(trend_legend_item(
+                        "Daily total",
+                        bar_base,
+                        LegendKind::Bar,
+                        cx,
+                    ))
                     .when(show_avg_rule, |this| {
                         this.child(trend_legend_item("7d avg", avg_rule, LegendKind::Line, cx))
                     })
-                    .when(trend.points.iter().any(|point| point.is_today && point.bytes > 0), |this| {
-                        this.child(trend_legend_item("Today", cx.theme().chart_3, LegendKind::Dot, cx))
-                    })
+                    .when(
+                        trend
+                            .points
+                            .iter()
+                            .any(|point| point.is_today && point.bytes > 0),
+                        |this| {
+                            this.child(trend_legend_item(
+                                "Today",
+                                cx.theme().chart_3,
+                                LegendKind::Dot,
+                                cx,
+                            ))
+                        },
+                    )
                     .when(show_peak_marker, |this| {
                         this.child(trend_legend_item(
                             "Peak",
@@ -146,7 +165,9 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
                                             .fill(move |point| {
                                                 if point.is_today {
                                                     bar_today
-                                                } else if label_peak > 0 && point.bytes == label_peak {
+                                                } else if label_peak > 0
+                                                    && point.bytes == label_peak
+                                                {
                                                     bar_peak
                                                 } else {
                                                     bar_base
@@ -162,8 +183,8 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
                                                 }
                                             }),
                                     )
-                                    .child(
-                                        div().absolute().inset_0().child(TrafficTrendOverlay::new(
+                                    .child(div().absolute().inset_0().child(
+                                        TrafficTrendOverlay::new(
                                             trend.points.clone(),
                                             trend.average_bytes,
                                             trend.max_bytes,
@@ -175,8 +196,8 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
                                             trend_line,
                                             cx.theme().chart_3,
                                             cx.theme().chart_2,
-                                        )),
-                                    )
+                                        ),
+                                    ))
                                     .when(show_avg_rule, |this| {
                                         this.child(
                                             div()
@@ -188,11 +209,9 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
                                                 .rounded_full()
                                                 .border_1()
                                                 .border_color(tile_border(cx))
-                                                .bg(cx.theme().background.alpha(if cx.theme().is_dark() {
-                                                    0.82
-                                                } else {
-                                                    0.92
-                                                }))
+                                                .bg(cx.theme().background.alpha(
+                                                    if cx.theme().is_dark() { 0.82 } else { 0.92 },
+                                                ))
                                                 .text_xs()
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(cx.theme().muted_foreground)
@@ -211,12 +230,12 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
                     .child(if trend.non_zero_days == 0 {
                         "No traffic recorded in the last 7 days".to_string()
                     } else if trend.non_zero_days == 1 {
-                        format!("Only 1 active day in the last 7 days • peak on {}", trend.peak_label)
-                    } else {
                         format!(
-                            "{} non-zero day(s) in the last 7 days",
-                            trend.non_zero_days
+                            "Only 1 active day in the last 7 days • peak on {}",
+                            trend.peak_label
                         )
+                    } else {
+                        format!("{} non-zero day(s) in the last 7 days", trend.non_zero_days)
                     }),
             ),
         cx,
@@ -231,10 +250,41 @@ pub(super) fn traffic_summary_card<T>(
     let summary = &overview.traffic_summary;
     let upload_color = cx.theme().chart_1;
     let download_color = cx.theme().chart_2;
-    let rank_color = cx.theme().chart_3;
-
     let total_bytes = summary.total_rx.saturating_add(summary.total_tx);
     let total_text = format_bytes(total_bytes);
+    let saved_total = saved_config_total(summary);
+    let upload_pct = percent(summary.total_tx, total_bytes);
+    let download_pct = percent(summary.total_rx, total_bytes);
+    let top_label = summary
+        .top_config_name
+        .as_deref()
+        .map(|name| {
+            if summary.active_configs == 1 {
+                format!("{name} owns the full share")
+            } else if saved_total > 0 {
+                format!(
+                    "{name} leads at {:.1}%",
+                    percent(summary.top_config_total, saved_total)
+                )
+            } else {
+                name.to_string()
+            }
+        })
+        .unwrap_or_else(|| "No active config".to_string());
+    let share_note = if summary.active_configs == 0 {
+        "No saved config traffic in this period".to_string()
+    } else if summary.others_total > 0 {
+        format!(
+            "Showing top {} of {} active configs • tail folded into Others",
+            summary.ranked.len(),
+            summary.active_configs
+        )
+    } else {
+        format!(
+            "{} active config(s) with non-zero traffic",
+            summary.active_configs
+        )
+    };
 
     let period_toggle = ButtonGroup::new("traffic-summary-period")
         .outline()
@@ -283,82 +333,12 @@ pub(super) fn traffic_summary_card<T>(
                 }),
         );
 
-    let pie_data = vec![
-        TrafficSlice {
-            value: summary.total_rx,
-            color: download_color,
-        },
-        TrafficSlice {
-            value: summary.total_tx,
-            color: upload_color,
-        },
-    ];
-
-    let donut = div()
-        .size(px(180.0))
-        .relative()
-        .child(
-            PieChart::new(pie_data)
-                .value(|slice| slice.value as f32)
-                .inner_radius(65.0)
-                .outer_radius(80.0)
-                .pad_angle(0.02)
-                .color(|slice| slice.color)
-                .into_any_element(),
-        )
-        .child(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(cx.theme().muted_foreground.opacity(0.7))
-                        .child("TOTAL TRAFFIC"),
-                )
-                .child(
-                    div()
-                        .text_2xl()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(cx.theme().foreground)
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .child(total_text),
-                ),
-        );
-
-    let breakdown = v_flex()
-        .gap_4()
-        .w_full()
-        .child(metric_progress_modern(
-            IconName::ArrowUp,
-            "Upload",
-            summary.total_tx,
-            total_bytes,
-            upload_color,
-            cx,
-        ))
-        .child(metric_progress_modern(
-            IconName::ArrowDown,
-            "Download",
-            summary.total_rx,
-            total_bytes,
-            download_color,
-            cx,
-        ));
-
-    let ranking = traffic_ranking_list_modern(&summary.ranked, rank_color, cx);
-
     overview_section(
         OverviewSectionTone::Primary,
         section_title(
             IconName::ChartPie,
             "Traffic Summary",
-            Some("Saved config distribution and traffic totals."),
+            Some("Config share first, traffic totals second."),
             OverviewSectionTone::Primary,
             cx,
         ),
@@ -368,6 +348,7 @@ pub(super) fn traffic_summary_card<T>(
             .child(
                 h_flex()
                     .items_center()
+                    .justify_between()
                     .flex_wrap()
                     .gap_3()
                     .child(period_toggle)
@@ -376,34 +357,71 @@ pub(super) fn traffic_summary_card<T>(
                             .text_xs()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(cx.theme().muted_foreground)
-                            .child("Ranking by saved config"),
+                            .child(share_note),
                     ),
             )
             .child(
                 h_flex()
                     .items_start()
                     .flex_wrap()
-                    .gap_6()
+                    .gap_3()
                     .child(
-                        v_flex()
-                            .w(relative(0.4))
-                            .min_w(px(300.0))
-                            .items_center()
-                            .gap_4()
-                            .child(
-                                div()
-                                    .p_3()
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(tile_border(cx))
-                                    .bg(tile_surface(cx))
-                                    .child(donut),
-                            )
-                            .child(breakdown),
+                        summary_kpi_tile(
+                            IconName::ChartPie,
+                            "Total Traffic",
+                            total_text,
+                            Some("selected period".to_string()),
+                            cx.theme().chart_3,
+                            true,
+                            cx,
+                        )
+                        .min_w(px(168.0)),
                     )
-                    .child(vertical_rule(cx).h(px(168.0)))
-                    .child(v_flex().flex_grow().w(relative(0.6)).gap_4().child(ranking)),
-            ),
+                    .child(
+                        summary_kpi_tile(
+                            IconName::ArrowUp,
+                            "Upload",
+                            format_bytes(summary.total_tx),
+                            Some(format!("{upload_pct:.1}% of total")),
+                            upload_color,
+                            true,
+                            cx,
+                        )
+                        .min_w(px(168.0)),
+                    )
+                    .child(
+                        summary_kpi_tile(
+                            IconName::ArrowDown,
+                            "Download",
+                            format_bytes(summary.total_rx),
+                            Some(format!("{download_pct:.1}% of total")),
+                            download_color,
+                            true,
+                            cx,
+                        )
+                        .min_w(px(168.0)),
+                    )
+                    .child(
+                        summary_kpi_tile(
+                            IconName::Settings,
+                            "Active Configs",
+                            summary.active_configs.to_string(),
+                            Some(top_label),
+                            cx.theme().chart_4,
+                            false,
+                            cx,
+                        )
+                        .min_w(px(168.0)),
+                    ),
+            )
+            .child(direction_split_legend(upload_color, download_color, cx))
+            .child(config_share_panel(
+                summary,
+                saved_total,
+                upload_color,
+                download_color,
+                cx,
+            )),
         cx,
     )
 }
@@ -446,40 +464,20 @@ fn trend_metric_tile<T>(
         })
 }
 
-fn trend_legend_item<T>(
-    label: &str,
-    color: Hsla,
-    kind: LegendKind,
-    cx: &mut Context<T>,
-) -> Div {
+fn trend_legend_item<T>(label: &str, color: Hsla, kind: LegendKind, cx: &mut Context<T>) -> Div {
     let marker = match kind {
-        LegendKind::Bar => div()
-            .w(px(12.0))
-            .h(px(8.0))
-            .rounded_sm()
-            .bg(color),
-        LegendKind::Line => div()
-            .w(px(14.0))
-            .h(px(2.0))
-            .rounded_full()
-            .bg(color),
-        LegendKind::Dot => div()
-            .size(px(8.0))
-            .rounded_full()
-            .bg(color),
+        LegendKind::Bar => div().w(px(12.0)).h(px(8.0)).rounded_sm().bg(color),
+        LegendKind::Line => div().w(px(14.0)).h(px(2.0)).rounded_full().bg(color),
+        LegendKind::Dot => div().size(px(8.0)).rounded_full().bg(color),
     };
 
-    h_flex()
-        .items_center()
-        .gap_2()
-        .child(marker)
-        .child(
-            div()
-                .text_xs()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(cx.theme().muted_foreground)
-                .child(label.to_string()),
-        )
+    h_flex().items_center().gap_2().child(marker).child(
+        div()
+            .text_xs()
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(cx.theme().muted_foreground)
+            .child(label.to_string()),
+    )
 }
 
 fn trend_y_axis_rail<T>(trend: &TrafficTrendData, plot_height: Pixels, cx: &mut Context<T>) -> Div {
@@ -518,114 +516,301 @@ fn trend_y_axis_rail<T>(trend: &TrafficTrendData, plot_height: Pixels, cx: &mut 
         )
 }
 
-fn metric_progress_modern<T>(
+fn summary_kpi_tile<T>(
     icon: IconName,
     label: &str,
-    value: u64,
-    total: u64,
+    value: impl Into<String>,
+    detail: Option<String>,
     color: Hsla,
+    monospace: bool,
     cx: &mut Context<T>,
 ) -> Div {
-    let pct = percent(value, total);
-    let value_text = format_bytes(value);
-    let track = cx
-        .theme()
-        .secondary
-        .alpha(if cx.theme().is_dark() { 0.7 } else { 0.9 });
-
-    v_flex()
+    tile_shell(cx)
+        .flex_1()
+        .min_w(px(0.0))
         .gap_1()
+        .child(tile_header(icon, label, color, None, cx))
+        .child(
+            div()
+                .text_lg()
+                .font_semibold()
+                .text_color(cx.theme().foreground)
+                .when(monospace, |this| {
+                    this.font_family(cx.theme().mono_font_family.clone())
+                })
+                .child(value.into()),
+        )
+        .when_some(detail, |this, detail| {
+            this.child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(cx.theme().muted_foreground)
+                    .child(detail),
+            )
+        })
+}
+
+fn direction_split_legend<T>(upload_color: Hsla, download_color: Hsla, cx: &mut Context<T>) -> Div {
+    h_flex()
+        .items_center()
+        .flex_wrap()
+        .gap_3()
+        .child(trend_legend_item(
+            "Upload split",
+            upload_color,
+            LegendKind::Bar,
+            cx,
+        ))
+        .child(trend_legend_item(
+            "Download split",
+            download_color,
+            LegendKind::Bar,
+            cx,
+        ))
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().muted_foreground)
+                .child("Bar length shows share of saved-config traffic"),
+        )
+}
+
+fn config_share_panel<T>(
+    summary: &TrafficSummaryData,
+    saved_total: u64,
+    upload_color: Hsla,
+    download_color: Hsla,
+    cx: &mut Context<T>,
+) -> Div {
+    let rows = config_share_rows(summary, saved_total, cx);
+
+    match config_share_mode(summary, saved_total) {
+        ConfigShareMode::Empty => config_share_empty_state(cx),
+        ConfigShareMode::Single => v_flex()
+            .gap_3()
+            .child(config_share_insight(summary, saved_total, cx))
+            .child(config_share_list(&rows, upload_color, download_color, cx)),
+        ConfigShareMode::Donut => h_flex()
+            .items_start()
+            .flex_wrap()
+            .gap_4()
+            .child(config_share_donut(summary, &rows, saved_total, cx))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(300.0))
+                    .gap_3()
+                    .child(config_share_insight(summary, saved_total, cx))
+                    .child(config_share_list(&rows, upload_color, download_color, cx)),
+            ),
+        ConfigShareMode::Bars => v_flex()
+            .gap_3()
+            .child(config_share_insight(summary, saved_total, cx))
+            .child(config_share_list(&rows, upload_color, download_color, cx)),
+    }
+}
+
+fn config_share_empty_state<T>(cx: &mut Context<T>) -> Div {
+    div()
+        .min_h(px(196.0))
         .w_full()
-        .p_3()
-        .rounded_lg()
+        .rounded_xl()
         .border_1()
         .border_color(tile_border(cx))
         .bg(tile_surface(cx))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
         .child(
-            h_flex()
+            div()
+                .size(px(40.0))
+                .rounded_full()
+                .bg(cx
+                    .theme()
+                    .secondary
+                    .alpha(if cx.theme().is_dark() { 0.34 } else { 0.5 }))
+                .flex()
                 .items_center()
-                .justify_between()
+                .justify_center()
                 .child(
-                    h_flex()
+                    Icon::new(IconName::ChartPie)
+                        .size_4()
+                        .text_color(cx.theme().chart_3),
+                ),
+        )
+        .child(
+            div()
+                .text_sm()
+                .font_semibold()
+                .text_color(cx.theme().foreground)
+                .child("No saved config traffic in this period"),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().muted_foreground)
+                .child("Switch the period or wait for a config to record traffic."),
+        )
+}
+
+fn config_share_insight<T>(
+    summary: &TrafficSummaryData,
+    saved_total: u64,
+    cx: &mut Context<T>,
+) -> Div {
+    let message = if summary.active_configs == 0 {
+        "No saved configs contributed traffic in this period.".to_string()
+    } else if summary.active_configs == 1 {
+        format!(
+            "{} handled 100% of saved-config traffic in this period.",
+            summary
+                .top_config_name
+                .as_deref()
+                .unwrap_or("The active config")
+        )
+    } else {
+        format!(
+            "{} leads with {:.1}% of saved-config traffic.",
+            summary
+                .top_config_name
+                .as_deref()
+                .unwrap_or("The top config"),
+            percent(summary.top_config_total, saved_total)
+        )
+    };
+    let detail = if summary.others_total > 0 {
+        format!(
+            "{} more config(s) are folded into Others ({})",
+            summary.active_configs.saturating_sub(summary.ranked.len()),
+            format_bytes(summary.others_total)
+        )
+    } else {
+        format!(
+            "{} active config(s) • saved-config total {}",
+            summary.active_configs,
+            format_bytes(saved_total)
+        )
+    };
+
+    tile_shell(cx)
+        .child(tile_header(
+            IconName::ChartPie,
+            "Config Share Insight",
+            cx.theme().chart_3,
+            None,
+            cx,
+        ))
+        .child(
+            div()
+                .text_base()
+                .font_semibold()
+                .text_color(cx.theme().foreground)
+                .child(message),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().muted_foreground)
+                .child(detail),
+        )
+}
+
+fn config_share_donut<T>(
+    summary: &TrafficSummaryData,
+    rows: &[ConfigShareRow],
+    saved_total: u64,
+    cx: &mut Context<T>,
+) -> Div {
+    div()
+        .flex()
+        .justify_center()
+        .min_w(px(240.0))
+        .flex_1()
+        .child(
+            div()
+                .size(px(208.0))
+                .relative()
+                .child(
+                    PieChart::new(rows.to_vec())
+                        .value(|row| row.total as f32)
+                        .inner_radius(68.0)
+                        .outer_radius(92.0)
+                        .pad_angle(0.025)
+                        .color(|row| row.color)
+                        .into_any_element(),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .flex_col()
                         .items_center()
-                        .gap_2()
-                        .child(tile_icon(icon, color, cx))
+                        .justify_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().muted_foreground.opacity(0.72))
+                                .child("CONFIG SHARE"),
+                        )
+                        .child(
+                            div()
+                                .text_xl()
+                                .font_semibold()
+                                .text_color(cx.theme().foreground)
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .child(format_bytes(saved_total)),
+                        )
                         .child(
                             div()
                                 .text_xs()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(cx.theme().muted_foreground)
-                                .child(label.to_string()),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .items_baseline()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(cx.theme().foreground)
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(value_text),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground.opacity(0.7))
-                                .child(format!("({pct:.1}%)")),
+                                .child(if summary.active_configs == 1 {
+                                    "1 active config".to_string()
+                                } else {
+                                    format!("{} active configs", summary.active_configs)
+                                }),
                         ),
                 ),
         )
-        .child(
-            div().h(px(5.0)).w_full().bg(track).rounded_full().child(
-                div()
-                    .h_full()
-                    .w(relative(pct / 100.0))
-                    .bg(color)
-                    .rounded_full(),
-            ),
-        )
 }
 
-fn traffic_ranking_list_modern<T>(
-    ranked: &[TrafficRankItem],
-    color: Hsla,
+fn config_share_list<T>(
+    rows: &[ConfigShareRow],
+    upload_color: Hsla,
+    download_color: Hsla,
     cx: &mut Context<T>,
 ) -> Div {
-    if ranked.is_empty() {
-        return div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .h(px(100.0))
-            .text_sm()
-            .text_color(cx.theme().muted_foreground)
-            .child("No traffic data available");
+    if rows.is_empty() {
+        return config_share_empty_state(cx);
     }
 
-    let max_total = ranked
-        .iter()
-        .map(|item| item.total_bytes())
-        .max()
-        .unwrap_or(0);
     let row_border = tile_border(cx);
     let row_surface = tile_surface(cx);
     let list_border = tile_border(cx);
     let list_surface = tile_surface(cx);
+    let track = cx
+        .theme()
+        .secondary
+        .alpha(if cx.theme().is_dark() { 0.64 } else { 0.84 });
 
-    let rows = ranked.iter().enumerate().map(|(i, item)| {
-        let total = item.total_bytes();
-        let pct = percent(total, max_total);
-        let rank_num = i + 1;
-        let track = cx
-            .theme()
-            .secondary
-            .alpha(if cx.theme().is_dark() { 0.65 } else { 0.85 });
+    let rows = rows.iter().map(|row| {
+        let split_total = row.rx_bytes.saturating_add(row.tx_bytes);
+        let upload_ratio = if split_total == 0 {
+            0.0
+        } else {
+            row.tx_bytes as f32 / split_total as f32
+        };
 
-        h_flex()
-            .items_center()
+        v_flex()
             .gap_2()
             .p_3()
             .rounded_lg()
@@ -633,51 +818,80 @@ fn traffic_ranking_list_modern<T>(
             .border_color(row_border)
             .bg(row_surface)
             .child(
-                div()
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .bg(color.alpha(if cx.theme().is_dark() { 0.18 } else { 0.12 }))
-                    .text_xs()
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(color)
-                    .child(rank_num.to_string()),
-            )
-            .child(
-                v_flex()
-                    .flex_grow()
-                    .gap_1()
+                h_flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_3()
                     .child(
                         h_flex()
-                            .justify_between()
+                            .items_center()
+                            .gap_2()
+                            .child(div().size(px(10.0)).rounded_full().bg(row.color))
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(cx.theme().foreground)
-                                    .child(item.name.clone()),
+                                    .child(row.name.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .items_baseline()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().foreground)
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .child(format_bytes(row.total)),
                             )
                             .child(
                                 div()
                                     .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(cx.theme().muted_foreground)
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .child(format_bytes(total)),
+                                    .child(format!("{:.1}%", row.share_pct)),
                             ),
-                    )
-                    .child(
-                        div().h(px(4.0)).w_full().bg(track).rounded_full().child(
-                            div()
-                                .h_full()
-                                .w(relative(pct / 100.0))
-                                .bg(color.opacity(0.8))
-                                .rounded_full(),
-                        ),
                     ),
             )
+            .child(
+                div()
+                    .h(px(8.0))
+                    .w_full()
+                    .rounded_full()
+                    .overflow_hidden()
+                    .bg(track)
+                    .child(if row.is_other {
+                        div()
+                            .h_full()
+                            .w(relative(row.share_pct / 100.0))
+                            .bg(row.color)
+                    } else {
+                        h_flex()
+                            .h_full()
+                            .w(relative(row.share_pct / 100.0))
+                            .child(div().h_full().w(relative(upload_ratio)).bg(upload_color))
+                            .child(div().h_full().flex_grow().bg(download_color))
+                    }),
+            )
+            .child(if row.is_other {
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Tail configs collapsed into Others")
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .child(direction_value("Up", row.tx_bytes, upload_color, cx))
+                    .child(direction_value("Down", row.rx_bytes, download_color, cx))
+                    .into_any_element()
+            })
     });
 
     v_flex()
@@ -688,6 +902,106 @@ fn traffic_ranking_list_modern<T>(
         .border_1()
         .border_color(list_border)
         .children(rows)
+}
+
+fn direction_value<T>(label: &str, value: u64, color: Hsla, cx: &mut Context<T>) -> Div {
+    h_flex()
+        .items_center()
+        .gap_1p5()
+        .child(div().size(px(7.0)).rounded_full().bg(color))
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().muted_foreground)
+                .child(label.to_string()),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().foreground)
+                .font_family(cx.theme().mono_font_family.clone())
+                .child(format_bytes(value)),
+        )
+}
+
+fn config_share_mode(summary: &TrafficSummaryData, saved_total: u64) -> ConfigShareMode {
+    if summary.active_configs == 0 || saved_total == 0 {
+        ConfigShareMode::Empty
+    } else if summary.active_configs == 1 && summary.others_total == 0 {
+        ConfigShareMode::Single
+    } else if summary.active_configs <= 5 {
+        ConfigShareMode::Donut
+    } else {
+        ConfigShareMode::Bars
+    }
+}
+
+fn config_share_rows<T>(
+    summary: &TrafficSummaryData,
+    saved_total: u64,
+    cx: &mut Context<T>,
+) -> Vec<ConfigShareRow> {
+    let palette = config_share_palette(cx);
+    let mut rows = summary
+        .ranked
+        .iter()
+        .enumerate()
+        .map(|(index, item)| ConfigShareRow {
+            name: item.name.clone(),
+            total: item.total_bytes(),
+            rx_bytes: item.rx_bytes,
+            tx_bytes: item.tx_bytes,
+            share_pct: percent(item.total_bytes(), saved_total),
+            color: palette[index % palette.len()],
+            is_other: false,
+        })
+        .collect::<Vec<_>>();
+
+    if summary.others_total > 0 {
+        rows.push(ConfigShareRow {
+            name: format!(
+                "Others ({})",
+                summary.active_configs.saturating_sub(summary.ranked.len())
+            ),
+            total: summary.others_total,
+            rx_bytes: 0,
+            tx_bytes: 0,
+            share_pct: percent(summary.others_total, saved_total),
+            color: cx.theme().muted_foreground.alpha(if cx.theme().is_dark() {
+                0.48
+            } else {
+                0.36
+            }),
+            is_other: true,
+        });
+    }
+
+    rows
+}
+
+fn config_share_palette<T>(cx: &mut Context<T>) -> [Hsla; 7] {
+    [
+        cx.theme().chart_3,
+        cx.theme().chart_4,
+        cx.theme().chart_5,
+        cx.theme().chart_3.opacity(0.8),
+        cx.theme().chart_4.opacity(0.8),
+        cx.theme().chart_5.opacity(0.8),
+        cx.theme()
+            .muted_foreground
+            .alpha(if cx.theme().is_dark() { 0.68 } else { 0.52 }),
+    ]
+}
+
+fn saved_config_total(summary: &TrafficSummaryData) -> u64 {
+    summary
+        .ranked
+        .iter()
+        .fold(summary.others_total, |acc, item| {
+            acc.saturating_add(item.total_bytes())
+        })
 }
 
 fn percent(value: u64, total: u64) -> f32 {
@@ -759,7 +1073,10 @@ pub(super) fn traffic_column<T>(props: TrafficColumnProps<'_>, cx: &mut Context<
                 .px_2()
                 .py_3()
                 .rounded_lg()
-                .bg(cx.theme().secondary.alpha(if cx.theme().is_dark() { 0.28 } else { 0.38 }))
+                .bg(cx
+                    .theme()
+                    .secondary
+                    .alpha(if cx.theme().is_dark() { 0.28 } else { 0.38 }))
                 .child(props.sparkline),
         )
         .child(
@@ -777,7 +1094,21 @@ pub(super) fn traffic_column<T>(props: TrafficColumnProps<'_>, cx: &mut Context<
         )
 }
 
-struct TrafficSlice {
-    value: u64,
+#[derive(Clone, Copy)]
+enum ConfigShareMode {
+    Empty,
+    Single,
+    Donut,
+    Bars,
+}
+
+#[derive(Clone)]
+struct ConfigShareRow {
+    name: String,
+    total: u64,
+    rx_bytes: u64,
+    tx_bytes: u64,
+    share_pct: f32,
     color: Hsla,
+    is_other: bool,
 }

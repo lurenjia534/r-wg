@@ -139,11 +139,19 @@ pub(crate) struct TrafficTrendData {
 ///
 /// `total_rx/total_tx` 表示当前周期内的总体流量；
 /// `ranked` 则是按配置聚合后的排行列表，已经做过筛零、排序和截断。
+/// 其余字段用于支撑 “按配置 share” 的 UI：
+/// - `active_configs` 是截断前的非零配置数；
+/// - `others_total` 是被 UI 折叠进 Others 的尾部总量；
+/// - `top_config_*` 方便 header / 单配置态直接读取主叙事。
 #[derive(Clone)]
 pub(crate) struct TrafficSummaryData {
     pub(crate) total_rx: u64,
     pub(crate) total_tx: u64,
     pub(crate) ranked: Vec<TrafficRankItem>,
+    pub(crate) active_configs: usize,
+    pub(crate) others_total: u64,
+    pub(crate) top_config_name: Option<String>,
+    pub(crate) top_config_total: u64,
 }
 
 /// Traffic Summary 中单个配置的流量排行项。
@@ -461,12 +469,26 @@ impl StatsState {
         // 最终排行统一按总流量倒序，并截断到 UI 预设数量。
         let mut ranked = ranked;
         ranked.sort_by(|a, b| b.total_bytes().cmp(&a.total_bytes()));
+        let active_configs = ranked.len();
+        let top_config_name = ranked.first().map(|item| item.name.clone());
+        let top_config_total = ranked
+            .first()
+            .map(TrafficRankItem::total_bytes)
+            .unwrap_or(0);
+        let others_total = ranked
+            .iter()
+            .skip(max_rank_items)
+            .fold(0_u64, |acc, item| acc.saturating_add(item.total_bytes()));
         ranked.truncate(max_rank_items);
 
         TrafficSummaryData {
             total_rx,
             total_tx,
             ranked,
+            active_configs,
+            others_total,
+            top_config_name,
+            top_config_total,
         }
     }
 
@@ -814,6 +836,10 @@ mod tests {
 
         assert_eq!(summary.total_rx, 60);
         assert_eq!(summary.total_tx, 6);
+        assert_eq!(summary.active_configs, 2);
+        assert_eq!(summary.others_total, 0);
+        assert_eq!(summary.top_config_name.as_deref(), Some("beta"));
+        assert_eq!(summary.top_config_total, 60);
         assert_eq!(summary.ranked.len(), 2);
         assert_eq!(summary.ranked[0].name, "beta");
         assert_eq!(summary.ranked[0].total_bytes(), 60);
@@ -886,6 +912,10 @@ mod tests {
         );
         assert_eq!(this_month.total_rx, 40);
         assert_eq!(this_month.total_tx, 60);
+        assert_eq!(this_month.active_configs, 1);
+        assert_eq!(this_month.others_total, 0);
+        assert_eq!(this_month.top_config_name.as_deref(), Some("alpha"));
+        assert_eq!(this_month.top_config_total, 100);
         assert_eq!(this_month.ranked[0].total_bytes(), 100);
 
         app.ui_session.traffic_period = TrafficPeriod::LastMonth;
@@ -898,7 +928,78 @@ mod tests {
         );
         assert_eq!(last_month.total_rx, 500);
         assert_eq!(last_month.total_tx, 600);
+        assert_eq!(last_month.active_configs, 1);
+        assert_eq!(last_month.others_total, 0);
+        assert_eq!(last_month.top_config_name.as_deref(), Some("alpha"));
+        assert_eq!(last_month.top_config_total, 1100);
         assert_eq!(last_month.ranked[0].total_bytes(), 1100);
+    }
+
+    #[test]
+    fn traffic_summary_keeps_tail_total_when_truncated() {
+        let current_hour = 300_i64;
+        let mut app = make_app();
+        app.configs.configs = vec![
+            make_config(1, "alpha"),
+            make_config(2, "beta"),
+            make_config(3, "gamma"),
+        ];
+        app.stats.traffic.global_hours = vec![
+            TrafficHourBucket {
+                hour_key: current_hour,
+                rx_bytes: 60,
+                tx_bytes: 10,
+            },
+            TrafficHourBucket {
+                hour_key: current_hour - 1,
+                rx_bytes: 15,
+                tx_bytes: 15,
+            },
+        ];
+        app.stats.traffic.config_hours.insert(
+            1,
+            vec![TrafficHourBucket {
+                hour_key: current_hour,
+                rx_bytes: 40,
+                tx_bytes: 10,
+            }],
+        );
+        app.stats.traffic.config_hours.insert(
+            2,
+            vec![TrafficHourBucket {
+                hour_key: current_hour,
+                rx_bytes: 20,
+                tx_bytes: 0,
+            }],
+        );
+        app.stats.traffic.config_hours.insert(
+            3,
+            vec![TrafficHourBucket {
+                hour_key: current_hour - 1,
+                rx_bytes: 15,
+                tx_bytes: 15,
+            }],
+        );
+
+        let summary = app.stats.overview_traffic_summary_at(
+            &app.configs,
+            TrafficPeriod::Today,
+            NaiveDate::from_ymd_opt(2026, 3, 6).expect("valid test date"),
+            current_hour,
+            2,
+        );
+
+        assert_eq!(summary.total_rx, 75);
+        assert_eq!(summary.total_tx, 25);
+        assert_eq!(summary.active_configs, 3);
+        assert_eq!(summary.others_total, 20);
+        assert_eq!(summary.top_config_name.as_deref(), Some("alpha"));
+        assert_eq!(summary.top_config_total, 50);
+        assert_eq!(summary.ranked.len(), 2);
+        assert_eq!(summary.ranked[0].name, "alpha");
+        assert_eq!(summary.ranked[0].total_bytes(), 50);
+        assert_eq!(summary.ranked[1].name, "gamma");
+        assert_eq!(summary.ranked[1].total_bytes(), 30);
     }
 
     #[test]
