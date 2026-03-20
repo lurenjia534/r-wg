@@ -275,15 +275,12 @@ pub(super) fn traffic_summary_card<T>(
         "No saved config traffic in this period".to_string()
     } else if summary.others_total > 0 {
         format!(
-            "Showing top {} of {} active configs • tail folded into Others",
+            "Top {} of {} configs • tail in Others",
             summary.ranked.len(),
             summary.active_configs
         )
     } else {
-        format!(
-            "{} active config(s) with non-zero traffic",
-            summary.active_configs
-        )
+        format!("{} active config(s)", summary.active_configs)
     };
 
     let period_toggle = ButtonGroup::new("traffic-summary-period")
@@ -555,15 +552,15 @@ fn direction_split_legend<T>(upload_color: Hsla, download_color: Hsla, cx: &mut 
     h_flex()
         .items_center()
         .flex_wrap()
-        .gap_3()
+        .gap_2()
         .child(trend_legend_item(
-            "Upload split",
+            "Upload",
             upload_color,
             LegendKind::Bar,
             cx,
         ))
         .child(trend_legend_item(
-            "Download split",
+            "Download",
             download_color,
             LegendKind::Bar,
             cx,
@@ -573,7 +570,7 @@ fn direction_split_legend<T>(upload_color: Hsla, download_color: Hsla, cx: &mut 
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(cx.theme().muted_foreground)
-                .child("Bar length shows share of saved-config traffic"),
+                .child("Bar length = config share"),
         )
 }
 
@@ -589,24 +586,24 @@ fn config_share_panel<T>(
     match config_share_mode(summary, saved_total) {
         ConfigShareMode::Empty => config_share_empty_state(cx),
         ConfigShareMode::Single => v_flex()
-            .gap_3()
+            .gap_2()
             .child(config_share_insight(summary, saved_total, cx))
             .child(config_share_list(&rows, upload_color, download_color, cx)),
         ConfigShareMode::Donut => h_flex()
             .items_start()
             .flex_wrap()
-            .gap_4()
+            .gap_3()
             .child(config_share_donut(summary, &rows, saved_total, cx))
             .child(
                 v_flex()
                     .flex_1()
-                    .min_w(px(300.0))
-                    .gap_3()
+                    .min_w(px(296.0))
+                    .gap_2()
                     .child(config_share_insight(summary, saved_total, cx))
                     .child(config_share_list(&rows, upload_color, download_color, cx)),
             ),
         ConfigShareMode::Bars => v_flex()
-            .gap_3()
+            .gap_2()
             .child(config_share_insight(summary, saved_total, cx))
             .child(config_share_list(&rows, upload_color, download_color, cx)),
     }
@@ -663,62 +660,99 @@ fn config_share_insight<T>(
     saved_total: u64,
     cx: &mut Context<T>,
 ) -> Div {
-    let message = if summary.active_configs == 0 {
-        "No saved configs contributed traffic in this period.".to_string()
-    } else if summary.active_configs == 1 {
-        format!(
-            "{} handled 100% of saved-config traffic in this period.",
-            summary
-                .top_config_name
-                .as_deref()
-                .unwrap_or("The active config")
-        )
+    let lead_name = summary
+        .top_config_name
+        .as_deref()
+        .unwrap_or("No active config");
+    let lead_share = if summary.active_configs <= 1 {
+        "100% share".to_string()
     } else {
         format!(
-            "{} leads with {:.1}% of saved-config traffic.",
-            summary
-                .top_config_name
-                .as_deref()
-                .unwrap_or("The top config"),
+            "{:.1}% share",
             percent(summary.top_config_total, saved_total)
         )
     };
-    let detail = if summary.others_total > 0 {
-        format!(
-            "{} more config(s) are folded into Others ({})",
-            summary.active_configs.saturating_sub(summary.ranked.len()),
-            format_bytes(summary.others_total)
-        )
-    } else {
-        format!(
-            "{} active config(s) • saved-config total {}",
-            summary.active_configs,
-            format_bytes(saved_total)
-        )
-    };
+    let shell_bg = cx
+        .theme()
+        .secondary
+        .alpha(if cx.theme().is_dark() { 0.2 } else { 0.34 });
+    let shell_border = cx
+        .theme()
+        .border
+        .alpha(if cx.theme().is_dark() { 0.38 } else { 0.3 });
 
-    tile_shell(cx)
-        .child(tile_header(
-            IconName::ChartPie,
-            "Config Share Insight",
-            cx.theme().chart_3,
-            None,
-            cx,
-        ))
-        .child(
-            div()
-                .text_base()
-                .font_semibold()
-                .text_color(cx.theme().foreground)
-                .child(message),
-        )
+    v_flex()
+        .gap_2()
+        .p_3()
+        .rounded_xl()
+        .border_1()
+        .border_color(shell_border)
+        .bg(shell_bg)
         .child(
             div()
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(cx.theme().muted_foreground)
-                .child(detail),
+                .child("Lead Config"),
         )
+        .child(
+            h_flex()
+                .items_center()
+                .justify_between()
+                .flex_wrap()
+                .gap_2()
+                .child(
+                    div()
+                        .text_base()
+                        .font_semibold()
+                        .text_color(cx.theme().foreground)
+                        .child(lead_name.to_string()),
+                )
+                .child(summary_stat_chip(lead_share, cx.theme().chart_3, cx)),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .flex_wrap()
+                .gap_2()
+                .child(summary_stat_chip(
+                    format_bytes(summary.top_config_total),
+                    cx.theme().foreground,
+                    cx,
+                ))
+                .child(summary_stat_chip(
+                    format!("{} active", summary.active_configs),
+                    cx.theme().muted_foreground,
+                    cx,
+                ))
+                .when(summary.others_total > 0, |this| {
+                    this.child(summary_stat_chip(
+                        format!("{} in Others", format_bytes(summary.others_total)),
+                        cx.theme().muted_foreground,
+                        cx,
+                    ))
+                })
+                .when(summary.others_total == 0 && saved_total > 0, |this| {
+                    this.child(summary_stat_chip(
+                        format!("{} total", format_bytes(saved_total)),
+                        cx.theme().muted_foreground,
+                        cx,
+                    ))
+                }),
+        )
+}
+
+fn summary_stat_chip<T>(label: impl Into<SharedString>, color: Hsla, cx: &mut Context<T>) -> Div {
+    let label: SharedString = label.into();
+    div()
+        .px_2()
+        .py_1()
+        .rounded_full()
+        .bg(color.alpha(if cx.theme().is_dark() { 0.14 } else { 0.1 }))
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(color)
+        .child(label)
 }
 
 fn config_share_donut<T>(
@@ -727,60 +761,66 @@ fn config_share_donut<T>(
     saved_total: u64,
     cx: &mut Context<T>,
 ) -> Div {
-    div()
-        .flex()
-        .justify_center()
-        .min_w(px(240.0))
-        .flex_1()
-        .child(
-            div()
-                .size(px(208.0))
-                .relative()
-                .child(
-                    PieChart::new(rows.to_vec())
-                        .value(|row| row.total as f32)
-                        .inner_radius(68.0)
-                        .outer_radius(92.0)
-                        .pad_angle(0.025)
-                        .color(|row| row.color)
-                        .into_any_element(),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(cx.theme().muted_foreground.opacity(0.72))
-                                .child("CONFIG SHARE"),
-                        )
-                        .child(
-                            div()
-                                .text_xl()
-                                .font_semibold()
-                                .text_color(cx.theme().foreground)
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(format_bytes(saved_total)),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(cx.theme().muted_foreground)
-                                .child(if summary.active_configs == 1 {
-                                    "1 active config".to_string()
-                                } else {
-                                    format!("{} active configs", summary.active_configs)
-                                }),
-                        ),
-                ),
-        )
+    div().min_w(px(248.0)).flex_1().child(
+        div()
+            .p_4()
+            .rounded_xl()
+            .bg(cx
+                .theme()
+                .secondary
+                .alpha(if cx.theme().is_dark() { 0.12 } else { 0.24 }))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .size(px(196.0))
+                    .relative()
+                    .child(
+                        PieChart::new(rows.to_vec())
+                            .value(|row| row.total as f32)
+                            .inner_radius(66.0)
+                            .outer_radius(88.0)
+                            .pad_angle(0.022)
+                            .color(|row| row.color)
+                            .into_any_element(),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().muted_foreground.opacity(0.72))
+                                    .child("SHARE"),
+                            )
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_semibold()
+                                    .text_color(cx.theme().foreground)
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .child(format_bytes(saved_total)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(if summary.active_configs == 1 {
+                                        "1 config".to_string()
+                                    } else {
+                                        format!("{} configs", summary.active_configs)
+                                    }),
+                            ),
+                    ),
+            ),
+    )
 }
 
 fn config_share_list<T>(
@@ -793,14 +833,20 @@ fn config_share_list<T>(
         return config_share_empty_state(cx);
     }
 
-    let row_border = tile_border(cx);
-    let row_surface = tile_surface(cx);
+    let row_border = cx
+        .theme()
+        .border
+        .alpha(if cx.theme().is_dark() { 0.34 } else { 0.26 });
+    let row_surface = cx
+        .theme()
+        .background
+        .alpha(if cx.theme().is_dark() { 0.34 } else { 0.64 });
     let list_border = tile_border(cx);
     let list_surface = tile_surface(cx);
     let track = cx
         .theme()
         .secondary
-        .alpha(if cx.theme().is_dark() { 0.64 } else { 0.84 });
+        .alpha(if cx.theme().is_dark() { 0.46 } else { 0.58 });
 
     let rows = rows.iter().map(|row| {
         let split_total = row.rx_bytes.saturating_add(row.tx_bytes);
@@ -811,8 +857,8 @@ fn config_share_list<T>(
         };
 
         v_flex()
-            .gap_2()
-            .p_3()
+            .gap_1p5()
+            .p_2()
             .rounded_lg()
             .border_1()
             .border_color(row_border)
@@ -821,12 +867,12 @@ fn config_share_list<T>(
                 h_flex()
                     .items_start()
                     .justify_between()
-                    .gap_3()
+                    .gap_2()
                     .child(
                         h_flex()
                             .items_center()
                             .gap_2()
-                            .child(div().size(px(10.0)).rounded_full().bg(row.color))
+                            .child(div().size(px(8.0)).rounded_full().bg(row.color))
                             .child(
                                 div()
                                     .text_sm()
@@ -838,7 +884,7 @@ fn config_share_list<T>(
                     .child(
                         h_flex()
                             .items_baseline()
-                            .gap_2()
+                            .gap_1p5()
                             .child(
                                 div()
                                     .text_sm()
@@ -858,7 +904,7 @@ fn config_share_list<T>(
             )
             .child(
                 div()
-                    .h(px(8.0))
+                    .h(px(6.0))
                     .w_full()
                     .rounded_full()
                     .overflow_hidden()
@@ -881,13 +927,13 @@ fn config_share_list<T>(
                     .text_xs()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(cx.theme().muted_foreground)
-                    .child("Tail configs collapsed into Others")
+                    .child("Tail configs collapsed")
                     .into_any_element()
             } else {
                 h_flex()
                     .items_center()
                     .flex_wrap()
-                    .gap_3()
+                    .gap_2()
                     .child(direction_value("Up", row.tx_bytes, upload_color, cx))
                     .child(direction_value("Down", row.rx_bytes, download_color, cx))
                     .into_any_element()
@@ -895,8 +941,8 @@ fn config_share_list<T>(
     });
 
     v_flex()
-        .gap_2()
-        .p_3()
+        .gap_1p5()
+        .p_2()
         .bg(list_surface)
         .rounded_xl()
         .border_1()
