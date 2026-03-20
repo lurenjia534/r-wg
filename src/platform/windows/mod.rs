@@ -508,10 +508,6 @@ pub async fn apply_network_config(
         }
     }
 
-    let mut endpoint_v4 = 0usize;
-    let mut endpoint_v6 = 0usize;
-    let mut bypass_v4 = 0usize;
-    let mut bypass_v6 = 0usize;
     let mut resolved_bypass_ops = Vec::with_capacity(route_plan.bypass_ops.len());
 
     // 6) 先解析所有 endpoint bypass 目标，避免在中途留下半套路由。
@@ -562,6 +558,7 @@ pub async fn apply_network_config(
     // 7) 将解析结果映射到实际 system route，再统一下发。
     for (bypass_index, &(op, ref endpoint_ips)) in resolved_bypass_ops.iter().enumerate() {
         let mut applicable_endpoints = 0usize;
+        let mut routable_endpoints = 0usize;
         let mut applied_bypass_routes = 0usize;
 
         for ip in endpoint_ips {
@@ -569,12 +566,10 @@ pub async fn apply_network_config(
                 if !full_v4 {
                     continue;
                 }
-                endpoint_v4 += 1;
             } else {
                 if !full_v6 {
                     continue;
                 }
-                endpoint_v6 += 1;
             }
             applicable_endpoints += 1;
 
@@ -585,6 +580,7 @@ pub async fn apply_network_config(
                     continue;
                 }
             };
+            routable_endpoints += 1;
 
             log_net::bypass_route_add(route.dest, route.next_hop, route.if_index);
             if let Err(error) = add_route(&route) {
@@ -648,11 +644,6 @@ pub async fn apply_network_config(
                 }
             }
 
-            if ip.is_ipv4() {
-                bypass_v4 += 1;
-            } else {
-                bypass_v6 += 1;
-            }
             applied_bypass_routes += 1;
         }
 
@@ -674,62 +665,19 @@ pub async fn apply_network_config(
                     op.host, op.port
                 )],
             );
-        } else {
-            report.push_failed_kind(
+        } else if routable_endpoints == 0 {
+            report.push_skipped_kind(
                 RoutePlan::bypass_item_id(op),
                 RouteApplyKind::BypassRoute,
-                Some(RouteApplyFailureKind::Lookup),
                 vec![format!(
-                    "Failed to derive a usable Windows endpoint bypass route for {}:{}.",
+                    "Resolved endpoint IPs for {}:{} had no usable Windows underlay route.",
                     op.host, op.port
                 )],
             );
         }
     }
 
-    // 8) 安全护栏：如果 endpoint 存在但 bypass 为 0，则拒绝继续。
-    let missing_v4_bypass = endpoint_v4 > 0 && bypass_v4 == 0;
-    let missing_v6_bypass = endpoint_v6 > 0 && bypass_v6 == 0;
-    if missing_v4_bypass {
-        log_net::skip_default_route_v4();
-    }
-    if missing_v6_bypass {
-        log_net::skip_default_route_v6();
-    }
-    if missing_v4_bypass || missing_v6_bypass {
-        let family = match (missing_v4_bypass, missing_v6_bypass) {
-            (true, true) => "IPv4+IPv6",
-            (true, false) => "IPv4",
-            (false, true) => "IPv6",
-            (false, false) => unreachable!(),
-        };
-        report.push_failed_kind(
-            "apply:endpoint_bypass_guard",
-            RouteApplyKind::BypassRoute,
-            Some(RouteApplyFailureKind::Verification),
-            vec![format!(
-                "full-tunnel {family} endpoint bypass route missing; refusing to continue to avoid traffic/DNS leak"
-            )],
-        );
-        skip_remaining_windows_stages(
-            &mut report,
-            false,
-            true,
-            true,
-            true,
-            "Windows apply aborted because endpoint bypass safety checks failed.",
-        );
-        return abort_with_cleanup(
-            state,
-            NetworkError::UnsafeRouting(format!(
-                "full-tunnel {family} endpoint bypass route missing; refusing to continue to avoid traffic/DNS leak"
-            )),
-            report,
-        )
-        .await;
-    }
-
-    // 9) 按共享 route plan 下发所有 route ops。
+    // 8) 按共享 route plan 下发所有 route ops。
     for (index, op) in route_plan.route_ops.iter().enumerate() {
         let entry = RouteEntry {
             dest: op.route.addr,
