@@ -240,7 +240,7 @@ pub async fn apply_network_config(
 
         // 根据策略路由决策把路由写入 main 或自定义表。
         if let Some(policy_state) = state.policy.as_ref() {
-            if let Err(err) = cleanup_policy_rules_once(handle).await {
+            if let Err(err) = cleanup_policy_rules_once(handle, Some(policy_state)).await {
                 log_net::stale_policy_rule_cleanup_failed(&err);
             }
             let fwmark = policy_state.fwmark;
