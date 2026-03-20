@@ -933,7 +933,7 @@ fn bypass_item_id(bypass_op: &RoutePlanBypassOp) -> String {
     } else {
         "bypass-pending"
     };
-    item_id(prefix, &bypass_op.host)
+    item_id(prefix, &format!("{}:{}", bypass_op.host, bypass_op.port))
 }
 
 /// Windows 全隧道时计划下发的 endpoint bypass 数量。
@@ -1185,8 +1185,12 @@ fn build_endpoint_bypass_items(
         match endpoint_ip {
             Some(ip) => {
                 let destination_text = route_text(ip, if ip.is_ipv4() { 32 } else { 128 });
+                let bypass_op = RoutePlanBypassOp {
+                    host: endpoint.host.clone(),
+                    port: endpoint.port,
+                };
                 items.push(RoutePlanItem {
-                    id: item_id("bypass", &endpoint.host),
+                    id: bypass_item_id(&bypass_op),
                     title: endpoint.host.clone(),
                     subtitle: format!("{peer_label} endpoint bypass"),
                     family: Some(family_from_ip(ip)),
@@ -1261,8 +1265,12 @@ fn build_endpoint_bypass_items(
                 });
             }
             None => {
+                let bypass_op = RoutePlanBypassOp {
+                    host: endpoint.host.clone(),
+                    port: endpoint.port,
+                };
                 items.push(RoutePlanItem {
-                    id: item_id("bypass-pending", &endpoint.host),
+                    id: bypass_item_id(&bypass_op),
                     title: endpoint.host.clone(),
                     subtitle: format!("{peer_label} endpoint hostname"),
                     family: None,
@@ -2318,6 +2326,22 @@ mod tests {
             windows_planned_bypass_count(RoutePlanPlatform::Linux, &peers, status),
             0
         );
+    }
+
+    #[test]
+    fn bypass_item_id_distinguishes_same_host_different_ports() {
+        let first = RoutePlan::bypass_item_id(&RoutePlanBypassOp {
+            host: "example.com".to_string(),
+            port: 51820,
+        });
+        let second = RoutePlan::bypass_item_id(&RoutePlanBypassOp {
+            host: "example.com".to_string(),
+            port: 51821,
+        });
+
+        assert_ne!(first, second);
+        assert!(first.contains("51820"));
+        assert!(second.contains("51821"));
     }
 
     #[test]

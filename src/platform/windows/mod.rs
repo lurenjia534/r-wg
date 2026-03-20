@@ -198,7 +198,7 @@ fn finish_with_report(
 ) -> Result<NetworkApplyResult, NetworkApplyError> {
     report.mark_running();
     persist_apply_report_best_effort(&report);
-    finish_with_report(state, report)
+    Ok(NetworkApplyResult { state, report })
 }
 
 /// 应用 Windows 侧网络配置。
@@ -295,7 +295,7 @@ pub async fn apply_network_config(
                     true,
                     "Windows apply aborted before any planned network operation ran.",
                 );
-                return Err(abort_with_report(error, report));
+                return abort_with_cleanup(state, error, report).await;
             }
         }),
     };
@@ -459,7 +459,7 @@ pub async fn apply_network_config(
                             true,
                             "Windows apply aborted while persisting recovery journal.",
                         );
-                        return Err(abort_with_report(error, report));
+                        return abort_with_cleanup(state, error, report).await;
                     }
                 }
             }
@@ -506,7 +506,6 @@ pub async fn apply_network_config(
         }
     }
 
-    let mut bypass_routes = Vec::new();
     let mut endpoint_v4 = 0usize;
     let mut endpoint_v6 = 0usize;
     let mut bypass_v4 = 0usize;
@@ -552,14 +551,17 @@ pub async fn apply_network_config(
                     true,
                     "Windows apply aborted while resolving endpoint bypass routes.",
                 );
-                return Err(abort_with_report(error, report));
+                return abort_with_cleanup(state, error, report).await;
             }
         };
         resolved_bypass_ops.push((op, endpoint_ips));
     }
 
     // 7) 将解析结果映射到实际 system route，再统一下发。
-    for &(op, ref endpoint_ips) in &resolved_bypass_ops {
+    for (bypass_index, &(op, ref endpoint_ips)) in resolved_bypass_ops.iter().enumerate() {
+        let mut applicable_endpoints = 0usize;
+        let mut applied_bypass_routes = 0usize;
+
         for ip in endpoint_ips {
             if ip.is_ipv4() {
                 if !full_v4 {
@@ -572,27 +574,115 @@ pub async fn apply_network_config(
                 }
                 endpoint_v6 += 1;
             }
-            match best_route_to(*ip) {
-                Ok(route) => {
-                    log_net::bypass_route_add(route.dest, route.next_hop, route.if_index);
-                    if ip.is_ipv4() {
-                        bypass_v4 += 1;
-                    } else {
-                        bypass_v6 += 1;
-                    }
-                    bypass_routes.push(route);
+            applicable_endpoints += 1;
+
+            let route = match best_route_to(*ip) {
+                Ok(route) => route,
+                Err(error) => {
+                    log_net::bypass_route_failed(*ip, &error);
+                    continue;
                 }
-                Err(error) => log_net::bypass_route_failed(*ip, &error),
+            };
+
+            log_net::bypass_route_add(route.dest, route.next_hop, route.if_index);
+            if let Err(error) = add_route(&route) {
+                log_net::bypass_route_add_failed(route.dest, &error);
+                report.push_failed_kind(
+                    RoutePlan::bypass_item_id(op),
+                    RouteApplyKind::BypassRoute,
+                    Some(RouteApplyFailureKind::System),
+                    vec![format!(
+                        "failed to add Windows endpoint bypass route {}/{} for {}:{}: {error}",
+                        route.dest, route.prefix, op.host, op.port
+                    )],
+                );
+                skip_remaining_route_plan_ops(
+                    &mut report,
+                    route_plan,
+                    route_plan.metric_ops.len(),
+                    bypass_index + 1,
+                    0,
+                    "Windows apply aborted while adding endpoint bypass routes.",
+                );
+                skip_remaining_windows_stages(
+                    &mut report,
+                    false,
+                    true,
+                    true,
+                    true,
+                    "Windows apply aborted while adding endpoint bypass routes.",
+                );
+                return abort_with_cleanup(state, error, report).await;
             }
+            state.bypass_routes.push(route.clone());
+            if let Some(recovery) = state.recovery.as_mut() {
+                if let Err(error) = recovery.record_bypass_route(&route) {
+                    report.push_failed_kind(
+                        "apply:recovery",
+                        RouteApplyKind::RecoveryJournal,
+                        Some(RouteApplyFailureKind::Persistence),
+                        vec![format!(
+                            "failed to persist Windows recovery journal after adding bypass route {}/{} for {}:{}: {error}",
+                            route.dest, route.prefix, op.host, op.port
+                        )],
+                    );
+                    skip_remaining_route_plan_ops(
+                        &mut report,
+                        route_plan,
+                        route_plan.metric_ops.len(),
+                        bypass_index + 1,
+                        0,
+                        "Windows apply aborted while persisting recovery journal.",
+                    );
+                    skip_remaining_windows_stages(
+                        &mut report,
+                        false,
+                        true,
+                        true,
+                        true,
+                        "Windows apply aborted while persisting recovery journal.",
+                    );
+                    return abort_with_cleanup(state, error, report).await;
+                }
+            }
+
+            if ip.is_ipv4() {
+                bypass_v4 += 1;
+            } else {
+                bypass_v6 += 1;
+            }
+            applied_bypass_routes += 1;
         }
-        report.push_applied_kind(
-            RoutePlan::bypass_item_id(op),
-            RouteApplyKind::BypassRoute,
-            vec![format!(
-                "Applied Windows endpoint bypass handling for {}:{}.",
-                op.host, op.port
-            )],
-        );
+
+        if applied_bypass_routes > 0 {
+            report.push_applied_kind(
+                RoutePlan::bypass_item_id(op),
+                RouteApplyKind::BypassRoute,
+                vec![format!(
+                    "Applied Windows endpoint bypass route handling for {}:{}.",
+                    op.host, op.port
+                )],
+            );
+        } else if applicable_endpoints == 0 {
+            report.push_skipped_kind(
+                RoutePlan::bypass_item_id(op),
+                RouteApplyKind::BypassRoute,
+                vec![format!(
+                    "No resolved endpoint IP for {}:{} matched an active full-tunnel address family.",
+                    op.host, op.port
+                )],
+            );
+        } else {
+            report.push_failed_kind(
+                RoutePlan::bypass_item_id(op),
+                RouteApplyKind::BypassRoute,
+                Some(RouteApplyFailureKind::Lookup),
+                vec![format!(
+                    "Failed to derive a usable Windows endpoint bypass route for {}:{}.",
+                    op.host, op.port
+                )],
+            );
+        }
     }
 
     // 8) 安全护栏：如果 endpoint 存在但 bypass 为 0，则拒绝继续。
@@ -703,6 +793,7 @@ pub async fn apply_network_config(
                 ),
             }],
         );
+        state.routes.push(entry.clone());
         if let Some(recovery) = state.recovery.as_mut() {
             if let Err(error) = recovery.record_route(&entry) {
                 report.push_failed_kind(
@@ -730,10 +821,9 @@ pub async fn apply_network_config(
                     true,
                     "Windows apply aborted while persisting recovery journal.",
                 );
-                return Err(abort_with_report(error, report));
+                return abort_with_cleanup(state, error, report).await;
             }
         }
-        state.routes.push(entry);
     }
 
     // 10) 应用 DNS。
@@ -757,28 +847,30 @@ pub async fn apply_network_config(
                         config.interface.dns_search.len()
                     )],
                 );
+                state.dns = Some(dns_state);
                 if let Some(recovery) = state.recovery.as_mut() {
-                    if let Err(error) = recovery.record_dns(&dns_state) {
-                        report.push_failed_kind(
-                            "apply:recovery",
-                            RouteApplyKind::RecoveryJournal,
-                            Some(RouteApplyFailureKind::Persistence),
-                            vec![format!(
-                                "failed to persist Windows recovery journal after applying DNS: {error}"
-                            )],
-                        );
-                        skip_remaining_windows_stages(
-                            &mut report,
-                            false,
-                            false,
-                            true,
-                            true,
-                            "Windows apply aborted while persisting recovery journal.",
-                        );
-                        return Err(abort_with_report(error, report));
+                    if let Some(dns_state) = state.dns.as_ref() {
+                        if let Err(error) = recovery.record_dns(dns_state) {
+                            report.push_failed_kind(
+                                "apply:recovery",
+                                RouteApplyKind::RecoveryJournal,
+                                Some(RouteApplyFailureKind::Persistence),
+                                vec![format!(
+                                    "failed to persist Windows recovery journal after applying DNS: {error}"
+                                )],
+                            );
+                            skip_remaining_windows_stages(
+                                &mut report,
+                                false,
+                                false,
+                                true,
+                                true,
+                                "Windows apply aborted while persisting recovery journal.",
+                            );
+                            return abort_with_cleanup(state, error, report).await;
+                        }
                     }
                 }
-                state.dns = Some(dns_state);
             }
             Err(error) => {
                 report.push_failed_kind(
@@ -816,30 +908,30 @@ pub async fn apply_network_config(
                         config.interface.dns_servers.len()
                     )],
                 );
-                if let (Some(recovery), Some(nrpt_state)) =
-                    (state.recovery.as_mut(), nrpt_state.as_ref())
-                {
-                    if let Err(error) = recovery.record_nrpt(nrpt_state) {
-                        report.push_failed_kind(
-                            "apply:recovery",
-                            RouteApplyKind::RecoveryJournal,
-                            Some(RouteApplyFailureKind::Persistence),
-                            vec![format!(
-                                "failed to persist Windows recovery journal after applying NRPT: {error}"
-                            )],
-                        );
-                        skip_remaining_windows_stages(
-                            &mut report,
-                            false,
-                            false,
-                            false,
-                            true,
-                            "Windows apply aborted while persisting recovery journal.",
-                        );
-                        return Err(abort_with_report(error, report));
+                state.nrpt = nrpt_state;
+                if let Some(recovery) = state.recovery.as_mut() {
+                    if let Some(nrpt_state) = state.nrpt.as_ref() {
+                        if let Err(error) = recovery.record_nrpt(nrpt_state) {
+                            report.push_failed_kind(
+                                "apply:recovery",
+                                RouteApplyKind::RecoveryJournal,
+                                Some(RouteApplyFailureKind::Persistence),
+                                vec![format!(
+                                    "failed to persist Windows recovery journal after applying NRPT: {error}"
+                                )],
+                            );
+                            skip_remaining_windows_stages(
+                                &mut report,
+                                false,
+                                false,
+                                false,
+                                true,
+                                "Windows apply aborted while persisting recovery journal.",
+                            );
+                            return abort_with_cleanup(state, error, report).await;
+                        }
                     }
                 }
-                state.nrpt = nrpt_state;
             }
             Err(error) => {
                 report.push_failed_kind(
@@ -870,22 +962,22 @@ pub async fn apply_network_config(
                         config.interface.dns_servers.len()
                     )],
                 );
-                if let (Some(recovery), Some(guard_state)) =
-                    (state.recovery.as_mut(), guard_state.as_ref())
-                {
-                    if let Err(error) = recovery.record_dns_guard(guard_state) {
-                        report.push_failed_kind(
-                            "apply:recovery",
-                            RouteApplyKind::RecoveryJournal,
-                            Some(RouteApplyFailureKind::Persistence),
-                            vec![format!(
-                                "failed to persist Windows recovery journal after applying DNS guard: {error}"
-                            )],
-                        );
-                        return Err(abort_with_report(error, report));
+                state.dns_guard = guard_state;
+                if let Some(recovery) = state.recovery.as_mut() {
+                    if let Some(guard_state) = state.dns_guard.as_ref() {
+                        if let Err(error) = recovery.record_dns_guard(guard_state) {
+                            report.push_failed_kind(
+                                "apply:recovery",
+                                RouteApplyKind::RecoveryJournal,
+                                Some(RouteApplyFailureKind::Persistence),
+                                vec![format!(
+                                    "failed to persist Windows recovery journal after applying DNS guard: {error}"
+                                )],
+                            );
+                            return abort_with_cleanup(state, error, report).await;
+                        }
                     }
                 }
-                state.dns_guard = guard_state;
             }
             Err(error) => {
                 report.push_failed_kind(
@@ -909,7 +1001,7 @@ pub async fn apply_network_config(
                     "failed to mark Windows recovery journal running: {error}"
                 )],
             );
-            return Err(abort_with_report(error, report));
+            return abort_with_cleanup(state, error, report).await;
         }
     }
 
