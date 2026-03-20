@@ -168,9 +168,8 @@ impl Element for TrafficTrendOverlay {
             .padding_inner(0.4)
             .padding_outer(0.2);
         let band_width = x_scale.band_width();
-        let max_domain = ((self.max_bytes.max(self.average_bytes.ceil() as u64).max(1) as f64)
-            * 1.08)
-            .max(1.0);
+        let max_domain =
+            ((self.max_bytes.max(self.average_bytes.ceil() as u64).max(1) as f64) * 1.08).max(1.0);
         let y_scale = ScaleLinear::new(vec![0.0, max_domain], vec![height, 10.0]);
 
         #[derive(Clone)]
@@ -213,10 +212,7 @@ impl Element for TrafficTrendOverlay {
                 let dash_origin =
                     gpui::point(px(start_x), px(avg_y) - stroke_height / 2.0) + bounds.origin;
                 window.paint_quad(gpui::quad(
-                    gpui::Bounds::new(
-                        dash_origin,
-                        gpui::size(px(segment_width), stroke_height),
-                    ),
+                    gpui::Bounds::new(dash_origin, gpui::size(px(segment_width), stroke_height)),
                     px(0.5),
                     self.avg_color,
                     px(0.0),

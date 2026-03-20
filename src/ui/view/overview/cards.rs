@@ -1,8 +1,5 @@
 use gpui::*;
-use gpui_component::{
-    group_box::GroupBox,
-    h_flex, v_flex, ActiveTheme as _, IconName,
-};
+use gpui_component::{group_box::GroupBox, h_flex, v_flex, ActiveTheme as _, IconName};
 
 use crate::ui::state::WgApp;
 use crate::ui::view::data::OverviewData;

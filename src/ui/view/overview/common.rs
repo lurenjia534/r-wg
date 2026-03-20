@@ -49,45 +49,41 @@ pub(super) fn section_title<T>(
         }
     };
     let caption = caption.map(Into::into);
-    h_flex()
-        .items_start()
-        .justify_between()
-        .gap_2()
-        .child(
-            h_flex()
-                .items_start()
-                .gap_2()
-                .child(
-                    div()
-                        .size(px(28.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_md()
-                        .bg(icon_bg)
-                        .child(Icon::new(icon).size_4().text_color(icon_tint)),
-                )
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
+    h_flex().items_start().justify_between().gap_2().child(
+        h_flex()
+            .items_start()
+            .gap_2()
+            .child(
+                div()
+                    .size(px(28.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .bg(icon_bg)
+                    .child(Icon::new(icon).size_4().text_color(icon_tint)),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_semibold()
+                            .text_color(cx.theme().foreground)
+                            .child(label.to_string()),
+                    )
+                    .when_some(caption, |this, caption| {
+                        this.child(
                             div()
-                                .text_sm()
-                                .font_semibold()
-                                .text_color(cx.theme().foreground)
-                                .child(label.to_string()),
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().muted_foreground)
+                                .child(caption),
                         )
-                        .when_some(caption, |this, caption| {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(caption),
-                            )
-                        }),
-                ),
-        )
+                    }),
+            ),
+    )
 }
 
 pub(super) fn tile_border<T>(cx: &mut Context<T>) -> Hsla {
