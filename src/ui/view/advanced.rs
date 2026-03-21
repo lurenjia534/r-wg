@@ -2009,7 +2009,9 @@ fn format_checked_timestamp(checked_at: SystemTime) -> String {
 
 fn backend_recommended_action(diagnostic: &BackendDiagnostic) -> &'static str {
     match diagnostic.health {
-        BackendHealth::Running => "Refresh only if you want to re-check service health.",
+        BackendHealth::Running => {
+            "Repair or Remove can stop the running helper before applying system changes."
+        }
         BackendHealth::NotInstalled => "Install the helper integration.",
         BackendHealth::Installed => "Refresh first, then Repair if the helper stays unavailable.",
         BackendHealth::AccessDenied | BackendHealth::VersionMismatch { .. } => {
@@ -2055,17 +2057,18 @@ fn helper_control_endpoint() -> &'static str {
 }
 
 fn should_show_repair_action(diagnostic: &BackendDiagnostic) -> bool {
-    !matches!(diagnostic.health, BackendHealth::Running)
-        && diagnostic.allows_action(PrivilegedServiceAction::Repair)
+    diagnostic.allows_action(PrivilegedServiceAction::Repair)
 }
 
 fn should_show_remove_action(diagnostic: &BackendDiagnostic) -> bool {
-    !matches!(diagnostic.health, BackendHealth::Running)
-        && diagnostic.allows_action(PrivilegedServiceAction::Remove)
+    diagnostic.allows_action(PrivilegedServiceAction::Remove)
 }
 
 fn backend_recovery_note(diagnostic: &BackendDiagnostic) -> Option<SharedString> {
     let note = match diagnostic.health {
+        BackendHealth::Running => {
+            "Repair or Remove can stop the running helper first when you need to recover or uninstall it."
+        }
         BackendHealth::NotInstalled => {
             "Install is the recommended next step before using desktop tunnel start, route, or DNS actions."
         }
@@ -2175,5 +2178,47 @@ fn dns_preset_from_value(value: &SharedString) -> DnsPreset {
         "adguard_unfiltered" => DnsPreset::AdguardUnfiltered,
         "adguard_family" => DnsPreset::AdguardFamily,
         _ => DnsPreset::CloudflareStandard,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        backend_recommended_action, backend_recovery_note, should_show_remove_action,
+        should_show_repair_action,
+    };
+    use crate::ui::state::{BackendDiagnostic, BackendHealth};
+
+    fn diagnostic(health: BackendHealth) -> BackendDiagnostic {
+        BackendDiagnostic {
+            health,
+            detail: "".into(),
+            checked_at: None,
+        }
+    }
+
+    #[test]
+    fn running_backend_keeps_repair_and_remove_available() {
+        let diagnostic = diagnostic(BackendHealth::Running);
+
+        assert!(should_show_repair_action(&diagnostic));
+        assert!(should_show_remove_action(&diagnostic));
+    }
+
+    #[test]
+    fn running_backend_explains_recovery_actions() {
+        let diagnostic = diagnostic(BackendHealth::Running);
+        let note = backend_recovery_note(&diagnostic).map(|value| value.to_string());
+
+        assert_eq!(
+            backend_recommended_action(&diagnostic),
+            "Repair or Remove can stop the running helper before applying system changes."
+        );
+        assert_eq!(
+            note.as_deref(),
+            Some(
+                "Repair or Remove can stop the running helper first when you need to recover or uninstall it."
+            )
+        );
     }
 }
