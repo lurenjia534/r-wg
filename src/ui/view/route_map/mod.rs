@@ -12,6 +12,7 @@ use gpui_component::{
     h_flex,
     input::Input,
     resizable::{h_resizable, resizable_panel, ResizableState},
+    scroll::ScrollableElement as _,
     tab::{Tab, TabBar},
     tag::Tag,
     v_flex, ActiveTheme as _, PixelsExt as _, Selectable, Sizable as _, StyledExt as _,
@@ -25,6 +26,12 @@ use self::data::{
     EffectiveRoutePlan, RouteMapChip, RouteMapData, RouteMapEvidence, RouteMapItemStatus,
     RouteMapTone,
 };
+
+const ROUTE_MAP_STACK_BREAKPOINT: f32 = 1360.0;
+const ROUTE_MAP_COMPACT_INVENTORY_HEIGHT: f32 = 280.0;
+const ROUTE_MAP_COMPACT_GRAPH_HEIGHT: f32 = 460.0;
+const ROUTE_MAP_COMPACT_INSPECTOR_HEIGHT: f32 = 320.0;
+const ROUTE_MAP_COMPACT_EVENTS_HEIGHT: f32 = 520.0;
 
 #[derive(Default)]
 struct RouteMapWorkspaceState {
@@ -75,6 +82,7 @@ pub(crate) fn render_route_map(
     let query = app.ui.route_map_search.debounced_query.to_string();
     let inventory_width = app.ui_prefs.route_map_inventory_width;
     let inspector_width = app.ui_prefs.route_map_inspector_width;
+    let compact_layout = window.viewport_size().width < px(ROUTE_MAP_STACK_BREAKPOINT);
     let workspace = window.use_keyed_state("route-map-workspace", cx, |_, _| {
         RouteMapWorkspaceState::default()
     });
@@ -95,7 +103,11 @@ pub(crate) fn render_route_map(
             .flex_1()
             .w_full()
             .min_h(px(0.0))
-            .child(if mode == RouteMapMode::Events {
+            .child(if compact_layout && mode == RouteMapMode::Events {
+                render_compact_events_layout(app, &model, window, cx)
+            } else if compact_layout {
+                render_compact_layout(app, &model, mode, window, cx)
+            } else if mode == RouteMapMode::Events {
                 render_events_layout(app, &model, inventory_width, app_handle.clone(), window, cx)
             } else {
                 render_standard_layout(
@@ -176,6 +188,89 @@ fn render_standard_layout(
                 )),
         )
         .into_any_element()
+}
+
+fn render_compact_layout(
+    app: &mut WgApp,
+    model: &RouteMapData,
+    mode: RouteMapMode,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .w_full()
+        .min_h(px(0.0))
+        .overflow_hidden()
+        .child(
+            div()
+                .w_full()
+                .flex_1()
+                .min_h(px(0.0))
+                .overflow_y_scrollbar()
+                .child(
+                    v_flex()
+                        .w_full()
+                        .gap_3()
+                        .p_3()
+                        .child(compact_panel(
+                            px(ROUTE_MAP_COMPACT_INVENTORY_HEIGHT),
+                            inventory::render_inventory(app, model, window, cx).into_any_element(),
+                        ))
+                        .child(compact_panel(
+                            px(ROUTE_MAP_COMPACT_GRAPH_HEIGHT),
+                            graph::render_graph(model, mode, window, cx).into_any_element(),
+                        ))
+                        .child(compact_panel(
+                            px(ROUTE_MAP_COMPACT_INSPECTOR_HEIGHT),
+                            inspector::render_inspector(app, model, cx).into_any_element(),
+                        )),
+                ),
+        )
+        .into_any_element()
+}
+
+fn render_compact_events_layout(
+    app: &mut WgApp,
+    model: &RouteMapData,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .w_full()
+        .min_h(px(0.0))
+        .overflow_hidden()
+        .child(
+            div()
+                .w_full()
+                .flex_1()
+                .min_h(px(0.0))
+                .overflow_y_scrollbar()
+                .child(
+                    v_flex()
+                        .w_full()
+                        .gap_3()
+                        .p_3()
+                        .child(compact_panel(
+                            px(ROUTE_MAP_COMPACT_INVENTORY_HEIGHT),
+                            inventory::render_inventory(app, model, window, cx).into_any_element(),
+                        ))
+                        .child(compact_panel(
+                            px(ROUTE_MAP_COMPACT_EVENTS_HEIGHT),
+                            events::render_events_workspace(model, window, cx).into_any_element(),
+                        )),
+                ),
+        )
+        .into_any_element()
+}
+
+fn compact_panel(height: Pixels, child: AnyElement) -> Div {
+    div().w_full().h(height).min_h(height).child(panel_shell(child))
 }
 
 fn render_events_layout(

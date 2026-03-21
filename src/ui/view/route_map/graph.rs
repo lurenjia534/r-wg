@@ -6,6 +6,7 @@ use gpui::{uniform_list, *};
 use gpui_component::{
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
+    scroll::ScrollableElement as _,
     scroll::Scrollbar,
     theme::ThemeMode,
     v_flex, ActiveTheme as _, Icon, StyledExt as _,
@@ -20,6 +21,9 @@ use super::{empty_group, status_chip};
 
 const ROUTE_LIST_SCROLL_STATE_ID: &str = "route-map-routes-scroll";
 const ROUTE_ROW_HEIGHT: f32 = 48.0;
+const FLOW_HORIZONTAL_BREAKPOINT: f32 = 1500.0;
+const FLOW_HORIZONTAL_MAX_WIDTH: f32 = 1120.0;
+const FLOW_VERTICAL_MAX_WIDTH: f32 = 820.0;
 
 #[derive(Clone, Copy)]
 struct FlowStepPalette {
@@ -53,13 +57,64 @@ fn render_flow(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgApp
             cx,
         ));
     };
+    let content_style = StyleRefinement::default().flex_1().min_h_0();
 
     let animate_connectors = window.is_window_active();
-    let steps = if window.viewport_size().width >= px(1500.0) {
+    let horizontal_flow = window.viewport_size().width >= px(FLOW_HORIZONTAL_BREAKPOINT);
+    let steps = if horizontal_flow {
         render_horizontal_flow_steps(&selected.graph_steps, animate_connectors, cx)
             .into_any_element()
     } else {
         render_vertical_flow_steps(&selected.graph_steps, animate_connectors, cx).into_any_element()
+    };
+    let flow_content = if horizontal_flow {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(FLOW_HORIZONTAL_MAX_WIDTH))
+                    .flex_col()
+                    .gap_4()
+                    .child(steps)
+                    .child(render_flow_band(selected, cx)),
+            )
+    } else {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .overflow_hidden()
+            .child(
+                div()
+                    .w_full()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scrollbar()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(FLOW_VERTICAL_MAX_WIDTH))
+                                    .flex_col()
+                                    .gap_4()
+                                    .pr_1()
+                                    .child(steps)
+                                    .child(render_flow_band(selected, cx)),
+                            ),
+                    ),
+            )
     };
 
     div()
@@ -73,14 +128,17 @@ fn render_flow(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgApp
         .child(
             GroupBox::new()
                 .fill()
-                .flex_grow()
+                .flex_1()
+                .min_h_0()
+                .content_style(content_style)
                 .title("Decision Path")
                 .child(
                     v_flex()
                         .gap_3()
                         .w_full()
-                        .flex_grow()
+                        .flex_1()
                         .min_h(px(0.0))
+                        .overflow_hidden()
                         .child(
                             h_flex()
                                 .items_center()
@@ -123,17 +181,7 @@ fn render_flow(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgApp
                                 .flex_1()
                                 .min_h(px(0.0))
                                 .w_full()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .max_w(px(1120.0))
-                                        .flex_col()
-                                        .gap_4()
-                                        .child(steps)
-                                        .child(render_flow_band(selected, cx)),
-                                ),
+                                .child(flow_content),
                         ),
                 ),
         )
@@ -211,7 +259,6 @@ fn render_flow_band(selected: &RouteMapInventoryItem, cx: &mut Context<WgApp>) -
         "Facts",
         selected_summary(selected).to_string(),
         cx.theme().accent,
-        cx.theme().accent_foreground,
         cx.theme().accent.alpha(0.18),
         cx.theme().accent.alpha(0.36),
         cx,
@@ -231,7 +278,6 @@ fn render_flow_band(selected: &RouteMapInventoryItem, cx: &mut Context<WgApp>) -
                 .join(" · ")
         },
         cx.theme().info,
-        cx.theme().info_foreground,
         cx.theme().info.alpha(0.16),
         cx.theme().info.alpha(0.34),
         cx,
@@ -251,7 +297,6 @@ fn render_flow_band(selected: &RouteMapInventoryItem, cx: &mut Context<WgApp>) -
                 .join(" · ")
         },
         cx.theme().warning,
-        cx.theme().warning_foreground,
         cx.theme().warning.alpha(0.12),
         cx.theme().warning.alpha(0.34),
         cx,
@@ -271,7 +316,6 @@ fn flow_band_text(
     label: &str,
     body: String,
     surface: Hsla,
-    foreground: Hsla,
     fill: Hsla,
     border: Hsla,
     cx: &mut Context<WgApp>,
@@ -304,11 +348,8 @@ fn flow_band_text(
         .child(
             div()
                 .text_sm()
-                .text_color(foreground)
-                .child(body)
-                .when(cx.theme().mode == ThemeMode::Light, |this| {
-                    this.opacity(0.94)
-                }),
+                .text_color(cx.theme().foreground)
+                .child(body),
         )
 }
 
