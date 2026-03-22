@@ -100,19 +100,16 @@ fn render_flow(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgApp
                     .min_h(px(0.0))
                     .overflow_y_scrollbar()
                     .child(
-                        h_flex()
-                            .w_full()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(FLOW_VERTICAL_MAX_WIDTH))
-                                    .flex_col()
-                                    .gap_4()
-                                    .pr_1()
-                                    .child(steps)
-                                    .child(render_flow_band(selected, cx)),
-                            ),
+                        h_flex().w_full().justify_center().child(
+                            div()
+                                .w_full()
+                                .max_w(px(FLOW_VERTICAL_MAX_WIDTH))
+                                .flex_col()
+                                .gap_4()
+                                .pr_1()
+                                .child(steps)
+                                .child(render_flow_band(selected, cx)),
+                        ),
                     ),
             )
     };

@@ -270,7 +270,11 @@ fn render_compact_events_layout(
 }
 
 fn compact_panel(height: Pixels, child: AnyElement) -> Div {
-    div().w_full().h(height).min_h(height).child(panel_shell(child))
+    div()
+        .w_full()
+        .h(height)
+        .min_h(height)
+        .child(panel_shell(child))
 }
 
 fn render_events_layout(
