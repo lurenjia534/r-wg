@@ -6,8 +6,7 @@ use gpui_component::{
     h_flex,
     sidebar::{Sidebar, SidebarGroup, SidebarToggleButton},
     tooltip::Tooltip,
-    v_flex, ActiveTheme as _, Collapsible, Icon, IconName, Placement, StyledExt as _,
-    WindowExt as _,
+    v_flex, ActiveTheme as _, Collapsible, Icon, IconName, StyledExt as _,
 };
 
 use super::super::state::{SidebarItem, WgApp};
@@ -224,6 +223,13 @@ impl RenderOnce for LeftPanelSurface {
             }
             LeftPanelPresentation::Overlay => false,
         };
+        let header = render_sidebar_header(
+            &self.snapshot,
+            self.app.clone(),
+            collapsed,
+            self.presentation,
+            cx,
+        );
         let footer =
             NavMenu::new(self.app.clone(), self.snapshot.footer.clone()).collapsed(collapsed);
 
@@ -231,18 +237,7 @@ impl RenderOnce for LeftPanelSurface {
             .collapsible(matches!(self.presentation, LeftPanelPresentation::Docked))
             .collapsed(collapsed)
             .w(px(SIDEBAR_EXPANDED_WIDTH))
-            .when(
-                matches!(self.presentation, LeftPanelPresentation::Docked),
-                |this| {
-                    this.header(render_sidebar_header(
-                        &self.snapshot,
-                        self.app.clone(),
-                        collapsed,
-                        self.presentation,
-                        cx,
-                    ))
-                },
-            )
+            .header(header)
             .when(
                 matches!(self.presentation, LeftPanelPresentation::Overlay),
                 |this| this.w_full().border_r_0(),
@@ -318,69 +313,64 @@ pub(crate) fn sidebar_uses_overlay(window: &Window) -> bool {
     window.viewport_size().width < px(SIDEBAR_OVERLAY_BREAKPOINT)
 }
 
-pub(crate) fn sync_left_panel_overlay(
-    panel: &Entity<LeftPanelState>,
-    app: &mut WgApp,
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-) {
-    let use_overlay = sidebar_uses_overlay(window);
-    if !use_overlay {
-        if app.ui_session.sidebar_overlay_open {
-            app.close_sidebar_overlay(cx);
-            if window.has_active_sheet(cx) {
-                window.close_sheet(cx);
-            }
-        }
-        return;
+pub(crate) fn sync_left_panel_overlay(app: &mut WgApp, window: &Window, cx: &mut Context<WgApp>) {
+    if !sidebar_can_present_overlay(window) && app.ui_session.sidebar_overlay_open {
+        app.close_sidebar_overlay(cx);
     }
-
-    if !app.ui_session.sidebar_overlay_open || window.has_active_sheet(cx) {
-        return;
-    }
-
-    if panel.read(cx).snapshot.is_none() {
-        return;
-    }
-    let app_handle = cx.entity();
-    let panel_handle = panel.clone();
-    let sheet_width = overlay_sheet_width(window);
-
-    window.open_sheet_at(Placement::Left, cx, move |sheet, _window, cx| {
-        let snapshot = panel_handle
-            .read(cx)
-            .snapshot
-            .as_ref()
-            .expect("left panel snapshot should exist")
-            .clone();
-        let app_for_close = app_handle.clone();
-        let overlay_app = app_handle.clone();
-        sheet
-            .size(sheet_width)
-            .resizable(false)
-            .overlay(true)
-            .overlay_closable(true)
-            .title(render_overlay_sheet_title(&snapshot, cx))
-            .on_close(move |_, _, cx| {
-                app_for_close.update(cx, |app, cx| {
-                    app.close_sidebar_overlay(cx);
-                });
-            })
-            .child(LeftPanelSurface::new(
-                overlay_app,
-                snapshot.clone(),
-                LeftPanelPresentation::Overlay,
-            ))
-    });
 }
 
-pub(crate) fn toggle_sidebar(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
-    if sidebar_uses_overlay(window) {
+pub(crate) fn render_left_panel_overlay(
+    panel: &Entity<LeftPanelState>,
+    app: &WgApp,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) -> Option<AnyElement> {
+    if !app.ui_session.sidebar_overlay_open || !sidebar_can_present_overlay(window) {
+        return None;
+    }
+
+    let (app_handle, snapshot) = {
+        let panel = panel.read(cx);
+        let snapshot = panel.snapshot.as_ref()?.clone();
+        (panel.app.clone(), snapshot)
+    };
+
+    Some(
+        div()
+            .id("left-panel-overlay")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .bg(cx.theme().background.alpha(0.42))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_sidebar_overlay(cx);
+            }))
+            .child(
+                h_flex().h_full().w_full().child(
+                    div()
+                        .id("left-panel-overlay-drawer")
+                        .h_full()
+                        .w(overlay_sheet_width(window))
+                        .shadow_xl()
+                        .on_click(|_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(LeftPanelSurface::new(
+                            app_handle,
+                            snapshot,
+                            LeftPanelPresentation::Overlay,
+                        )),
+                ),
+            )
+            .into_any_element(),
+    )
+}
+
+pub(crate) fn toggle_sidebar(app: &mut WgApp, window: &Window, cx: &mut Context<WgApp>) {
+    if sidebar_uses_overlay(window) || sidebar_is_force_collapsed(window) {
         if app.ui_session.sidebar_overlay_open {
             app.close_sidebar_overlay(cx);
-            if window.has_active_sheet(cx) {
-                window.close_sheet(cx);
-            }
         } else {
             app.open_sidebar_overlay(cx);
         }
@@ -400,13 +390,8 @@ fn render_sidebar_header(
         .collapsed(collapsed)
         .on_click(move |_, window, cx| {
             app_handle.update(cx, |app, cx| match presentation {
-                LeftPanelPresentation::Docked => app.toggle_sidebar_collapsed(cx),
-                LeftPanelPresentation::Overlay => {
-                    app.close_sidebar_overlay(cx);
-                    if window.has_active_sheet(cx) {
-                        window.close_sheet(cx);
-                    }
-                }
+                LeftPanelPresentation::Docked => toggle_sidebar(app, window, cx),
+                LeftPanelPresentation::Overlay => app.close_sidebar_overlay(cx),
             });
         });
 
@@ -478,49 +463,6 @@ fn render_sidebar_header(
         .into_any_element()
 }
 
-fn render_overlay_sheet_title(snapshot: &LeftPanelSnapshot, cx: &mut App) -> impl IntoElement {
-    let status_tone = if snapshot.runtime_running {
-        cx.theme().sidebar_primary
-    } else {
-        cx.theme().sidebar_border.alpha(0.9)
-    };
-
-    h_flex()
-        .items_center()
-        .gap_3()
-        .child(
-            div()
-                .size_8()
-                .rounded(cx.theme().radius)
-                .bg(cx.theme().sidebar_primary)
-                .text_color(cx.theme().sidebar_primary_foreground)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Icon::new(IconName::LayoutDashboard).size_4()),
-        )
-        .child(
-            v_flex()
-                .gap_0p5()
-                .overflow_hidden()
-                .child(div().text_sm().font_semibold().child("r-wg"))
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_1p5()
-                        .overflow_hidden()
-                        .child(div().size(px(6.0)).rounded_full().bg(status_tone))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .truncate()
-                                .child(snapshot.status_text.clone()),
-                        ),
-                ),
-        )
-}
-
 fn primary_nav_entries(
     active_item: SidebarItem,
     draft_dirty: bool,
@@ -570,7 +512,7 @@ fn render_nav_entry(
     cx: &mut App,
 ) -> AnyElement {
     let has_children = !entry.children.is_empty();
-    let is_clickable = !entry.disabled && (entry.item.is_some() || has_children);
+    let is_clickable = !entry.disabled && (entry.item.is_some() || (has_children && !collapsed));
     let item = entry.item;
     let open_state = has_children.then(|| {
         window.use_keyed_state(entry.key, cx, move |_, _| {
@@ -763,7 +705,15 @@ fn render_nav_suffix(suffix: NavSuffix, active: bool, cx: &mut App) -> impl Into
 }
 
 fn sidebar_is_collapsed(collapsed_pref: bool, window: &Window) -> bool {
-    collapsed_pref || window.viewport_size().width < px(SIDEBAR_FORCE_COLLAPSE_BREAKPOINT)
+    collapsed_pref || sidebar_is_force_collapsed(window)
+}
+
+fn sidebar_is_force_collapsed(window: &Window) -> bool {
+    window.viewport_size().width < px(SIDEBAR_FORCE_COLLAPSE_BREAKPOINT)
+}
+
+fn sidebar_can_present_overlay(window: &Window) -> bool {
+    sidebar_uses_overlay(window) || sidebar_is_force_collapsed(window)
 }
 
 fn activate_sidebar_item(
@@ -772,16 +722,17 @@ fn activate_sidebar_item(
     window: &mut Window,
     cx: &mut Context<WgApp>,
 ) {
-    let close_overlay = sidebar_uses_overlay(window) && app.ui_session.sidebar_overlay_open;
-    if close_overlay {
-        app.close_sidebar_overlay(cx);
-        if window.has_active_sheet(cx) {
-            window.close_sheet(cx);
+    if app.ui_session.sidebar_active == item {
+        if app.ui_session.sidebar_overlay_open {
+            app.close_sidebar_overlay(cx);
         }
+        return;
     }
 
-    if app.ui_session.sidebar_active != item {
-        app.request_sidebar_active(item, window, cx);
+    app.request_sidebar_active(item, window, cx);
+
+    if app.ui_session.sidebar_overlay_open && app.ui_session.sidebar_active == item {
+        app.close_sidebar_overlay(cx);
     }
 }
 

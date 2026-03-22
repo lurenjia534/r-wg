@@ -502,6 +502,7 @@ impl WgApp {
             }
             PendingDraftAction::ActivateSidebar(item) => {
                 self.set_sidebar_active(item, cx);
+                self.close_sidebar_overlay(cx);
             }
             PendingDraftAction::NewDraft => {
                 self.set_selected_config_id(None, cx);

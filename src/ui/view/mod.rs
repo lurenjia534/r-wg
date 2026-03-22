@@ -70,7 +70,7 @@ impl Render for WgApp {
         {
             let left_panel = left_panel::ensure_left_panel(cx.entity(), window, cx);
             left_panel::sync_left_panel(&left_panel, self, cx);
-            left_panel::sync_left_panel_overlay(&left_panel, self, window, cx);
+            left_panel::sync_left_panel_overlay(self, window, cx);
             let use_sidebar_overlay = left_panel::sidebar_uses_overlay(window);
             let show_sidebar_overlay_trigger =
                 use_sidebar_overlay && !self.ui_session.sidebar_overlay_open;
@@ -178,6 +178,11 @@ impl Render for WgApp {
             }
 
             let mut overlays = div().absolute().top_0().left_0().size_full();
+            if let Some(left_panel_overlay) =
+                left_panel::render_left_panel_overlay(&left_panel, self, window, cx)
+            {
+                overlays = overlays.child(left_panel_overlay);
+            }
             if let Some(sheet_layer) = Root::render_sheet_layer(window, cx) {
                 overlays = overlays.child(sheet_layer);
             }
