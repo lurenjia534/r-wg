@@ -14,7 +14,10 @@ mod top_bar;
 mod widgets;
 
 use gpui::*;
-use gpui_component::{scroll::ScrollableElement as _, ActiveTheme as _, Root};
+use gpui_component::{
+    button::Button, scroll::ScrollableElement as _, ActiveTheme as _, Icon, IconName, Root,
+    Sizable as _,
+};
 
 use super::state::{ConfigDraftState, SidebarItem, WgApp};
 use super::themes::AppearancePolicy;
@@ -65,8 +68,16 @@ impl Render for WgApp {
             .then(|| self.shared_view_data(cx));
 
         {
-            let main = div()
+            let left_panel = left_panel::ensure_left_panel(cx.entity(), window, cx);
+            left_panel::sync_left_panel(&left_panel, self, cx);
+            left_panel::sync_left_panel_overlay(&left_panel, self, window, cx);
+            let use_sidebar_overlay = left_panel::sidebar_uses_overlay(window);
+            let show_sidebar_overlay_trigger =
+                use_sidebar_overlay && !self.ui_session.sidebar_overlay_open;
+
+            let mut main = div()
                 .size_full()
+                .relative()
                 .flex()
                 .flex_row()
                 .bg(linear_gradient(
@@ -74,84 +85,97 @@ impl Render for WgApp {
                     linear_color_stop(cx.theme().background, 0.0),
                     linear_color_stop(cx.theme().muted, 1.0),
                 ))
-                .text_color(cx.theme().foreground)
-                // 左侧：隧道列表 + 操作按钮
-                .child(left_panel::render_left_panel(self, cx))
-                .child({
-                    let main_body = match self.ui_session.sidebar_active {
-                        SidebarItem::Overview => {
-                            let overview_page =
-                                overview::ensure_overview_page(cx.entity(), window, cx);
-                            overview_page.into_any_element()
-                        }
-                        SidebarItem::Configs => {
-                            let workspace = self.ensure_configs_workspace(cx);
-                            div()
-                                .flex()
-                                .flex_1()
-                                .min_h(px(0.0))
-                                .child(workspace)
-                                .into_any_element()
-                        }
-                        SidebarItem::Proxies => {
-                            proxies::render_proxies(self, window, cx).into_any_element()
-                        }
-                        SidebarItem::Logs => logs::render_logs(self, window, cx).into_any_element(),
-                        SidebarItem::Dns => dns::render_dns(self, cx).into_any_element(),
-                        SidebarItem::About => {
-                            about::render_about(self, window, cx).into_any_element()
-                        }
-                        SidebarItem::Advanced => {
-                            advanced::render_advanced(self, cx).into_any_element()
-                        }
-                        SidebarItem::RouteMap => {
-                            let data = root_data
-                                .as_ref()
-                                .expect("root data should exist outside Configs");
-                            route_map::render_route_map(self, data, window, cx).into_any_element()
-                        }
-                        _ => overview::render_placeholder(cx).into_any_element(),
-                    };
+                .text_color(cx.theme().foreground);
 
-                    if self.ui_session.sidebar_active == SidebarItem::Configs {
+            if !use_sidebar_overlay {
+                main = main.child(left_panel.clone());
+            }
+
+            main = main.child({
+                let main_body = match self.ui_session.sidebar_active {
+                    SidebarItem::Overview => {
+                        let overview_page = overview::ensure_overview_page(cx.entity(), window, cx);
+                        overview_page.into_any_element()
+                    }
+                    SidebarItem::Configs => {
+                        let workspace = self.ensure_configs_workspace(cx);
                         div()
                             .flex()
-                            .flex_col()
-                            .gap_3()
-                            .flex_grow()
+                            .flex_1()
                             .min_h(px(0.0))
-                            .p_3()
-                            .child(main_body)
+                            .child(workspace)
                             .into_any_element()
-                    } else {
+                    }
+                    SidebarItem::Proxies => {
+                        proxies::render_proxies(self, window, cx).into_any_element()
+                    }
+                    SidebarItem::Logs => logs::render_logs(self, window, cx).into_any_element(),
+                    SidebarItem::Dns => dns::render_dns(self, cx).into_any_element(),
+                    SidebarItem::About => about::render_about(self, window, cx).into_any_element(),
+                    SidebarItem::Advanced => advanced::render_advanced(self, cx).into_any_element(),
+                    SidebarItem::RouteMap => {
                         let data = root_data
                             .as_ref()
                             .expect("root data should exist outside Configs");
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_3()
-                            .flex_grow()
-                            .min_h(px(0.0))
-                            .p_3()
-                            .child(top_bar::render_top_bar(self, data, cx))
-                            .child({
-                                let body = div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .min_h(px(0.0))
-                                    .child(main_body);
-
-                                if self.ui_session.sidebar_active == SidebarItem::Overview {
-                                    body.overflow_y_scrollbar().into_any_element()
-                                } else {
-                                    body.into_any_element()
-                                }
-                            })
-                            .into_any_element()
+                        route_map::render_route_map(self, data, window, cx).into_any_element()
                     }
-                });
+                    _ => overview::render_placeholder(cx).into_any_element(),
+                };
+
+                if self.ui_session.sidebar_active == SidebarItem::Configs {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .flex_grow()
+                        .min_h(px(0.0))
+                        .p_3()
+                        .child(main_body)
+                        .into_any_element()
+                } else {
+                    let data = root_data
+                        .as_ref()
+                        .expect("root data should exist outside Configs");
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .flex_grow()
+                        .min_h(px(0.0))
+                        .p_3()
+                        .child(top_bar::render_top_bar(self, data, cx))
+                        .child({
+                            let body = div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_h(px(0.0))
+                                .child(main_body);
+
+                            if self.ui_session.sidebar_active == SidebarItem::Overview {
+                                body.overflow_y_scrollbar().into_any_element()
+                            } else {
+                                body.into_any_element()
+                            }
+                        })
+                        .into_any_element()
+                }
+            });
+
+            if show_sidebar_overlay_trigger {
+                main = main.child(
+                    div().absolute().top_3().left_3().child(
+                        Button::new("sidebar-overlay-trigger")
+                            .outline()
+                            .small()
+                            .icon(Icon::new(IconName::PanelLeftOpen).size_4())
+                            .tooltip("Open navigation")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                left_panel::toggle_sidebar(this, window, cx);
+                            })),
+                    ),
+                );
+            }
 
             let mut overlays = div().absolute().top_0().left_0().size_full();
             if let Some(sheet_layer) = Root::render_sheet_layer(window, cx) {

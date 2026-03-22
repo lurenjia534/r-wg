@@ -960,6 +960,24 @@ pub(crate) enum SidebarItem {
 }
 
 impl SidebarItem {
+    pub(crate) fn nav_key(self) -> &'static str {
+        match self {
+            Self::Overview => "overview",
+            Self::TrafficStats => "traffic-stats",
+            Self::Connections => "connections",
+            Self::Logs => "logs",
+            Self::Proxies => "proxies",
+            Self::Rules => "rules",
+            Self::Dns => "dns",
+            Self::Providers => "providers",
+            Self::Configs => "configs",
+            Self::Advanced => "preferences",
+            Self::Topology => "topology",
+            Self::RouteMap => "route-map",
+            Self::About => "about",
+        }
+    }
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
@@ -982,10 +1000,10 @@ impl SidebarItem {
         match self {
             Self::Overview => IconName::LayoutDashboard,
             Self::TrafficStats => IconName::ChartPie,
-            Self::Connections => IconName::Globe,
+            Self::Connections => IconName::Replace,
             Self::Logs => IconName::SquareTerminal,
             Self::Proxies => IconName::Globe,
-            Self::Rules => IconName::Menu,
+            Self::Rules => IconName::Inspector,
             Self::Dns => IconName::Search,
             Self::Providers => IconName::Building2,
             Self::Configs => IconName::File,
@@ -1461,6 +1479,8 @@ impl UiPrefsState {
 pub(crate) struct UiSessionState {
     pub(crate) traffic_period: TrafficPeriod,
     pub(crate) sidebar_active: SidebarItem,
+    pub(crate) sidebar_collapsed: bool,
+    pub(crate) sidebar_overlay_open: bool,
     pub(crate) show_alternate_theme_preview: bool,
     pub(crate) route_map_mode: RouteMapMode,
     pub(crate) route_map_family_filter: RouteFamilyFilter,
@@ -1473,6 +1493,8 @@ impl UiSessionState {
         Self {
             traffic_period: prefs.preferred_traffic_period,
             sidebar_active: SidebarItem::Overview,
+            sidebar_collapsed: false,
+            sidebar_overlay_open: false,
             show_alternate_theme_preview: false,
             route_map_mode: RouteMapMode::Flow,
             route_map_family_filter: RouteFamilyFilter::All,
@@ -1908,6 +1930,33 @@ impl WgApp {
             self.ui_session.sidebar_active = value;
             cx.notify();
         }
+    }
+
+    pub(crate) fn set_sidebar_collapsed(&mut self, value: bool, cx: &mut gpui::Context<Self>) {
+        if self.ui_session.sidebar_collapsed != value {
+            self.ui_session.sidebar_collapsed = value;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn toggle_sidebar_collapsed(&mut self, cx: &mut gpui::Context<Self>) {
+        let next = !self.ui_session.sidebar_collapsed;
+        self.set_sidebar_collapsed(next, cx);
+    }
+
+    pub(crate) fn set_sidebar_overlay_open(&mut self, value: bool, cx: &mut gpui::Context<Self>) {
+        if self.ui_session.sidebar_overlay_open != value {
+            self.ui_session.sidebar_overlay_open = value;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn open_sidebar_overlay(&mut self, cx: &mut gpui::Context<Self>) {
+        self.set_sidebar_overlay_open(true, cx);
+    }
+
+    pub(crate) fn close_sidebar_overlay(&mut self, cx: &mut gpui::Context<Self>) {
+        self.set_sidebar_overlay_open(false, cx);
     }
 
     pub(crate) fn set_route_map_mode(&mut self, value: RouteMapMode, cx: &mut gpui::Context<Self>) {
