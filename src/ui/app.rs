@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::persistence;
+use super::single_instance::PrimaryInstance;
 use super::state::WgApp;
 use super::themes::{self, AppearancePolicy};
 use super::tray;
@@ -27,7 +28,7 @@ struct StartupThemePrefs {
     dark_name: Option<SharedString>,
 }
 
-pub fn run() {
+pub fn run(primary: PrimaryInstance) {
     // 在 UI 启动前先创建后端引擎，供整个应用生命周期复用。
     let engine = Engine::new();
 
@@ -68,6 +69,7 @@ pub fn run() {
             );
 
             let engine = engine.clone();
+            let primary = primary;
             cx.open_window(
                 WindowOptions {
                     app_id: Some("r-wg".to_string()),
@@ -99,6 +101,7 @@ pub fn run() {
                     sync_engine_status(view_handle.clone(), engine.clone(), cx);
                     // 初始化系统托盘并启动命令监听。
                     tray::init(
+                        primary.clone(),
                         window.window_handle(),
                         view_handle.clone(),
                         engine.clone(),

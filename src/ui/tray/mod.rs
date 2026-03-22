@@ -5,6 +5,7 @@ mod types;
 use gpui::{AnyWindowHandle, App, Window};
 use r_wg::backend::wg::Engine;
 
+use super::single_instance::PrimaryInstance;
 use super::state::WgApp;
 
 /// 初始化托盘。
@@ -14,12 +15,13 @@ use super::state::WgApp;
 /// - 命令消费、退出编排等逻辑交给 controller；
 /// - 对外继续保持 `tray::init(...)` 入口不变。
 pub(crate) fn init(
+    primary: PrimaryInstance,
     window_handle: AnyWindowHandle,
     view: gpui::WeakEntity<WgApp>,
     engine: Engine,
     cx: &mut App,
 ) {
-    controller::init(window_handle, view, engine, cx);
+    controller::init(primary, window_handle, view, engine, cx);
 }
 
 /// 判断关闭窗口时是否应拦截为“最小化到托盘”。

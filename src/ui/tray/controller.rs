@@ -4,6 +4,7 @@ use r_wg::backend::wg::Engine;
 use r_wg::backend::wg::EngineError;
 use std::sync::{mpsc, Arc, Mutex};
 
+use crate::ui::single_instance::PrimaryInstance;
 use crate::ui::state::WgApp;
 
 use super::{platform, types::TrayCommand};
@@ -26,19 +27,23 @@ impl Global for TrayState {}
 /// - 在成功时挂起命令消费循环；
 /// - 在失败时把应用降级为“无托盘模式”。
 pub(super) fn init(
+    primary: PrimaryInstance,
     window_handle: AnyWindowHandle,
     view: gpui::WeakEntity<WgApp>,
     engine: Engine,
     cx: &mut App,
 ) {
     let (tx, rx) = mpsc::channel();
-    if platform::spawn_tray_thread(tx) {
-        TrayState::set_global(cx, TrayState { enabled: true });
-        start_command_loop(rx, window_handle, view, engine, cx);
-        return;
-    }
+    let tray_enabled = platform::spawn_tray_thread(tx.clone());
+    TrayState::set_global(
+        cx,
+        TrayState {
+            enabled: tray_enabled,
+        },
+    );
+    attach_activation_bridge(&primary, tx);
 
-    TrayState::set_global(cx, TrayState { enabled: false });
+    start_command_loop(primary, rx, window_handle, view, engine, cx);
 }
 
 /// 判断关闭窗口时是否应拦截为“最小化到托盘”。
@@ -55,6 +60,7 @@ pub(super) fn should_minimize_on_close(cx: &App) -> bool {
 /// 2. 此循环在 UI 异步上下文中接收命令；
 /// 3. 按命令分发到 UI 状态更新或后端引擎调用。
 fn start_command_loop(
+    primary: PrimaryInstance,
     rx: mpsc::Receiver<TrayCommand>,
     window_handle: AnyWindowHandle,
     view: gpui::WeakEntity<WgApp>,
@@ -65,30 +71,33 @@ fn start_command_loop(
     let view_handle = view.clone();
     let engine_handle = engine.clone();
 
-    cx.spawn(async move |cx| loop {
-        let rx = rx.clone();
-        let cmd = cx
-            .background_executor()
-            .spawn(async move { rx.lock().ok()?.recv().ok() })
-            .await;
-        let Some(cmd) = cmd else { break };
+    cx.spawn(async move |cx| {
+        let _single_instance_guard = primary;
+        loop {
+            let rx = rx.clone();
+            let cmd = cx
+                .background_executor()
+                .spawn(async move { rx.lock().ok()?.recv().ok() })
+                .await;
+            let Some(cmd) = cmd else { break };
 
-        match cmd {
-            TrayCommand::ShowWindow => {
-                focus_main_window(window_handle, cx);
-            }
-            TrayCommand::StartTunnel => {
-                let _ = view_handle.update(cx, |this, cx| {
-                    this.handle_start_from_tray(cx);
-                });
-            }
-            TrayCommand::StopTunnel => {
-                let _ = view_handle.update(cx, |this, cx| {
-                    this.handle_stop_from_tray(cx);
-                });
-            }
-            TrayCommand::QuitApp => {
-                request_quit(view_handle.clone(), engine_handle.clone(), cx).await;
+            match cmd {
+                TrayCommand::ShowWindow => {
+                    focus_main_window(window_handle, cx);
+                }
+                TrayCommand::StartTunnel => {
+                    let _ = view_handle.update(cx, |this, cx| {
+                        this.handle_start_from_tray(cx);
+                    });
+                }
+                TrayCommand::StopTunnel => {
+                    let _ = view_handle.update(cx, |this, cx| {
+                        this.handle_stop_from_tray(cx);
+                    });
+                }
+                TrayCommand::QuitApp => {
+                    request_quit(view_handle.clone(), engine_handle.clone(), cx).await;
+                }
             }
         }
     })
@@ -104,6 +113,12 @@ fn focus_main_window(window_handle: AnyWindowHandle, cx: &mut gpui::AsyncApp) {
     let _ = window_handle.update(cx, |_, window, _| {
         platform::show_window(window);
         window.activate_window();
+    });
+}
+
+fn attach_activation_bridge(primary: &PrimaryInstance, tx: mpsc::Sender<TrayCommand>) {
+    primary.attach(move || {
+        let _ = tx.send(TrayCommand::ShowWindow);
     });
 }
 
@@ -164,5 +179,30 @@ async fn request_quit(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut gp
             platform::shutdown_tray();
             let _ = cx.update(|app| app.quit());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::{attach_activation_bridge, TrayCommand};
+    use crate::ui::single_instance::PrimaryInstance;
+
+    #[test]
+    fn activation_bridge_sends_show_window_even_without_tray_thread() {
+        let primary = PrimaryInstance::new_for_tests();
+        let (tx, rx) = mpsc::channel();
+
+        // This covers the "tray init failed" path: the bridge must still exist even when the
+        // tray thread never produced commands of its own.
+        attach_activation_bridge(&primary, tx);
+        primary.trigger_activate_for_tests();
+
+        let command = rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("activation bridge should emit ShowWindow");
+        assert!(matches!(command, TrayCommand::ShowWindow));
     }
 }

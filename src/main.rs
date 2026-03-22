@@ -11,5 +11,12 @@ fn main() {
     }
 
     r_wg::log::init();
-    ui::run();
+    match ui::single_instance::startup() {
+        Ok(ui::single_instance::StartupDecision::Primary(primary)) => ui::run(primary),
+        Ok(ui::single_instance::StartupDecision::Secondary) => return,
+        Err(err) => {
+            tracing::error!("ui single-instance startup failed: {err}");
+            ui::single_instance::report_startup_error(&err);
+        }
+    }
 }
