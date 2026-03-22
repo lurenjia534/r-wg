@@ -25,12 +25,20 @@ use super::data::ConfigsViewData;
 const CONFIGS_COMPACT_BREAKPOINT: f32 = 1260.0;
 const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 76.0;
 const CONFIGS_LIBRARY_SCROLL_STATE_ID: &str = "configs-library-scroll";
+const CONFIGS_LIBRARY_COMPACT_LIST_HEIGHT: f32 = 320.0;
+const CONFIGS_EDITOR_COMPACT_SURFACE_HEIGHT: f32 = 360.0;
 
 struct ConfigsRuntimeView {
     selected_id: Option<u64>,
     latest_status: String,
     last_error: String,
     running_name: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConfigsLayoutMode {
+    Desktop,
+    Compact,
 }
 
 impl WgApp {
@@ -133,41 +141,51 @@ fn render_configs_page(
     window: &mut Window,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
-    let compact = window.viewport_size().width < px(CONFIGS_COMPACT_BREAKPOINT);
-    let workspace = if compact {
+    let mode = if window.viewport_size().width < px(CONFIGS_COMPACT_BREAKPOINT) {
+        ConfigsLayoutMode::Compact
+    } else {
+        ConfigsLayoutMode::Desktop
+    };
+    let workspace = if matches!(mode, ConfigsLayoutMode::Compact) {
         div()
             .flex()
             .flex_col()
-            .gap_3()
             .flex_1()
             .min_h(px(0.0))
-            .p_3()
-            .child(render_library_panel(
-                app_handle,
-                runtime.selected_id,
-                data,
-                workspace,
-                library_rows,
-                library_search_input,
-                window,
-                cx,
-            ))
-            .child(render_editor_panel(
-                app_handle,
-                workspace,
-                data,
-                name_input,
-                config_input,
-                cx,
-            ))
-            .child(render_inspector_panel(
-                runtime,
-                workspace,
-                inspector_tab,
-                compact,
-                data,
-                cx,
-            ))
+            .overflow_y_scrollbar()
+            .child(
+                v_flex()
+                    .gap_3()
+                    .p_3()
+                    .child(render_library_panel(
+                        app_handle,
+                        runtime.selected_id,
+                        data,
+                        workspace,
+                        library_rows,
+                        library_search_input,
+                        mode,
+                        window,
+                        cx,
+                    ))
+                    .child(render_editor_panel(
+                        app_handle,
+                        workspace,
+                        data,
+                        name_input,
+                        config_input,
+                        mode,
+                        cx,
+                    ))
+                    .child(render_inspector_panel(
+                        runtime,
+                        workspace,
+                        inspector_tab,
+                        mode,
+                        data,
+                        cx,
+                    )),
+            )
             .into_any_element()
     } else {
         div()
@@ -215,6 +233,7 @@ fn render_configs_page(
                                 workspace,
                                 library_rows,
                                 library_search_input,
+                                mode,
                                 window,
                                 cx,
                             ))),
@@ -226,6 +245,7 @@ fn render_configs_page(
                             data,
                             name_input,
                             config_input,
+                            mode,
                             cx,
                         )),
                     ))
@@ -237,7 +257,7 @@ fn render_configs_page(
                                 runtime,
                                 workspace,
                                 inspector_tab,
-                                compact,
+                                mode,
                                 data,
                                 cx,
                             ))),
@@ -327,9 +347,11 @@ fn render_library_panel(
     _workspace: &Entity<ConfigsWorkspace>,
     rows: &Arc<Vec<ConfigsLibraryRow>>,
     search_input: &Entity<InputState>,
+    mode: ConfigsLayoutMode,
     window: &mut Window,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
+    let desktop = matches!(mode, ConfigsLayoutMode::Desktop);
     let query = search_input.read(cx).value().trim().to_lowercase();
     let total_count = rows.len();
     let filtered_indices = Arc::new(
@@ -374,12 +396,16 @@ fn render_library_panel(
     div()
         .flex()
         .flex_col()
-        .h_full()
         .min_h(px(0.0))
         .rounded_lg()
         .border_1()
         .border_color(cx.theme().border)
-        .bg(cx.theme().background.alpha(0.76))
+        .bg(if desktop {
+            cx.theme().background.alpha(0.76)
+        } else {
+            cx.theme().background
+        })
+        .when(desktop, |this| this.h_full())
         .child(
             div()
                 .px_4()
@@ -496,10 +522,14 @@ fn render_library_panel(
             div()
                 .flex()
                 .flex_col()
-                .flex_1()
                 .min_h(px(0.0))
                 .rounded_md()
                 .overflow_hidden()
+                .when(desktop, |this| this.flex_1())
+                .when(!desktop, |this| {
+                    this.h(px(CONFIGS_LIBRARY_COMPACT_LIST_HEIGHT))
+                        .min_h(px(CONFIGS_LIBRARY_COMPACT_LIST_HEIGHT))
+                })
                 .child(if rows.is_empty() {
                     div()
                         .flex()
@@ -645,8 +675,10 @@ fn render_editor_panel(
     data: &ConfigsViewData,
     name_input: &Entity<InputState>,
     config_input: &Entity<InputState>,
+    mode: ConfigsLayoutMode,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
+    let desktop = matches!(mode, ConfigsLayoutMode::Desktop);
     let title_block = if data.title_editing {
         div()
             .max_w_full()
@@ -697,17 +729,25 @@ fn render_editor_panel(
     div()
         .flex()
         .flex_col()
-        .h_full()
         .min_h(px(0.0))
         .rounded_xl()
         .border_1()
         .border_color(cx.theme().border.alpha(0.92))
-        .bg(linear_gradient(
-            180.0,
-            linear_color_stop(cx.theme().background.alpha(0.98), 0.0),
-            linear_color_stop(cx.theme().group_box.alpha(0.88), 1.0),
-        ))
+        .bg(if desktop {
+            linear_gradient(
+                180.0,
+                linear_color_stop(cx.theme().background.alpha(0.98), 0.0),
+                linear_color_stop(cx.theme().group_box.alpha(0.88), 1.0),
+            )
+        } else {
+            linear_gradient(
+                180.0,
+                linear_color_stop(cx.theme().background, 0.0),
+                linear_color_stop(cx.theme().group_box, 1.0),
+            )
+        })
         .shadow_sm()
+        .when(desktop, |this| this.h_full())
         .child(
             div()
                 .px_6()
@@ -760,19 +800,22 @@ fn render_editor_panel(
                 .flex()
                 .flex_col()
                 .gap_4()
-                .flex_1()
                 .min_h(px(0.0))
                 .px_4()
                 .pb_4()
                 .pt_4()
+                .when(desktop, |this| this.flex_1())
                 .child(render_diagnostics_strip(data, cx))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .w_full()
-                        .flex_grow()
-                        .min_h(px(500.0))
+                        .when(desktop, |this| this.flex_grow().min_h(px(500.0)))
+                        .when(!desktop, |this| {
+                            this.h(px(CONFIGS_EDITOR_COMPACT_SURFACE_HEIGHT))
+                                .min_h(px(CONFIGS_EDITOR_COMPACT_SURFACE_HEIGHT))
+                        })
                         .rounded_2xl()
                         .border_1()
                         .border_color(cx.theme().border.alpha(0.9))
@@ -815,10 +858,11 @@ fn render_inspector_panel(
     runtime: &ConfigsRuntimeView,
     workspace: &Entity<ConfigsWorkspace>,
     inspector_tab: ConfigInspectorTab,
-    compact: bool,
+    mode: ConfigsLayoutMode,
     data: &ConfigsViewData,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
+    let compact = matches!(mode, ConfigsLayoutMode::Compact);
     let preview_card = {
         let addresses = data
             .shared
@@ -866,6 +910,7 @@ fn render_inspector_panel(
                 .item("Route Table", route_table, 1)
                 .item("Allowed IPs", routes, 1)
                 .item("Peers", peers, 1),
+            compact,
             cx,
         )
     };
@@ -922,6 +967,7 @@ fn render_inspector_panel(
                         .child(message),
                 )
                 .child(details),
+            compact,
             cx,
         )
     };
@@ -954,6 +1000,7 @@ fn render_inspector_panel(
                 ),
                 cx,
             )),
+        compact,
         cx,
     );
 
@@ -977,23 +1024,35 @@ fn render_inspector_panel(
         .flex()
         .flex_col()
         .gap_3()
-        .h_full()
         .min_h(px(0.0))
         .rounded_xl()
         .border_1()
         .border_color(cx.theme().border.alpha(0.9))
-        .bg(cx.theme().background.alpha(0.84))
+        .bg(if compact {
+            cx.theme().background
+        } else {
+            cx.theme().background.alpha(0.84)
+        })
+        .when(!compact, |this| this.h_full())
         .child(
             div()
                 .px_4()
                 .py_4()
                 .border_b_1()
                 .border_color(cx.theme().border.alpha(0.62))
-                .bg(linear_gradient(
-                    180.0,
-                    linear_color_stop(cx.theme().background.alpha(0.96), 0.0),
-                    linear_color_stop(cx.theme().group_box.alpha(0.84), 1.0),
-                ))
+                .bg(if compact {
+                    linear_gradient(
+                        180.0,
+                        linear_color_stop(cx.theme().background, 0.0),
+                        linear_color_stop(cx.theme().group_box, 1.0),
+                    )
+                } else {
+                    linear_gradient(
+                        180.0,
+                        linear_color_stop(cx.theme().background.alpha(0.96), 0.0),
+                        linear_color_stop(cx.theme().group_box.alpha(0.84), 1.0),
+                    )
+                })
                 .child(
                     v_flex()
                         .gap_1()
@@ -1006,7 +1065,14 @@ fn render_inspector_panel(
                         ),
                 ),
         )
-        .child(
+        .child(if compact {
+            v_flex()
+                .gap_3()
+                .p_3()
+                .child(inspector_tabs)
+                .child(inspector_body)
+                .into_any_element()
+        } else {
             div()
                 .flex()
                 .flex_col()
@@ -1015,9 +1081,9 @@ fn render_inspector_panel(
                 .min_h(px(0.0))
                 .overflow_y_scrollbar()
                 .p_3()
-                .when(compact, |this| this.child(inspector_tabs))
-                .child(inspector_body),
-        )
+                .child(inspector_body)
+                .into_any_element()
+        })
 }
 
 fn inspector_tab_row(
@@ -1340,6 +1406,7 @@ fn inspector_card<T: IntoElement>(
     title: &'static str,
     subtitle: &'static str,
     body: T,
+    compact: bool,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     div()
@@ -1349,7 +1416,11 @@ fn inspector_card<T: IntoElement>(
         .rounded_xl()
         .border_1()
         .border_color(cx.theme().border.alpha(0.56))
-        .bg(cx.theme().group_box.alpha(0.84))
+        .bg(if compact {
+            cx.theme().group_box
+        } else {
+            cx.theme().group_box.alpha(0.84)
+        })
         .p_3()
         .child(
             v_flex()
