@@ -45,6 +45,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Ole",
     "Win32_System_Pipes",
     "Win32_System_ProcessStatus",
+    "Win32_System_RemoteDesktop",
     "Win32_System_Rpc",
     "Win32_System_Services",
     "Win32_System_SystemServices",

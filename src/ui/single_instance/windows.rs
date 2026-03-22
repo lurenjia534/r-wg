@@ -1,6 +1,8 @@
 use std::ffi::c_void;
 use std::io::{self, BufReader, Read, Write};
 use std::mem::MaybeUninit;
+use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -22,47 +24,52 @@ use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, WaitNamedPipeW, PIPE_READMODE_BYTE,
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
 use super::protocol::{read_json_line, write_json_line, UiInstanceReply, UiInstanceRequest};
 use super::{ActivationState, PlatformStartup};
 
 const MUTEX_NAME: &str = r"Local\r-wg-ui-single-instance";
-const PIPE_NAME: &str = r"\\.\pipe\r-wg-ui-control";
+const PIPE_NAME_PREFIX: &str = r"\\.\pipe\r-wg-ui-control";
 const PIPE_BUFFER_SIZE: u32 = 4096;
 const PIPE_WAIT_TIMEOUT_MS: u32 = 5_000;
 const PIPE_CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
+const LISTENER_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const PIPE_SDDL: &str = "O:SYG:SYD:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)";
 
 pub(super) struct PrimaryGuard {
-    mutex: HANDLE,
+    _mutex: OwnedHandle,
+}
+
+struct InstanceNames {
+    mutex_name: String,
+    pipe_name: String,
 }
 
 pub(super) fn startup(activation: Arc<ActivationState>) -> Result<PlatformStartup, String> {
-    let name = encode_wide(MUTEX_NAME);
-    let mutex = unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }
+    let names = instance_names()?;
+    let mutex_name = encode_wide(&names.mutex_name);
+    let mutex = unsafe { CreateMutexW(None, false, PCWSTR(mutex_name.as_ptr())) }
         .map_err(|err| format!("failed to create UI single-instance mutex: {err}"))?;
+    let mutex = unsafe { owned_handle_from_win32(mutex) };
     let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
 
     if already_exists {
-        unsafe {
-            let _ = CloseHandle(mutex);
-        }
-        send_activate()?;
+        drop(mutex);
+        send_activate(&names.pipe_name)?;
         return Ok(PlatformStartup::Secondary);
     }
 
-    if let Err(err) = spawn_listener(activation) {
-        unsafe {
-            let _ = CloseHandle(mutex);
-        }
+    if let Err(err) = spawn_listener(names.pipe_name.clone(), activation) {
+        drop(mutex);
         return Err(format!(
             "failed to start UI single-instance listener: {err}"
         ));
     }
 
-    Ok(PlatformStartup::Primary(PrimaryGuard { mutex }))
+    Ok(PlatformStartup::Primary(PrimaryGuard { _mutex: mutex }))
 }
 
 pub(super) fn show_bootstrap_error(message: &str) {
@@ -78,40 +85,68 @@ pub(super) fn show_bootstrap_error(message: &str) {
     }
 }
 
-impl Drop for PrimaryGuard {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.mutex);
-        }
+fn spawn_listener(pipe_name: String, activation: Arc<ActivationState>) -> io::Result<()> {
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let builder = thread::Builder::new().name("ui-single-instance".to_string());
+    builder
+        .spawn(move || run_listener(pipe_name, activation, ready_tx))
+        .map_err(|err| {
+            io::Error::new(err.kind(), format!("spawn listener thread failed: {err}"))
+        })?;
+
+    match ready_rx.recv_timeout(LISTENER_READY_TIMEOUT) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(message)) => Err(io::Error::new(io::ErrorKind::Other, message)),
+        Err(RecvTimeoutError::Timeout) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "timed out waiting for UI single-instance pipe to become ready",
+        )),
+        Err(RecvTimeoutError::Disconnected) => Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "UI single-instance listener thread exited before reporting readiness",
+        )),
     }
 }
 
-fn spawn_listener(activation: Arc<ActivationState>) -> io::Result<()> {
-    let builder = thread::Builder::new().name("ui-single-instance".to_string());
-    builder
-        .spawn(move || loop {
-            let instance = match ServerPipeInstance::create() {
-                Ok(instance) => instance,
-                Err(err) => {
-                    tracing::warn!("failed to create UI control pipe: {err}");
-                    thread::sleep(PIPE_CONNECT_RETRY_INTERVAL);
-                    continue;
+fn run_listener(
+    pipe_name: String,
+    activation: Arc<ActivationState>,
+    ready_tx: SyncSender<Result<(), String>>,
+) {
+    let mut ready_tx = Some(ready_tx);
+    loop {
+        let instance = match ServerPipeInstance::create(&pipe_name) {
+            Ok(instance) => {
+                if let Some(ready_tx) = ready_tx.take() {
+                    let _ = ready_tx.send(Ok(()));
                 }
-            };
+                instance
+            }
+            Err(err) => {
+                if let Some(ready_tx) = ready_tx.take() {
+                    let _ = ready_tx.send(Err(format!(
+                        "failed to create initial UI control pipe {pipe_name}: {err}"
+                    )));
+                    return;
+                }
+                tracing::warn!("failed to create UI control pipe {pipe_name}: {err}");
+                thread::sleep(PIPE_CONNECT_RETRY_INTERVAL);
+                continue;
+            }
+        };
 
-            match instance.connect() {
-                Ok(mut stream) => {
-                    if let Err(err) = handle_client(&mut stream, &activation) {
-                        tracing::debug!("ui single-instance pipe handling failed: {err}");
-                    }
-                }
-                Err(err) => {
-                    tracing::debug!("ui single-instance pipe connect failed: {err}");
-                    thread::sleep(PIPE_CONNECT_RETRY_INTERVAL);
+        match instance.connect() {
+            Ok(mut stream) => {
+                if let Err(err) = handle_client(&mut stream, &activation) {
+                    tracing::debug!("ui single-instance pipe handling failed: {err}");
                 }
             }
-        })
-        .map(|_| ())
+            Err(err) => {
+                tracing::debug!("ui single-instance pipe connect failed: {err}");
+                thread::sleep(PIPE_CONNECT_RETRY_INTERVAL);
+            }
+        }
+    }
 }
 
 fn handle_client(stream: &mut PipeStream, activation: &ActivationState) -> io::Result<()> {
@@ -127,8 +162,8 @@ fn handle_client(stream: &mut PipeStream, activation: &ActivationState) -> io::R
     }
 }
 
-fn send_activate() -> Result<(), String> {
-    let mut stream = PipeStream::connect()
+fn send_activate(pipe_name: &str) -> Result<(), String> {
+    let mut stream = PipeStream::connect(pipe_name)
         .map_err(|err| format!("failed to connect to primary UI instance: {err}"))?;
     write_json_line(&mut stream, &UiInstanceRequest::Activate)
         .map_err(|err| format!("failed to send UI activation request: {err}"))?;
@@ -141,6 +176,30 @@ fn send_activate() -> Result<(), String> {
     }
 }
 
+fn instance_names() -> Result<InstanceNames, String> {
+    let session_id = current_session_id()?;
+    Ok(InstanceNames {
+        mutex_name: MUTEX_NAME.to_string(),
+        pipe_name: pipe_name_for_session(session_id),
+    })
+}
+
+fn current_session_id() -> Result<u32, String> {
+    let process_id = unsafe { GetCurrentProcessId() };
+    let mut session_id = 0u32;
+    unsafe { ProcessIdToSessionId(process_id, &mut session_id) }
+        .map_err(|err| format!("failed to query current Windows session id: {err}"))?;
+    Ok(session_id)
+}
+
+fn pipe_name_for_session(session_id: u32) -> String {
+    format!("{PIPE_NAME_PREFIX}-{session_id}")
+}
+
+unsafe fn owned_handle_from_win32(handle: HANDLE) -> OwnedHandle {
+    OwnedHandle::from_raw_handle(handle.0 as RawHandle)
+}
+
 struct PipeStream {
     handle: HANDLE,
 }
@@ -148,8 +207,8 @@ struct PipeStream {
 unsafe impl Send for PipeStream {}
 
 impl PipeStream {
-    fn connect() -> io::Result<Self> {
-        let name = encode_wide(PIPE_NAME);
+    fn connect(pipe_name: &str) -> io::Result<Self> {
+        let name = encode_wide(pipe_name);
         let deadline = Instant::now() + Duration::from_millis(PIPE_WAIT_TIMEOUT_MS as u64);
         loop {
             unsafe {
@@ -228,9 +287,9 @@ struct ServerPipeInstance {
 }
 
 impl ServerPipeInstance {
-    fn create() -> io::Result<Self> {
+    fn create(pipe_name: &str) -> io::Result<Self> {
         let security = PipeSecurity::new()?;
-        let name = encode_wide(PIPE_NAME);
+        let name = encode_wide(pipe_name);
         let handle = unsafe {
             CreateNamedPipeW(
                 PCWSTR(name.as_ptr()),
@@ -345,5 +404,16 @@ fn win32_error_code(err: &windows::core::Error) -> u32 {
         code & 0xFFFF
     } else {
         code
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pipe_name_for_session;
+
+    #[test]
+    fn pipe_name_is_scoped_by_session() {
+        assert_eq!(pipe_name_for_session(7), r"\\.\pipe\r-wg-ui-control-7");
+        assert_ne!(pipe_name_for_session(7), pipe_name_for_session(8));
     }
 }

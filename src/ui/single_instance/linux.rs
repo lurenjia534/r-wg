@@ -5,12 +5,14 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use super::protocol::{read_json_line, write_json_line, UiInstanceReply, UiInstanceRequest};
 use super::{ActivationState, PlatformStartup};
 
 const SOCKET_DIR_NAME: &str = "r-wg";
 const SOCKET_FILE_NAME: &str = "ui.sock";
+const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_millis(200);
 
 pub(super) struct PrimaryGuard {
     runtime_dir: PathBuf,
@@ -115,12 +117,13 @@ fn spawn_listener(
                         );
                     }
                 }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         "ui single-instance accept failed for {}: {err}",
                         socket_path_for_thread.display()
                     );
-                    break;
+                    thread::sleep(ACCEPT_RETRY_INTERVAL);
                 }
             }
         })
