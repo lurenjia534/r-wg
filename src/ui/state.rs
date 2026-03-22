@@ -147,6 +147,7 @@ pub(crate) struct ConfigsWorkspace {
     pub(crate) pending_action: Option<PendingDraftAction>,
     pub(crate) validation_generation: u64,
     pub(crate) has_selection: bool,
+    pub(crate) primary_pane: ConfigsPrimaryPane,
     pub(crate) inspector_tab: ConfigInspectorTab,
     pub(crate) library_rows: Arc<Vec<ConfigsLibraryRow>>,
     pub(crate) library_width: f32,
@@ -170,6 +171,7 @@ impl ConfigsWorkspace {
             pending_action: None,
             validation_generation: 0,
             has_selection: false,
+            primary_pane: ConfigsPrimaryPane::Editor,
             inspector_tab: ConfigInspectorTab::Preview,
             library_rows: Arc::new(Vec::new()),
             library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,
@@ -335,6 +337,7 @@ impl ConfigsWorkspace {
             validation: DraftValidationState::Idle,
             needs_restart: false,
         };
+        self.primary_pane = ConfigsPrimaryPane::Editor;
         self.title_editing = false;
     }
 
@@ -350,7 +353,16 @@ impl ConfigsWorkspace {
             validation: DraftValidationState::Idle,
             needs_restart: false,
         };
+        self.primary_pane = ConfigsPrimaryPane::Editor;
         self.title_editing = false;
+    }
+
+    pub(crate) fn set_primary_pane(&mut self, value: ConfigsPrimaryPane) -> bool {
+        if self.primary_pane == value {
+            return false;
+        }
+        self.primary_pane = value;
+        true
     }
 
     pub(crate) fn set_inspector_tab(&mut self, value: ConfigInspectorTab) -> bool {
@@ -675,6 +687,13 @@ pub(crate) enum ConfigInspectorTab {
     #[serde(alias = "logs")]
     Activity,
     Diagnostics,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ConfigsPrimaryPane {
+    Library,
+    Editor,
+    Inspector,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

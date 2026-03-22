@@ -17,16 +17,16 @@ use gpui_component::{
 
 use super::super::format::{format_addresses, format_allowed_ips, format_dns, format_route_table};
 use super::super::state::{
-    ConfigInspectorTab, ConfigSource, ConfigsLibraryRow, ConfigsWorkspace, DraftValidationState,
-    EndpointFamily, WgApp,
+    ConfigInspectorTab, ConfigSource, ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace,
+    DraftValidationState, EndpointFamily, WgApp,
 };
 use super::data::ConfigsViewData;
 
-const CONFIGS_COMPACT_BREAKPOINT: f32 = 1260.0;
+const CONFIGS_DESKTOP_BREAKPOINT: f32 = 1420.0;
+const CONFIGS_COMPACT_BREAKPOINT: f32 = 1040.0;
 const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 76.0;
 const CONFIGS_LIBRARY_SCROLL_STATE_ID: &str = "configs-library-scroll";
-const CONFIGS_LIBRARY_COMPACT_LIST_HEIGHT: f32 = 320.0;
-const CONFIGS_EDITOR_COMPACT_SURFACE_HEIGHT: f32 = 360.0;
+const CONFIGS_MEDIUM_INSPECTOR_HEIGHT: f32 = 328.0;
 
 struct ConfigsRuntimeView {
     selected_id: Option<u64>,
@@ -38,6 +38,7 @@ struct ConfigsRuntimeView {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ConfigsLayoutMode {
     Desktop,
+    Medium,
     Compact,
 }
 
@@ -111,6 +112,7 @@ impl Render for ConfigsWorkspace {
                 &app_handle,
                 &workspace_handle,
                 &runtime,
+                self.primary_pane,
                 self.inspector_tab,
                 &self.library_rows,
                 &library_search_input,
@@ -130,6 +132,7 @@ fn render_configs_page(
     app_handle: &Entity<WgApp>,
     workspace: &Entity<ConfigsWorkspace>,
     runtime: &ConfigsRuntimeView,
+    primary_pane: ConfigsPrimaryPane,
     inspector_tab: ConfigInspectorTab,
     library_rows: &Arc<Vec<ConfigsLibraryRow>>,
     library_search_input: &Entity<InputState>,
@@ -141,129 +144,58 @@ fn render_configs_page(
     window: &mut Window,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
-    let mode = if window.viewport_size().width < px(CONFIGS_COMPACT_BREAKPOINT) {
-        ConfigsLayoutMode::Compact
-    } else {
+    let mode = if window.viewport_size().width >= px(CONFIGS_DESKTOP_BREAKPOINT) {
         ConfigsLayoutMode::Desktop
-    };
-    let workspace = if matches!(mode, ConfigsLayoutMode::Compact) {
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h(px(0.0))
-            .overflow_y_scrollbar()
-            .child(
-                v_flex()
-                    .gap_3()
-                    .p_3()
-                    .child(render_library_panel(
-                        app_handle,
-                        runtime.selected_id,
-                        data,
-                        workspace,
-                        library_rows,
-                        library_search_input,
-                        mode,
-                        window,
-                        cx,
-                    ))
-                    .child(render_editor_panel(
-                        app_handle,
-                        workspace,
-                        data,
-                        name_input,
-                        config_input,
-                        mode,
-                        cx,
-                    ))
-                    .child(render_inspector_panel(
-                        runtime,
-                        workspace,
-                        inspector_tab,
-                        mode,
-                        data,
-                        cx,
-                    )),
-            )
-            .into_any_element()
+    } else if window.viewport_size().width >= px(CONFIGS_COMPACT_BREAKPOINT) {
+        ConfigsLayoutMode::Medium
     } else {
-        div()
-            .flex_1()
-            .min_h(px(0.0))
-            .child(
-                h_resizable("configs-workspace")
-                    .on_resize({
-                        let app = app_handle.clone();
-                        move |state: &Entity<ResizableState>, _window, cx| {
-                            let sizes = state.read(cx).sizes().clone();
-                            if sizes.len() < 3 {
-                                return;
-                            }
-                            let library_width = sizes[0].as_f32();
-                            let inspector_width = sizes[2].as_f32();
-                            app.update(cx, |app, cx| {
-                                let changed = app.persist_configs_panel_widths(
-                                    library_width,
-                                    inspector_width,
-                                    cx,
-                                );
-                                if let Some(workspace) = app.ui.configs_workspace.clone() {
-                                    workspace.update(cx, |workspace, cx| {
-                                        if workspace
-                                            .set_panel_widths(library_width, inspector_width)
-                                        {
-                                            cx.notify();
-                                        }
-                                    });
-                                } else if changed {
-                                    cx.notify();
-                                }
-                            });
-                        }
-                    })
-                    .child(
-                        resizable_panel()
-                            .size(px(library_width))
-                            .size_range(px(240.0)..px(420.0))
-                            .child(div().h_full().p_3().child(render_library_panel(
-                                app_handle,
-                                runtime.selected_id,
-                                data,
-                                workspace,
-                                library_rows,
-                                library_search_input,
-                                mode,
-                                window,
-                                cx,
-                            ))),
-                    )
-                    .child(resizable_panel().size_range(px(420.0)..Pixels::MAX).child(
-                        div().h_full().p_3().child(render_editor_panel(
-                            app_handle,
-                            workspace,
-                            data,
-                            name_input,
-                            config_input,
-                            mode,
-                            cx,
-                        )),
-                    ))
-                    .child(
-                        resizable_panel()
-                            .size(px(inspector_width))
-                            .size_range(px(280.0)..px(440.0))
-                            .child(div().h_full().p_3().child(render_inspector_panel(
-                                runtime,
-                                workspace,
-                                inspector_tab,
-                                mode,
-                                data,
-                                cx,
-                            ))),
-                    ),
-            )
-            .into_any_element()
+        ConfigsLayoutMode::Compact
+    };
+    let workspace = match mode {
+        ConfigsLayoutMode::Desktop => render_configs_desktop_layout(
+            app_handle,
+            workspace,
+            runtime,
+            inspector_tab,
+            library_rows,
+            library_search_input,
+            library_width,
+            inspector_width,
+            data,
+            name_input,
+            config_input,
+            window,
+            cx,
+        ),
+        ConfigsLayoutMode::Medium => render_configs_medium_layout(
+            app_handle,
+            workspace,
+            runtime,
+            inspector_tab,
+            library_rows,
+            library_search_input,
+            library_width,
+            inspector_width,
+            data,
+            name_input,
+            config_input,
+            window,
+            cx,
+        ),
+        ConfigsLayoutMode::Compact => render_configs_compact_layout(
+            app_handle,
+            workspace,
+            runtime,
+            inspector_tab,
+            primary_pane,
+            library_rows,
+            library_search_input,
+            data,
+            name_input,
+            config_input,
+            window,
+            cx,
+        ),
     };
 
     div()
@@ -278,6 +210,273 @@ fn render_configs_page(
         .overflow_hidden()
         .child(render_configs_shell_header(data, cx))
         .child(workspace)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_configs_desktop_layout(
+    app_handle: &Entity<WgApp>,
+    workspace: &Entity<ConfigsWorkspace>,
+    runtime: &ConfigsRuntimeView,
+    inspector_tab: ConfigInspectorTab,
+    library_rows: &Arc<Vec<ConfigsLibraryRow>>,
+    library_search_input: &Entity<InputState>,
+    library_width: f32,
+    inspector_width: f32,
+    data: &ConfigsViewData,
+    name_input: &Entity<InputState>,
+    config_input: &Entity<InputState>,
+    window: &mut Window,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> AnyElement {
+    div()
+        .flex_1()
+        .min_h(px(0.0))
+        .child(
+            h_resizable("configs-workspace")
+                .on_resize({
+                    let app = app_handle.clone();
+                    move |state: &Entity<ResizableState>, _window, cx| {
+                        let sizes = state.read(cx).sizes().clone();
+                        if sizes.len() < 3 {
+                            return;
+                        }
+                        let library_width = sizes[0].as_f32();
+                        let inspector_width = sizes[2].as_f32();
+                        app.update(cx, |app, cx| {
+                            let changed = app.persist_configs_panel_widths(
+                                library_width,
+                                inspector_width,
+                                cx,
+                            );
+                            if let Some(workspace) = app.ui.configs_workspace.clone() {
+                                workspace.update(cx, |workspace, cx| {
+                                    if workspace.set_panel_widths(library_width, inspector_width) {
+                                        cx.notify();
+                                    }
+                                });
+                            } else if changed {
+                                cx.notify();
+                            }
+                        });
+                    }
+                })
+                .child(
+                    resizable_panel()
+                        .size(px(library_width))
+                        .size_range(px(240.0)..px(420.0))
+                        .child(div().h_full().p_3().child(render_library_panel(
+                            app_handle,
+                            runtime.selected_id,
+                            data,
+                            workspace,
+                            library_rows,
+                            library_search_input,
+                            ConfigsLayoutMode::Desktop,
+                            window,
+                            cx,
+                        ))),
+                )
+                .child(resizable_panel().size_range(px(420.0)..Pixels::MAX).child(
+                    div().h_full().p_3().child(render_editor_panel(
+                        app_handle,
+                        workspace,
+                        data,
+                        name_input,
+                        config_input,
+                        ConfigsLayoutMode::Desktop,
+                        cx,
+                    )),
+                ))
+                .child(
+                    resizable_panel()
+                        .size(px(inspector_width))
+                        .size_range(px(280.0)..px(440.0))
+                        .child(div().h_full().p_3().child(render_inspector_panel(
+                            runtime,
+                            workspace,
+                            inspector_tab,
+                            ConfigsLayoutMode::Desktop,
+                            data,
+                            cx,
+                        ))),
+                ),
+        )
+        .into_any_element()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_configs_medium_layout(
+    app_handle: &Entity<WgApp>,
+    workspace: &Entity<ConfigsWorkspace>,
+    runtime: &ConfigsRuntimeView,
+    inspector_tab: ConfigInspectorTab,
+    library_rows: &Arc<Vec<ConfigsLibraryRow>>,
+    library_search_input: &Entity<InputState>,
+    library_width: f32,
+    inspector_width: f32,
+    data: &ConfigsViewData,
+    name_input: &Entity<InputState>,
+    config_input: &Entity<InputState>,
+    window: &mut Window,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> AnyElement {
+    div()
+        .flex_1()
+        .min_h(px(0.0))
+        .child(
+            h_resizable("configs-workspace-medium")
+                .on_resize({
+                    let app = app_handle.clone();
+                    move |state: &Entity<ResizableState>, _window, cx| {
+                        let sizes = state.read(cx).sizes().clone();
+                        let Some(library_width) = sizes.first() else {
+                            return;
+                        };
+                        app.update(cx, |app, cx| {
+                            let changed = app.persist_configs_panel_widths(
+                                library_width.as_f32(),
+                                inspector_width,
+                                cx,
+                            );
+                            if let Some(workspace) = app.ui.configs_workspace.clone() {
+                                workspace.update(cx, |workspace, cx| {
+                                    if workspace
+                                        .set_panel_widths(library_width.as_f32(), inspector_width)
+                                    {
+                                        cx.notify();
+                                    }
+                                });
+                            } else if changed {
+                                cx.notify();
+                            }
+                        });
+                    }
+                })
+                .child(
+                    resizable_panel()
+                        .size(px(library_width))
+                        .size_range(px(240.0)..px(380.0))
+                        .child(div().h_full().p_3().child(render_library_panel(
+                            app_handle,
+                            runtime.selected_id,
+                            data,
+                            workspace,
+                            library_rows,
+                            library_search_input,
+                            ConfigsLayoutMode::Medium,
+                            window,
+                            cx,
+                        ))),
+                )
+                .child(
+                    resizable_panel().size_range(px(620.0)..Pixels::MAX).child(
+                        div().h_full().p_3().child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .h_full()
+                                .min_h(px(0.0))
+                                .gap_3()
+                                .child(div().flex_1().min_h(px(0.0)).overflow_hidden().child(
+                                    render_editor_panel(
+                                        app_handle,
+                                        workspace,
+                                        data,
+                                        name_input,
+                                        config_input,
+                                        ConfigsLayoutMode::Medium,
+                                        cx,
+                                    ),
+                                ))
+                                .child(
+                                    div()
+                                        .h(px(CONFIGS_MEDIUM_INSPECTOR_HEIGHT))
+                                        .min_h(px(CONFIGS_MEDIUM_INSPECTOR_HEIGHT))
+                                        .child(render_inspector_panel(
+                                            runtime,
+                                            workspace,
+                                            inspector_tab,
+                                            ConfigsLayoutMode::Medium,
+                                            data,
+                                            cx,
+                                        )),
+                                ),
+                        ),
+                    ),
+                ),
+        )
+        .into_any_element()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_configs_compact_layout(
+    app_handle: &Entity<WgApp>,
+    workspace: &Entity<ConfigsWorkspace>,
+    runtime: &ConfigsRuntimeView,
+    inspector_tab: ConfigInspectorTab,
+    primary_pane: ConfigsPrimaryPane,
+    library_rows: &Arc<Vec<ConfigsLibraryRow>>,
+    library_search_input: &Entity<InputState>,
+    data: &ConfigsViewData,
+    name_input: &Entity<InputState>,
+    config_input: &Entity<InputState>,
+    window: &mut Window,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> AnyElement {
+    let active_panel = match primary_pane {
+        ConfigsPrimaryPane::Library => render_library_panel(
+            app_handle,
+            runtime.selected_id,
+            data,
+            workspace,
+            library_rows,
+            library_search_input,
+            ConfigsLayoutMode::Compact,
+            window,
+            cx,
+        )
+        .into_any_element(),
+        ConfigsPrimaryPane::Editor => render_editor_panel(
+            app_handle,
+            workspace,
+            data,
+            name_input,
+            config_input,
+            ConfigsLayoutMode::Compact,
+            cx,
+        )
+        .into_any_element(),
+        ConfigsPrimaryPane::Inspector => render_inspector_panel(
+            runtime,
+            workspace,
+            inspector_tab,
+            ConfigsLayoutMode::Compact,
+            data,
+            cx,
+        )
+        .into_any_element(),
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.0))
+        .child(div().px_3().pt_3().child(render_configs_primary_pane_tabs(
+            workspace,
+            primary_pane,
+            data,
+            cx,
+        )))
+        .child(
+            div()
+                .flex_1()
+                .min_h(px(0.0))
+                .p_3()
+                .pt_0()
+                .child(active_panel),
+        )
+        .into_any_element()
 }
 
 fn render_configs_shell_header(data: &ConfigsViewData, cx: &mut Context<ConfigsWorkspace>) -> Div {
@@ -344,14 +543,14 @@ fn render_library_panel(
     app_handle: &Entity<WgApp>,
     selected_id: Option<u64>,
     data: &ConfigsViewData,
-    _workspace: &Entity<ConfigsWorkspace>,
+    workspace: &Entity<ConfigsWorkspace>,
     rows: &Arc<Vec<ConfigsLibraryRow>>,
     search_input: &Entity<InputState>,
     mode: ConfigsLayoutMode,
     window: &mut Window,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
-    let desktop = matches!(mode, ConfigsLayoutMode::Desktop);
+    let compact = matches!(mode, ConfigsLayoutMode::Compact);
     let query = search_input.read(cx).value().trim().to_lowercase();
     let total_count = rows.len();
     let filtered_indices = Arc::new(
@@ -371,6 +570,7 @@ fn render_library_panel(
     let rows_for_list = rows.clone();
     let visible_indices = filtered_indices.clone();
     let app_for_list = app_handle.clone();
+    let workspace_for_list = workspace.clone();
     let scroll_handle = window
         .use_keyed_state(CONFIGS_LIBRARY_SCROLL_STATE_ID, cx, |_, _| {
             UniformListScrollHandle::new()
@@ -384,7 +584,14 @@ fn render_library_panel(
             visible_range
                 .map(|ix| {
                     let row_ix = visible_indices[ix];
-                    render_library_row(&app_for_list, selected_id, &rows_for_list[row_ix], cx)
+                    render_library_row(
+                        &app_for_list,
+                        &workspace_for_list,
+                        selected_id,
+                        &rows_for_list[row_ix],
+                        compact,
+                        cx,
+                    )
                 })
                 .collect::<Vec<_>>()
         },
@@ -396,16 +603,16 @@ fn render_library_panel(
     div()
         .flex()
         .flex_col()
+        .h_full()
         .min_h(px(0.0))
         .rounded_lg()
         .border_1()
         .border_color(cx.theme().border)
-        .bg(if desktop {
-            cx.theme().background.alpha(0.76)
-        } else {
+        .bg(if compact {
             cx.theme().background
+        } else {
+            cx.theme().background.alpha(0.76)
         })
-        .when(desktop, |this| this.h_full())
         .child(
             div()
                 .px_4()
@@ -463,10 +670,20 @@ fn render_library_panel(
                                         .disabled(data.is_busy)
                                         .on_click({
                                             let app = app_handle.clone();
+                                            let workspace = workspace.clone();
                                             move |_, window, cx| {
                                                 app.update(cx, |this, cx| {
                                                     this.handle_new_draft_click(window, cx);
                                                 });
+                                                if compact {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if workspace.set_primary_pane(
+                                                            ConfigsPrimaryPane::Editor,
+                                                        ) {
+                                                            cx.notify();
+                                                        }
+                                                    });
+                                                }
                                             }
                                         }),
                                 )
@@ -497,10 +714,20 @@ fn render_library_panel(
                                         .disabled(data.is_busy)
                                         .on_click({
                                             let app = app_handle.clone();
+                                            let workspace = workspace.clone();
                                             move |_, window, cx| {
                                                 app.update(cx, |this, cx| {
                                                     this.handle_paste_click(window, cx);
                                                 });
+                                                if compact {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if workspace.set_primary_pane(
+                                                            ConfigsPrimaryPane::Editor,
+                                                        ) {
+                                                            cx.notify();
+                                                        }
+                                                    });
+                                                }
                                             }
                                         }),
                                 ),
@@ -522,14 +749,10 @@ fn render_library_panel(
             div()
                 .flex()
                 .flex_col()
+                .flex_1()
                 .min_h(px(0.0))
                 .rounded_md()
                 .overflow_hidden()
-                .when(desktop, |this| this.flex_1())
-                .when(!desktop, |this| {
-                    this.h(px(CONFIGS_LIBRARY_COMPACT_LIST_HEIGHT))
-                        .min_h(px(CONFIGS_LIBRARY_COMPACT_LIST_HEIGHT))
-                })
                 .child(if rows.is_empty() {
                     div()
                         .flex()
@@ -561,8 +784,10 @@ fn render_library_panel(
 
 fn render_library_row(
     app_handle: &Entity<WgApp>,
+    workspace: &Entity<ConfigsWorkspace>,
     selected_id: Option<u64>,
     row: &ConfigsLibraryRow,
+    compact: bool,
     cx: &mut App,
 ) -> Stateful<Div> {
     let is_selected = selected_id == Some(row.id);
@@ -658,6 +883,7 @@ fn render_library_row(
         )
         .on_click({
             let app = app_handle.clone();
+            let workspace = workspace.clone();
             move |_, window, cx| {
                 app.update(cx, |this, cx| {
                     if this.configs_is_busy(cx) {
@@ -665,6 +891,13 @@ fn render_library_row(
                     }
                     this.select_tunnel(config_id, window, cx);
                 });
+                if compact {
+                    workspace.update(cx, |workspace, cx| {
+                        if workspace.set_primary_pane(ConfigsPrimaryPane::Editor) {
+                            cx.notify();
+                        }
+                    });
+                }
             }
         })
 }
@@ -679,6 +912,7 @@ fn render_editor_panel(
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     let desktop = matches!(mode, ConfigsLayoutMode::Desktop);
+    let compact = matches!(mode, ConfigsLayoutMode::Compact);
     let title_block = if data.title_editing {
         div()
             .max_w_full()
@@ -729,25 +963,25 @@ fn render_editor_panel(
     div()
         .flex()
         .flex_col()
+        .h_full()
         .min_h(px(0.0))
         .rounded_xl()
         .border_1()
         .border_color(cx.theme().border.alpha(0.92))
-        .bg(if desktop {
-            linear_gradient(
-                180.0,
-                linear_color_stop(cx.theme().background.alpha(0.98), 0.0),
-                linear_color_stop(cx.theme().group_box.alpha(0.88), 1.0),
-            )
-        } else {
+        .bg(if compact {
             linear_gradient(
                 180.0,
                 linear_color_stop(cx.theme().background, 0.0),
                 linear_color_stop(cx.theme().group_box, 1.0),
             )
+        } else {
+            linear_gradient(
+                180.0,
+                linear_color_stop(cx.theme().background.alpha(0.98), 0.0),
+                linear_color_stop(cx.theme().group_box.alpha(0.88), 1.0),
+            )
         })
         .shadow_sm()
-        .when(desktop, |this| this.h_full())
         .child(
             div()
                 .px_6()
@@ -800,22 +1034,21 @@ fn render_editor_panel(
                 .flex()
                 .flex_col()
                 .gap_4()
+                .flex_1()
                 .min_h(px(0.0))
+                .overflow_hidden()
                 .px_4()
                 .pb_4()
                 .pt_4()
-                .when(desktop, |this| this.flex_1())
                 .child(render_diagnostics_strip(data, cx))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .w_full()
-                        .when(desktop, |this| this.flex_grow().min_h(px(500.0)))
-                        .when(!desktop, |this| {
-                            this.h(px(CONFIGS_EDITOR_COMPACT_SURFACE_HEIGHT))
-                                .min_h(px(CONFIGS_EDITOR_COMPACT_SURFACE_HEIGHT))
-                        })
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .when(desktop, |this| this.min_h(px(500.0)))
                         .rounded_2xl()
                         .border_1()
                         .border_color(cx.theme().border.alpha(0.9))
@@ -1024,6 +1257,7 @@ fn render_inspector_panel(
         .flex()
         .flex_col()
         .gap_3()
+        .h_full()
         .min_h(px(0.0))
         .rounded_xl()
         .border_1()
@@ -1033,7 +1267,6 @@ fn render_inspector_panel(
         } else {
             cx.theme().background.alpha(0.84)
         })
-        .when(!compact, |this| this.h_full())
         .child(
             div()
                 .px_4()
@@ -1065,14 +1298,7 @@ fn render_inspector_panel(
                         ),
                 ),
         )
-        .child(if compact {
-            v_flex()
-                .gap_3()
-                .p_3()
-                .child(inspector_tabs)
-                .child(inspector_body)
-                .into_any_element()
-        } else {
+        .child(
             div()
                 .flex()
                 .flex_col()
@@ -1081,9 +1307,9 @@ fn render_inspector_panel(
                 .min_h(px(0.0))
                 .overflow_y_scrollbar()
                 .p_3()
-                .child(inspector_body)
-                .into_any_element()
-        })
+                .when(compact, |this| this.child(inspector_tabs))
+                .child(inspector_body),
+        )
 }
 
 fn inspector_tab_row(
@@ -1121,6 +1347,118 @@ fn inspector_tab_row(
             workspace,
             cx,
         ))
+}
+
+fn render_configs_primary_pane_tabs(
+    workspace: &Entity<ConfigsWorkspace>,
+    primary_pane: ConfigsPrimaryPane,
+    data: &ConfigsViewData,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Div {
+    h_flex()
+        .items_center()
+        .gap_2()
+        .w_full()
+        .rounded_xl()
+        .border_1()
+        .border_color(cx.theme().border.alpha(0.7))
+        .bg(cx.theme().background.alpha(0.9))
+        .p_1()
+        .child(configs_primary_pane_button(
+            "configs-pane-library",
+            "Library",
+            ConfigsPrimaryPane::Library,
+            primary_pane,
+            workspace,
+            cx,
+        ))
+        .child(configs_primary_pane_button(
+            "configs-pane-editor",
+            if data.has_selection || !data.draft.name.is_empty() {
+                "Editor"
+            } else {
+                "Draft"
+            },
+            ConfigsPrimaryPane::Editor,
+            primary_pane,
+            workspace,
+            cx,
+        ))
+        .child(configs_primary_pane_button(
+            "configs-pane-inspector",
+            "Inspector",
+            ConfigsPrimaryPane::Inspector,
+            primary_pane,
+            workspace,
+            cx,
+        ))
+}
+
+fn configs_primary_pane_button(
+    id: &'static str,
+    label: &'static str,
+    value: ConfigsPrimaryPane,
+    current: ConfigsPrimaryPane,
+    workspace: &Entity<ConfigsWorkspace>,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Stateful<Div> {
+    let selected = current == value;
+    let bg = if selected {
+        cx.theme().group_box
+    } else {
+        cx.theme().background.alpha(0.0)
+    };
+    let border = if selected {
+        cx.theme().accent.alpha(0.32)
+    } else {
+        cx.theme().background.alpha(0.0)
+    };
+    let text_color = if selected {
+        cx.theme().foreground
+    } else {
+        cx.theme().muted_foreground
+    };
+    let hover_bg = if selected {
+        cx.theme().group_box
+    } else {
+        cx.theme().list_hover
+    };
+
+    div()
+        .id(id)
+        .flex()
+        .flex_1()
+        .items_center()
+        .justify_center()
+        .px_3()
+        .py_2()
+        .rounded_lg()
+        .border_1()
+        .border_color(border)
+        .bg(bg)
+        .cursor_pointer()
+        .hover(move |this| this.bg(hover_bg))
+        .child(
+            div()
+                .text_sm()
+                .font_weight(if selected {
+                    FontWeight::SEMIBOLD
+                } else {
+                    FontWeight::MEDIUM
+                })
+                .text_color(text_color)
+                .child(label),
+        )
+        .on_click({
+            let workspace = workspace.clone();
+            move |_, _, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    if workspace.set_primary_pane(value) {
+                        cx.notify();
+                    }
+                });
+            }
+        })
 }
 
 fn inspector_tab_button(

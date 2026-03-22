@@ -20,8 +20,9 @@ use r_wg::backend::wg::config;
 
 use super::super::persistence;
 use super::super::state::{
-    ConfigDraftState, ConfigSource, ConfigsWorkspace, DraftValidationState, EditorOperation,
-    EndpointFamily, LoadedConfigState, PendingDraftAction, SidebarItem, TunnelConfig, WgApp,
+    ConfigDraftState, ConfigSource, ConfigsPrimaryPane, ConfigsWorkspace, DraftValidationState,
+    EditorOperation, EndpointFamily, LoadedConfigState, PendingDraftAction, SidebarItem,
+    TunnelConfig, WgApp,
 };
 
 const CONFIG_TEXT_CACHE_LIMIT: usize = 32;
@@ -507,6 +508,12 @@ impl WgApp {
             PendingDraftAction::NewDraft => {
                 self.set_selected_config_id(None, cx);
                 self.clear_inputs(window, cx);
+                let workspace = self.ensure_configs_workspace(cx);
+                workspace.update(cx, |workspace, cx| {
+                    if workspace.set_primary_pane(ConfigsPrimaryPane::Editor) {
+                        cx.notify();
+                    }
+                });
                 self.set_status("New draft");
                 cx.notify();
             }
