@@ -39,7 +39,10 @@ const PIPE_CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 const LISTENER_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTIVATE_TAKEOVER_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 const ACTIVATE_TAKEOVER_ATTEMPTS: usize = 10;
-const PIPE_SDDL: &str = "O:SYG:SYD:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)";
+// The UI listener runs under the interactive user, so it must not force the
+// pipe owner/group to SYSTEM. Doing so makes CreateNamedPipeW fail with
+// ERROR_INVALID_OWNER (1307) for non-elevated launches.
+const PIPE_SDDL: &str = "D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)";
 
 pub(super) struct PrimaryGuard {
     _mutex: OwnedHandle,
