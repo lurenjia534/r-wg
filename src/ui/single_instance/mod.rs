@@ -5,7 +5,6 @@ mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 type ActivateCallback = Arc<dyn Fn() + Send + Sync + 'static>;
@@ -28,8 +27,13 @@ pub(crate) struct PrimaryInstance {
 
 #[derive(Default)]
 struct ActivationState {
-    callback: Mutex<Option<ActivateCallback>>,
-    pending_activate: AtomicBool,
+    inner: Mutex<ActivationInner>,
+}
+
+#[derive(Default)]
+struct ActivationInner {
+    callback: Option<ActivateCallback>,
+    pending_activate: bool,
 }
 
 enum PlatformStartup {
@@ -81,14 +85,13 @@ impl PrimaryInstance {
         F: Fn() + Send + Sync + 'static,
     {
         let callback: ActivateCallback = Arc::new(on_activate);
-        if let Ok(mut slot) = self.activation.callback.lock() {
-            *slot = Some(callback.clone());
-        }
-        if self
-            .activation
-            .pending_activate
-            .swap(false, Ordering::SeqCst)
-        {
+        let should_deliver_pending = if let Ok(mut inner) = self.activation.inner.lock() {
+            inner.callback = Some(callback.clone());
+            std::mem::take(&mut inner.pending_activate)
+        } else {
+            false
+        };
+        if should_deliver_pending {
             callback();
         }
     }
@@ -96,16 +99,19 @@ impl PrimaryInstance {
 
 impl ActivationState {
     fn notify_activate(&self) {
-        let callback = self
-            .callback
-            .lock()
-            .ok()
-            .and_then(|slot| slot.as_ref().cloned());
+        let callback = if let Ok(mut inner) = self.inner.lock() {
+            if let Some(callback) = inner.callback.as_ref().cloned() {
+                Some(callback)
+            } else {
+                inner.pending_activate = true;
+                None
+            }
+        } else {
+            None
+        };
         if let Some(callback) = callback {
             callback();
-            return;
         }
-        self.pending_activate.store(true, Ordering::SeqCst);
     }
 }
 

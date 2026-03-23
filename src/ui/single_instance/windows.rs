@@ -303,16 +303,16 @@ impl PipeStream {
                 Ok(handle) => return Ok(Self { handle }),
                 Err(err) => {
                     let err = io_error_from_win32(err);
-                    if !should_retry_connect(&err) || Instant::now() >= deadline {
+                    if !should_wait_for_pipe(&err) {
                         return Err(err);
                     }
 
-                    if matches!(err.raw_os_error(), Some(231)) {
-                        unsafe {
-                            let _ = WaitNamedPipeW(PCWSTR(name.as_ptr()), PIPE_WAIT_TIMEOUT_MS);
-                        }
-                    } else {
-                        thread::sleep(PIPE_CONNECT_RETRY_INTERVAL);
+                    if Instant::now() >= deadline {
+                        return Err(err);
+                    }
+
+                    unsafe {
+                        let _ = WaitNamedPipeW(PCWSTR(name.as_ptr()), PIPE_WAIT_TIMEOUT_MS);
                     }
                 }
             }
@@ -477,8 +477,8 @@ fn last_os_error() -> io::Error {
     io::Error::from_raw_os_error(code.0 as i32)
 }
 
-fn should_retry_connect(err: &io::Error) -> bool {
-    matches!(err.raw_os_error(), Some(2 | 231))
+fn should_wait_for_pipe(err: &io::Error) -> bool {
+    matches!(err.raw_os_error(), Some(231))
 }
 
 fn win32_error_code(err: &windows::core::Error) -> u32 {
