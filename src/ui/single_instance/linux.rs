@@ -13,10 +13,25 @@ use super::{ActivationState, PlatformStartup};
 const SOCKET_DIR_NAME: &str = "r-wg";
 const SOCKET_FILE_NAME: &str = "ui.sock";
 const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_millis(200);
+const ACTIVATE_RETRY_INTERVAL: Duration = Duration::from_millis(100);
+const ACTIVATE_RECOVERY_ATTEMPTS: usize = 10;
 
 pub(super) struct PrimaryGuard {
     runtime_dir: PathBuf,
     socket_path: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActivateErrorKind {
+    Retryable,
+    Rebind,
+    Fatal,
+}
+
+#[derive(Debug)]
+struct ActivateError {
+    kind: ActivateErrorKind,
+    message: String,
 }
 
 pub(super) fn startup(activation: Arc<ActivationState>) -> Result<PlatformStartup, String> {
@@ -34,25 +49,9 @@ pub(super) fn startup(activation: Arc<ActivationState>) -> Result<PlatformStartu
     ensure_runtime_dir(&runtime_dir)?;
     match try_bind_primary(&socket_path, &runtime_dir, activation.clone()) {
         Ok(guard) => Ok(PlatformStartup::Primary(guard)),
-        Err(err) if err.kind() == io::ErrorKind::AddrInUse => match send_activate(&socket_path) {
-            Ok(()) => Ok(PlatformStartup::Secondary),
-            Err(connect_err) if can_recover_stale_socket(&connect_err) => {
-                remove_stale_socket(&socket_path)?;
-                let guard = try_bind_primary(&socket_path, &runtime_dir, activation).map_err(
-                    |err| {
-                        format!(
-                            "failed to re-bind UI single-instance socket {} after stale cleanup: {err}",
-                            socket_path.display()
-                        )
-                    },
-                )?;
-                Ok(PlatformStartup::Primary(guard))
-            }
-            Err(connect_err) => Err(format!(
-                "existing UI instance detected, but activation failed via {}: {connect_err}",
-                socket_path.display()
-            )),
-        },
+        Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
+            recover_existing_primary(&socket_path, &runtime_dir, activation)
+        }
         Err(err) => Err(format!(
             "failed to bind UI single-instance socket {}: {err}",
             socket_path.display()
@@ -152,24 +151,109 @@ fn handle_client(mut stream: UnixStream, activation: &ActivationState) -> io::Re
     }
 }
 
-fn send_activate(socket_path: &Path) -> io::Result<()> {
-    let mut stream = UnixStream::connect(socket_path)?;
-    write_json_line(&mut stream, &UiInstanceRequest::Activate).map_err(|err| {
-        io::Error::new(err.kind(), format!("send activate request failed: {err}"))
+fn recover_existing_primary(
+    socket_path: &Path,
+    runtime_dir: &Path,
+    activation: Arc<ActivationState>,
+) -> Result<PlatformStartup, String> {
+    let mut last_error = match send_activate(socket_path) {
+        Ok(()) => return Ok(PlatformStartup::Secondary),
+        Err(err) => err,
+    };
+
+    for _ in 0..ACTIVATE_RECOVERY_ATTEMPTS {
+        match last_error.kind {
+            ActivateErrorKind::Rebind => {
+                return rebind_after_failed_activation(
+                    socket_path,
+                    runtime_dir,
+                    activation.clone(),
+                );
+            }
+            ActivateErrorKind::Retryable => {
+                thread::sleep(ACTIVATE_RETRY_INTERVAL);
+                match send_activate(socket_path) {
+                    Ok(()) => return Ok(PlatformStartup::Secondary),
+                    Err(err) => last_error = err,
+                }
+            }
+            ActivateErrorKind::Fatal => return Err(last_error.message),
+        }
+    }
+
+    if last_error.kind == ActivateErrorKind::Rebind {
+        return rebind_after_failed_activation(socket_path, runtime_dir, activation);
+    }
+
+    Err(format!(
+        "existing UI instance detected, but activation failed via {}: {}",
+        socket_path.display(),
+        last_error.message
+    ))
+}
+
+fn rebind_after_failed_activation(
+    socket_path: &Path,
+    runtime_dir: &Path,
+    activation: Arc<ActivationState>,
+) -> Result<PlatformStartup, String> {
+    remove_stale_socket(socket_path)?;
+    let guard = try_bind_primary(socket_path, runtime_dir, activation).map_err(|err| {
+        format!(
+            "failed to re-bind UI single-instance socket {} after stale cleanup: {err}",
+            socket_path.display()
+        )
     })?;
+    Ok(PlatformStartup::Primary(guard))
+}
+
+fn send_activate(socket_path: &Path) -> Result<(), ActivateError> {
+    let mut stream = UnixStream::connect(socket_path)
+        .map_err(|err| activation_io_error("connect to primary UI instance", err))?;
+    write_json_line(&mut stream, &UiInstanceRequest::Activate)
+        .map_err(|err| activation_io_error("send activate request", err))?;
 
     let mut reader = BufReader::new(&mut stream);
-    match read_json_line::<UiInstanceReply>(&mut reader)? {
+    match read_json_line::<UiInstanceReply>(&mut reader)
+        .map_err(|err| activation_io_error("read activation reply", err))?
+    {
         UiInstanceReply::Ok => Ok(()),
-        UiInstanceReply::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+        UiInstanceReply::Error { message } => Err(ActivateError {
+            kind: ActivateErrorKind::Fatal,
+            message,
+        }),
     }
 }
 
-fn can_recover_stale_socket(err: &io::Error) -> bool {
+fn activation_io_error(action: &str, err: io::Error) -> ActivateError {
+    let kind = if can_rebind_after_activation_error(&err) {
+        ActivateErrorKind::Rebind
+    } else if is_retryable_activation_error(&err) {
+        ActivateErrorKind::Retryable
+    } else {
+        ActivateErrorKind::Fatal
+    };
+    ActivateError {
+        kind,
+        message: format!("failed to {action}: {err}"),
+    }
+}
+
+fn can_rebind_after_activation_error(err: &io::Error) -> bool {
     matches!(
         err.kind(),
         io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
     ) || matches!(err.raw_os_error(), Some(libc::ECONNREFUSED | libc::ENOENT))
+}
+
+fn is_retryable_activation_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::TimedOut
+    ) || matches!(err.raw_os_error(), Some(libc::ECONNRESET | libc::EPIPE))
 }
 
 fn remove_stale_socket(path: &Path) -> Result<(), String> {

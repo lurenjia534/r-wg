@@ -37,6 +37,8 @@ const PIPE_BUFFER_SIZE: u32 = 4096;
 const PIPE_WAIT_TIMEOUT_MS: u32 = 5_000;
 const PIPE_CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 const LISTENER_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const ACTIVATE_TAKEOVER_RETRY_INTERVAL: Duration = Duration::from_millis(100);
+const ACTIVATE_TAKEOVER_ATTEMPTS: usize = 10;
 const PIPE_SDDL: &str = "O:SYG:SYD:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)";
 
 pub(super) struct PrimaryGuard {
@@ -48,28 +50,49 @@ struct InstanceNames {
     pipe_name: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActivateErrorKind {
+    Retryable,
+    Fatal,
+}
+
+#[derive(Debug)]
+struct ActivateError {
+    kind: ActivateErrorKind,
+    message: String,
+}
+
 pub(super) fn startup(activation: Arc<ActivationState>) -> Result<PlatformStartup, String> {
     let names = instance_names()?;
-    let mutex_name = encode_wide(&names.mutex_name);
-    let mutex = unsafe { CreateMutexW(None, false, PCWSTR(mutex_name.as_ptr())) }
-        .map_err(|err| format!("failed to create UI single-instance mutex: {err}"))?;
-    let mutex = unsafe { owned_handle_from_win32(mutex) };
-    let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
-
-    if already_exists {
-        drop(mutex);
-        send_activate(&names.pipe_name)?;
-        return Ok(PlatformStartup::Secondary);
+    if let Some(mutex) = try_create_primary_mutex(&names.mutex_name)? {
+        return start_primary(&names.pipe_name, activation, mutex);
     }
 
-    if let Err(err) = spawn_listener(names.pipe_name.clone(), activation) {
-        drop(mutex);
-        return Err(format!(
-            "failed to start UI single-instance listener: {err}"
-        ));
+    let mut last_error = match send_activate(&names.pipe_name) {
+        Ok(()) => return Ok(PlatformStartup::Secondary),
+        Err(err) => err,
+    };
+
+    for _ in 0..ACTIVATE_TAKEOVER_ATTEMPTS {
+        if last_error.kind != ActivateErrorKind::Retryable {
+            return Err(last_error.message);
+        }
+
+        thread::sleep(ACTIVATE_TAKEOVER_RETRY_INTERVAL);
+        if let Some(mutex) = try_create_primary_mutex(&names.mutex_name)? {
+            return start_primary(&names.pipe_name, activation.clone(), mutex);
+        }
+
+        match send_activate(&names.pipe_name) {
+            Ok(()) => return Ok(PlatformStartup::Secondary),
+            Err(err) => last_error = err,
+        }
     }
 
-    Ok(PlatformStartup::Primary(PrimaryGuard { _mutex: mutex }))
+    Err(format!(
+        "existing UI instance detected, but activation failed via {}: {}",
+        names.pipe_name, last_error.message
+    ))
 }
 
 pub(super) fn show_bootstrap_error(message: &str) {
@@ -82,6 +105,35 @@ pub(super) fn show_bootstrap_error(message: &str) {
             PCWSTR(title.as_ptr()),
             MB_OK | MB_ICONERROR,
         );
+    }
+}
+
+fn start_primary(
+    pipe_name: &str,
+    activation: Arc<ActivationState>,
+    mutex: OwnedHandle,
+) -> Result<PlatformStartup, String> {
+    if let Err(err) = spawn_listener(pipe_name.to_string(), activation) {
+        drop(mutex);
+        return Err(format!(
+            "failed to start UI single-instance listener: {err}"
+        ));
+    }
+
+    Ok(PlatformStartup::Primary(PrimaryGuard { _mutex: mutex }))
+}
+
+fn try_create_primary_mutex(mutex_name: &str) -> Result<Option<OwnedHandle>, String> {
+    let mutex_name = encode_wide(mutex_name);
+    let mutex = unsafe { CreateMutexW(None, false, PCWSTR(mutex_name.as_ptr())) }
+        .map_err(|err| format!("failed to create UI single-instance mutex: {err}"))?;
+    let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+    let mutex = unsafe { owned_handle_from_win32(mutex) };
+    if already_exists {
+        drop(mutex);
+        Ok(None)
+    } else {
+        Ok(Some(mutex))
     }
 }
 
@@ -162,18 +214,43 @@ fn handle_client(stream: &mut PipeStream, activation: &ActivationState) -> io::R
     }
 }
 
-fn send_activate(pipe_name: &str) -> Result<(), String> {
+fn send_activate(pipe_name: &str) -> Result<(), ActivateError> {
     let mut stream = PipeStream::connect(pipe_name)
-        .map_err(|err| format!("failed to connect to primary UI instance: {err}"))?;
+        .map_err(|err| activation_io_error("connect to primary UI instance", err))?;
     write_json_line(&mut stream, &UiInstanceRequest::Activate)
-        .map_err(|err| format!("failed to send UI activation request: {err}"))?;
+        .map_err(|err| activation_io_error("send UI activation request", err))?;
     let mut reader = BufReader::new(&mut stream);
     match read_json_line::<UiInstanceReply>(&mut reader)
-        .map_err(|err| format!("failed to read UI activation reply: {err}"))?
+        .map_err(|err| activation_io_error("read UI activation reply", err))?
     {
         UiInstanceReply::Ok => Ok(()),
-        UiInstanceReply::Error { message } => Err(message),
+        UiInstanceReply::Error { message } => Err(ActivateError {
+            kind: ActivateErrorKind::Fatal,
+            message,
+        }),
     }
+}
+
+fn activation_io_error(action: &str, err: io::Error) -> ActivateError {
+    ActivateError {
+        kind: if is_retryable_activation_error(&err) {
+            ActivateErrorKind::Retryable
+        } else {
+            ActivateErrorKind::Fatal
+        },
+        message: format!("failed to {action}: {err}"),
+    }
+}
+
+fn is_retryable_activation_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::NotFound
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::TimedOut
+    ) || matches!(err.raw_os_error(), Some(2 | 109 | 231))
 }
 
 fn instance_names() -> Result<InstanceNames, String> {
@@ -211,28 +288,34 @@ impl PipeStream {
         let name = encode_wide(pipe_name);
         let deadline = Instant::now() + Duration::from_millis(PIPE_WAIT_TIMEOUT_MS as u64);
         loop {
-            unsafe {
-                if WaitNamedPipeW(PCWSTR(name.as_ptr()), PIPE_WAIT_TIMEOUT_MS).as_bool() {
-                    let handle = CreateFileW(
-                        PCWSTR(name.as_ptr()),
-                        GENERIC_READ.0 | GENERIC_WRITE.0,
-                        FILE_SHARE_MODE(0),
-                        None,
-                        OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL,
-                        None,
-                    )
-                    .map_err(io_error_from_win32)?;
-                    return Ok(Self { handle });
+            let handle = unsafe {
+                CreateFileW(
+                    PCWSTR(name.as_ptr()),
+                    GENERIC_READ.0 | GENERIC_WRITE.0,
+                    FILE_SHARE_MODE(0),
+                    None,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+            };
+            match handle {
+                Ok(handle) => return Ok(Self { handle }),
+                Err(err) => {
+                    let err = io_error_from_win32(err);
+                    if !should_retry_connect(&err) || Instant::now() >= deadline {
+                        return Err(err);
+                    }
+
+                    if matches!(err.raw_os_error(), Some(231)) {
+                        unsafe {
+                            let _ = WaitNamedPipeW(PCWSTR(name.as_ptr()), PIPE_WAIT_TIMEOUT_MS);
+                        }
+                    } else {
+                        thread::sleep(PIPE_CONNECT_RETRY_INTERVAL);
+                    }
                 }
             }
-
-            let err = last_os_error();
-            if should_retry_connect(&err) && Instant::now() < deadline {
-                thread::sleep(PIPE_CONNECT_RETRY_INTERVAL);
-                continue;
-            }
-            return Err(err);
         }
     }
 
