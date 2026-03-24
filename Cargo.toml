@@ -62,3 +62,6 @@ zbus = "5.13.2"
 
 [build-dependencies]
 embed-resource = "3.0.6"
+
+[patch.crates-io]
+gotatun = { path = "vendor/gotatun" }

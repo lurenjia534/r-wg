@@ -1,0 +1,113 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// This file incorporates work covered by the following copyright and
+// permission notice:
+//
+//   Copyright (c) Mullvad VPN AB. All rights reserved.
+//
+// SPDX-License-Identifier: MPL-2.0
+
+//! See [PcapSniffer].
+
+use std::{
+    io::{self, Write},
+    sync::{Arc, Mutex},
+    time::Instant,
+};
+
+use pcap_file::pcap::{PcapHeader, PcapPacket};
+use zerocopy::IntoBytes;
+
+use crate::{
+    packet::{Ip, Packet, PacketBufPool},
+    tun::{IpRecv, IpSend, MtuWatcher},
+};
+
+/// A [`Write`] wrapper that can be used to create a [`PcapSniffer`].
+#[derive(Clone)]
+pub struct PcapStream {
+    writer: Arc<Mutex<pcap_file::pcap::PcapWriter<Box<dyn Write + Send>>>>,
+}
+
+/// An implementation of [`IpSend`] and [`IpRecv`] which also dumps all packets in the pcap file
+/// format to a [`Write`] (See [`PcapStream`]).
+///
+/// Note that this is only intended for development and debugging.
+/// As such, it has a considerable performance penalty.
+#[derive(Clone)]
+pub struct PcapSniffer<I> {
+    inner: I,
+    epoch: Instant,
+    writer: PcapStream,
+}
+
+impl PcapStream {
+    /// Create a [`PcapStream`] by wrapping a [`Write`].
+    pub fn new(write: Box<dyn Write + Send>) -> Self {
+        let writer = pcap_file::pcap::PcapWriter::with_header(
+            write,
+            PcapHeader {
+                endianness: pcap_file::Endianness::native(),
+                datalink: pcap_file::DataLink::IPV4,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        Self {
+            writer: Arc::new(Mutex::new(writer)),
+        }
+    }
+}
+
+impl<R> PcapSniffer<R> {
+    /// Create a [`PcapSniffer`] by wrapping an [`IpRecv`] and a [`PcapStream`].
+    ///
+    /// `epoch` is used to calculate the timestamps packets in the pcap stream.
+    pub fn new(inner: R, writer: PcapStream, epoch: Instant) -> Self {
+        Self {
+            inner,
+            epoch,
+            writer,
+        }
+    }
+}
+
+impl<R: IpRecv> IpRecv for PcapSniffer<R> {
+    async fn recv<'a>(
+        &'a mut self,
+        buf: &mut PacketBufPool,
+    ) -> io::Result<impl Iterator<Item = Packet<Ip>> + Send + 'a> {
+        let packets = self.inner.recv(buf).await?;
+
+        let packets = packets.inspect(|packet| {
+            let packet = packet.as_bytes();
+            let timestamp = Instant::now().duration_since(self.epoch);
+            if let Ok(mut write) = self.writer.writer.lock() {
+                let pcap_packet = PcapPacket::new(timestamp, packet.len() as u32, packet);
+                let _ = write.write_packet(&pcap_packet);
+            }
+        });
+
+        Ok(packets)
+    }
+
+    fn mtu(&self) -> MtuWatcher {
+        self.inner.mtu()
+    }
+}
+
+impl<S: IpSend> IpSend for PcapSniffer<S> {
+    async fn send(&mut self, packet: Packet<Ip>) -> io::Result<()> {
+        if let Ok(mut write) = self.writer.writer.lock() {
+            let packet = packet.as_bytes();
+            let timestamp = Instant::now().duration_since(self.epoch);
+            let pcap_packet = PcapPacket::new(timestamp, packet.len() as u32, packet);
+            let _ = write.write_packet(&pcap_packet);
+        }
+        self.inner.send(packet).await?;
+        Ok(())
+    }
+}

@@ -11,7 +11,7 @@
 
 如何启用本地补丁
 1) 复制 gotatun 源码到仓库内
-   - 从 `~/.cargo/registry/src/.../gotatun-0.2.0` 复制到 `vendor/gotatun`
+   - 从 `~/.cargo/registry/src/.../gotatun-0.4.1` 复制到 `vendor/gotatun`
 2) 在 `Cargo.toml` 添加 patch
    - 在 `[patch.crates-io]` 下添加：
      - `gotatun = { path = "vendor/gotatun" }`

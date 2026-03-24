@@ -2224,8 +2224,6 @@ dependencies = [
 [[package]]
 name = "gotatun"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e852834d591d0a2011283fdf292236e36fe9c92d3dbbbd801049aa900ddd731"
 dependencies = [
  "aead",
  "base64",
@@ -2257,7 +2255,7 @@ dependencies = [
  "tokio",
  "tun",
  "typed-builder",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
  "x25519-dalek",
  "zerocopy",
 ]
