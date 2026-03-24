@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use r_wg::backend::wg::config::{self, WireGuardConfig};
 
 use crate::ui::state::EndpointFamily;
+use super::*;
 
 struct EndpointFamilyResolutionHint {
     base_family: EndpointFamily,
@@ -106,6 +107,54 @@ fn endpoint_family_from_flags(has_v4: bool, has_v6: bool) -> EndpointFamily {
         (true, false) => EndpointFamily::V4,
         (false, true) => EndpointFamily::V6,
         (false, false) => EndpointFamily::Unknown,
+    }
+}
+
+impl WgApp {
+    pub(crate) fn schedule_endpoint_family_refresh(
+        &mut self,
+        config_id: u64,
+        text: Option<SharedString>,
+        storage_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selection.endpoint_family_loading.contains(&config_id) {
+            return;
+        }
+        let Some(config) = self.configs.get_mut_by_id(config_id) else {
+            return;
+        };
+        config.endpoint_family = EndpointFamily::Unknown;
+        self.selection.endpoint_family_loading.insert(config_id);
+
+        cx.spawn(async move |view, cx| {
+            let refresh_task = cx.background_spawn(async move {
+                let text = match text {
+                    Some(text) => Some(text.to_string()),
+                    None => std::fs::read_to_string(&storage_path).ok(),
+                };
+                let text = text?;
+                Some(resolve_endpoint_family_from_text(text).await)
+            });
+            let family = refresh_task.await;
+            view.update(cx, |this, cx| {
+                this.selection.endpoint_family_loading.remove(&config_id);
+                let Some(family) = family else {
+                    return;
+                };
+                let Some(config) = this.configs.get_mut_by_id(config_id) else {
+                    return;
+                };
+                if config.endpoint_family != family {
+                    config.endpoint_family = family;
+                    let updated_config = config.clone();
+                    this.upsert_configs_workspace_library_row(&updated_config, cx);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
