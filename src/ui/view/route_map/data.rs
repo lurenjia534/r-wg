@@ -3,26 +3,21 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use gpui::SharedString;
-use gpui_component::IconName;
 use r_wg::backend::wg::config::RouteTable;
 use r_wg::backend::wg::route_plan::{
     normalize_config_for_runtime, RouteApplyAttemptState as BackendRouteApplyAttemptState,
     RouteApplyFailureKind as BackendRouteApplyFailureKind, RouteApplyKind as BackendRouteApplyKind,
     RouteApplyPhase as BackendRouteApplyPhase, RouteApplyReport as BackendRouteApplyReport,
-    RouteApplyReportSource as BackendRouteApplyReportSource,
-    RouteApplyStatus as BackendRouteApplyStatus, RoutePlanChip as BackendRoutePlanChip,
-    RoutePlanExplainResult as BackendRoutePlanExplainResult,
-    RoutePlanFamily as BackendRoutePlanFamily, RoutePlanGraphStep as BackendRoutePlanGraphStep,
-    RoutePlanGroup as BackendRoutePlanGroup, RoutePlanItem as BackendRoutePlanItem,
-    RoutePlanStaticStatus as BackendRoutePlanStaticStatus,
-    RoutePlanStepKind as BackendRoutePlanStepKind, RoutePlanTone as BackendRoutePlanTone,
+    RouteApplyReportSource as BackendRouteApplyReportSource, RouteApplyStatus as BackendRouteApplyStatus,
 };
-use r_wg::backend::wg::{RoutePlan, RoutePlanPlatform};
+use r_wg::backend::wg::{OperationalRoutePlan, RoutePlanPlatform};
 use r_wg::dns::DnsSelection;
 use r_wg::log;
 
 use crate::ui::state::{current_apply_report, RouteFamilyFilter, WgApp};
 use crate::ui::view::data::ViewData;
+
+use super::presenter::{build_plan_explain, build_plan_presentation, RouteMapMatchTarget};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RouteMapItemStatus {
@@ -72,7 +67,7 @@ pub(crate) struct RouteMapChip {
 #[derive(Clone)]
 pub(crate) struct RouteMapGraphStep {
     pub(crate) kind: RouteMapGraphStepKind,
-    pub(crate) icon: IconName,
+    pub(crate) icon: gpui_component::IconName,
     pub(crate) label: SharedString,
     pub(crate) value: SharedString,
     pub(crate) note: Option<SharedString>,
@@ -114,6 +109,7 @@ pub(crate) struct RouteMapInventoryItem {
     pub(crate) graph_steps: Vec<RouteMapGraphStep>,
     pub(crate) route_row: Option<RouteMapRouteRow>,
     pub(crate) endpoint_host: Option<SharedString>,
+    pub(crate) match_target: Option<RouteMapMatchTarget>,
 }
 
 #[derive(Clone)]
@@ -145,7 +141,6 @@ pub(crate) struct EffectiveRoutePlan {
     pub(crate) summary_chips: Vec<RouteMapChip>,
     pub(crate) parse_error: Option<SharedString>,
     pub(crate) inventory_groups: Vec<RouteMapInventoryGroup>,
-    route_plan: Option<Arc<RoutePlan>>,
 }
 
 #[derive(Clone)]
@@ -202,7 +197,6 @@ impl RouteMapData {
                 ],
                 parse_error: data.parse_error.clone().map(Into::into),
                 inventory_groups: Vec::new(),
-                route_plan: None,
             };
         };
 
@@ -210,28 +204,18 @@ impl RouteMapData {
             parsed.clone(),
             DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset),
         );
-        let route_plan = Arc::new(RoutePlan::build(RoutePlanPlatform::current(), &normalized));
-        let summary_chips = route_plan
-            .summary_chips
-            .iter()
-            .map(map_plan_chip)
-            .collect::<Vec<_>>();
-        let groups = route_plan
-            .inventory_groups
-            .iter()
-            .map(map_plan_group)
-            .collect::<Vec<_>>();
+        let route_plan = OperationalRoutePlan::build(RoutePlanPlatform::current(), &normalized);
+        let presented = build_plan_presentation(&route_plan, &normalized);
 
         EffectiveRoutePlan {
             cache_key,
             has_plan: true,
-            plan_status: route_plan.plan_status.clone().into(),
+            plan_status: presented.plan_status,
             source_label,
             platform_label,
-            summary_chips,
+            summary_chips: presented.summary_chips,
             parse_error: data.parse_error.clone().map(Into::into),
-            inventory_groups: groups,
-            route_plan: Some(route_plan),
+            inventory_groups: presented.inventory_groups,
         }
     }
 
@@ -306,10 +290,7 @@ impl RouteMapData {
             .filter_map(|item| item.route_row.clone())
             .collect::<Vec<_>>();
 
-        let explain = plan
-            .route_plan
-            .as_ref()
-            .map(|route_plan| map_plan_explain(&route_plan.explain(&search_query)));
+        let explain = Some(build_plan_explain(&plan.inventory_groups, &search_query));
         let explain_match_id = explain
             .as_ref()
             .and_then(|value| value.matched_item_id.as_ref())
@@ -349,140 +330,6 @@ impl RouteMapData {
             selected_item_id,
             selected_item,
         }
-    }
-}
-
-fn map_plan_group(group: &BackendRoutePlanGroup) -> RouteMapInventoryGroup {
-    RouteMapInventoryGroup {
-        id: group.id.clone().into(),
-        label: group.label.clone().into(),
-        summary: group.items.len().to_string().into(),
-        empty_note: group.empty_note.clone().into(),
-        items: group.items.iter().map(map_plan_item).collect(),
-    }
-}
-
-fn map_plan_item(item: &BackendRoutePlanItem) -> RouteMapInventoryItem {
-    let static_status = item.static_status.map(map_plan_static_status);
-    let status = static_status.unwrap_or(RouteMapItemStatus::Planned);
-
-    RouteMapInventoryItem {
-        id: item.id.clone().into(),
-        title: item.title.clone().into(),
-        subtitle: item.subtitle.clone().into(),
-        family: item.family.map(map_plan_family),
-        static_status,
-        status,
-        event_patterns: item.event_patterns.clone(),
-        chips: item.chips.iter().map(map_plan_chip).collect(),
-        inspector: RouteMapInspector {
-            title: item.inspector.title.clone().into(),
-            subtitle: item.inspector.subtitle.clone().into(),
-            why_match: item
-                .inspector
-                .why_match
-                .iter()
-                .cloned()
-                .map(Into::into)
-                .collect(),
-            platform_details: item
-                .inspector
-                .platform_details
-                .iter()
-                .cloned()
-                .map(Into::into)
-                .collect(),
-            runtime_evidence: Vec::new(),
-            risk_assessment: item
-                .inspector
-                .risk_assessment
-                .iter()
-                .cloned()
-                .map(Into::into)
-                .collect(),
-        },
-        graph_steps: item.graph_steps.iter().map(map_plan_graph_step).collect(),
-        route_row: item.route_row.as_ref().map(|row| RouteMapRouteRow {
-            destination: row.destination.clone().into(),
-            family: row.family.clone().into(),
-            kind: row.kind.clone().into(),
-            peer: row.peer.clone().into(),
-            endpoint: row.endpoint.clone().into(),
-            table: row.table.clone().into(),
-            status: status.label().into(),
-            note: row.note.clone().into(),
-        }),
-        endpoint_host: item.endpoint_host.clone().map(Into::into),
-    }
-}
-
-fn map_plan_chip(chip: &BackendRoutePlanChip) -> RouteMapChip {
-    RouteMapChip {
-        label: chip.label.clone().into(),
-        tone: match chip.tone {
-            BackendRoutePlanTone::Secondary => RouteMapTone::Secondary,
-            BackendRoutePlanTone::Info => RouteMapTone::Info,
-            BackendRoutePlanTone::Warning => RouteMapTone::Warning,
-        },
-    }
-}
-
-fn map_plan_graph_step(step: &BackendRoutePlanGraphStep) -> RouteMapGraphStep {
-    RouteMapGraphStep {
-        kind: map_plan_step_kind(step.kind),
-        icon: plan_step_icon(step.kind),
-        label: step.label.clone().into(),
-        value: step.value.clone().into(),
-        note: step.note.clone().map(Into::into),
-    }
-}
-
-fn map_plan_explain(explain: &BackendRoutePlanExplainResult) -> RouteMapExplainResult {
-    RouteMapExplainResult {
-        query: explain.query.clone().into(),
-        headline: explain.headline.clone().into(),
-        summary: explain.summary.clone().into(),
-        steps: explain.steps.iter().cloned().map(Into::into).collect(),
-        risk: explain.risk.iter().cloned().map(Into::into).collect(),
-        matched_item_id: explain.matched_item_id.clone().map(Into::into),
-    }
-}
-
-fn map_plan_family(family: BackendRoutePlanFamily) -> RouteFamilyFilter {
-    match family {
-        BackendRoutePlanFamily::Ipv4 => RouteFamilyFilter::Ipv4,
-        BackendRoutePlanFamily::Ipv6 => RouteFamilyFilter::Ipv6,
-    }
-}
-
-fn map_plan_static_status(status: BackendRoutePlanStaticStatus) -> RouteMapItemStatus {
-    match status {
-        BackendRoutePlanStaticStatus::Skipped => RouteMapItemStatus::Skipped,
-        BackendRoutePlanStaticStatus::Warning => RouteMapItemStatus::Warning,
-    }
-}
-
-fn map_plan_step_kind(kind: BackendRoutePlanStepKind) -> RouteMapGraphStepKind {
-    match kind {
-        BackendRoutePlanStepKind::Interface => RouteMapGraphStepKind::Interface,
-        BackendRoutePlanStepKind::Dns => RouteMapGraphStepKind::Dns,
-        BackendRoutePlanStepKind::Policy => RouteMapGraphStepKind::Policy,
-        BackendRoutePlanStepKind::Peer => RouteMapGraphStepKind::Peer,
-        BackendRoutePlanStepKind::Endpoint => RouteMapGraphStepKind::Endpoint,
-        BackendRoutePlanStepKind::Guardrail => RouteMapGraphStepKind::Guardrail,
-        BackendRoutePlanStepKind::Destination => RouteMapGraphStepKind::Destination,
-    }
-}
-
-fn plan_step_icon(kind: BackendRoutePlanStepKind) -> IconName {
-    match kind {
-        BackendRoutePlanStepKind::Interface => IconName::LayoutDashboard,
-        BackendRoutePlanStepKind::Dns => IconName::Search,
-        BackendRoutePlanStepKind::Policy => IconName::Map,
-        BackendRoutePlanStepKind::Peer => IconName::CircleUser,
-        BackendRoutePlanStepKind::Endpoint => IconName::Globe,
-        BackendRoutePlanStepKind::Guardrail => IconName::TriangleAlert,
-        BackendRoutePlanStepKind::Destination => IconName::Map,
     }
 }
 

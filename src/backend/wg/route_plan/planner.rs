@@ -25,14 +25,6 @@ impl RoutePlan {
         let metric_ops = build_metric_ops(platform, parsed, full_tunnel);
         let bypass_ops = build_bypass_ops(platform, parsed, full_tunnel);
         let windows_planned_bypass_count = bypass_ops.len();
-        let (plan_status, summary_chips, inventory_groups) = super::presentation::build_plan_presentation(
-            platform,
-            parsed,
-            &allowed_routes,
-            full_tunnel,
-            linux_policy_table_id,
-            windows_planned_bypass_count,
-        );
 
         Self {
             platform,
@@ -45,9 +37,6 @@ impl RoutePlan {
             metric_ops,
             bypass_ops,
             windows_planned_bypass_count,
-            plan_status,
-            summary_chips,
-            inventory_groups,
         }
     }
 

@@ -188,20 +188,6 @@ fn route_plan_build_is_consistent() {
     assert_eq!(plan.metric_ops.len(), 1);
     assert_eq!(plan.bypass_ops.len(), 1);
     assert_eq!(plan.route_ops.len(), 1);
-    assert!(!plan.inventory_groups.is_empty());
-}
-
-#[test]
-fn explain_matches_endpoint_hostname() {
-    let plan = RoutePlan::build(
-        RoutePlanPlatform::Windows,
-        &config(None, vec![peer(&["0.0.0.0/0"], Some("example.com:51820"))]),
-    );
-
-    let explain = plan.explain("example.com");
-
-    assert!(explain.headline.contains("configured endpoint"));
-    assert!(explain.matched_item_id.is_some());
 }
 
 #[test]

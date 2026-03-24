@@ -4,6 +4,7 @@ mod explain;
 mod graph;
 mod inspector;
 mod inventory;
+mod presenter;
 
 use gpui::*;
 use gpui_component::{

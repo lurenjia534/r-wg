@@ -1,9 +1,7 @@
 mod apply_report;
-mod explain;
 mod ids;
 mod normalize;
 mod planner;
-mod presentation;
 #[cfg(test)]
 mod tests;
 mod util;
@@ -78,30 +76,6 @@ impl FullTunnelStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RoutePlanTone {
-    Secondary,
-    Info,
-    Warning,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RoutePlanStepKind {
-    Interface,
-    Dns,
-    Policy,
-    Peer,
-    Endpoint,
-    Guardrail,
-    Destination,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RoutePlanStaticStatus {
-    Skipped,
-    Warning,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoutePlanRouteKind {
     Allowed,
     DnsHost,
@@ -120,46 +94,6 @@ impl RoutePlanFamily {
             Self::Ipv6 => "IPv6",
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutePlanChip {
-    pub label: String,
-    pub tone: RoutePlanTone,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutePlanGraphStep {
-    pub kind: RoutePlanStepKind,
-    pub label: String,
-    pub value: String,
-    pub note: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutePlanInspector {
-    pub title: String,
-    pub subtitle: String,
-    pub why_match: Vec<String>,
-    pub platform_details: Vec<String>,
-    pub risk_assessment: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutePlanRouteRow {
-    pub destination: String,
-    pub family: String,
-    pub kind: String,
-    pub peer: String,
-    pub endpoint: String,
-    pub table: String,
-    pub note: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutePlanMatchTarget {
-    pub addr: IpAddr,
-    pub cidr: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,40 +122,6 @@ pub struct RoutePlanBypassOp {
     pub port: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutePlanItem {
-    pub id: String,
-    pub title: String,
-    pub subtitle: String,
-    pub family: Option<RoutePlanFamily>,
-    pub static_status: Option<RoutePlanStaticStatus>,
-    pub event_patterns: Vec<String>,
-    pub chips: Vec<RoutePlanChip>,
-    pub inspector: RoutePlanInspector,
-    pub graph_steps: Vec<RoutePlanGraphStep>,
-    pub route_row: Option<RoutePlanRouteRow>,
-    pub match_target: Option<RoutePlanMatchTarget>,
-    pub endpoint_host: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutePlanGroup {
-    pub id: String,
-    pub label: String,
-    pub empty_note: String,
-    pub items: Vec<RoutePlanItem>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutePlanExplainResult {
-    pub query: String,
-    pub headline: String,
-    pub summary: String,
-    pub steps: Vec<String>,
-    pub risk: Vec<String>,
-    pub matched_item_id: Option<String>,
-}
-
 /// 路由规划的共享模型。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoutePlan {
@@ -235,7 +135,6 @@ pub struct RoutePlan {
     pub metric_ops: Vec<RoutePlanMetricOp>,
     pub bypass_ops: Vec<RoutePlanBypassOp>,
     pub windows_planned_bypass_count: usize,
-    pub plan_status: String,
-    pub summary_chips: Vec<RoutePlanChip>,
-    pub inventory_groups: Vec<RoutePlanGroup>,
 }
+
+pub type OperationalRoutePlan = RoutePlan;
