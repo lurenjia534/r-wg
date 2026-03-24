@@ -12,7 +12,7 @@ use super::super::persistence;
 use super::super::state::{
     ConfigSource, EditorOperation, EndpointFamily, PendingDraftAction, TunnelConfig, WgApp,
 };
-use super::config::resolve_endpoint_family_from_text;
+use super::config::{reserve_unique_name, resolve_endpoint_family_from_text};
 
 struct ImportJob {
     id: u64,
@@ -242,7 +242,7 @@ impl WgApp {
                             storage_path,
                             endpoint_family,
                         } => {
-                            let name = unique_name(&mut names_in_use, &name);
+                            let name = reserve_unique_name(&mut names_in_use, &name);
                             imported += 1;
                             ImportOutcome::Ok {
                                 id,
@@ -497,23 +497,6 @@ async fn read_config(job: ImportJob) -> ImportOutcome {
             message: format!("Read failed: {err}"),
         },
     }
-}
-
-fn unique_name(names_in_use: &mut HashSet<String>, base: &str) -> String {
-    // 生成唯一名称，避免导入时覆盖已有配置。
-    if !names_in_use.contains(base) {
-        names_in_use.insert(base.to_string());
-        return base.to_string();
-    }
-    for idx in 2..1000 {
-        let candidate = format!("{base}-{idx}");
-        if names_in_use.insert(candidate.clone()) {
-            return candidate;
-        }
-    }
-    let candidate = format!("{base}-{}", names_in_use.len() + 1);
-    names_in_use.insert(candidate.clone());
-    candidate
 }
 
 fn portal_missing_message(message: &str) -> bool {

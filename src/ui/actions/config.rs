@@ -2,9 +2,11 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io::ErrorKind;
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+mod endpoint_family;
+mod naming;
 
 use gpui::{
     div, AppContext, ClipboardItem, Context, Entity, IntoElement, ParentElement, SharedString,
@@ -24,6 +26,11 @@ use super::super::state::{
     EditorOperation, EndpointFamily, LoadedConfigState, PendingDraftAction, SidebarItem,
     TunnelConfig, WgApp,
 };
+pub(crate) use endpoint_family::{
+    endpoint_family_hint_from_config, resolve_endpoint_family_from_text,
+};
+pub(crate) use naming::reserve_unique_name;
+use naming::next_available_name;
 
 const CONFIG_TEXT_CACHE_LIMIT: usize = 32;
 const DRAFT_VALIDATION_DEBOUNCE: Duration = Duration::from_millis(180);
@@ -1485,17 +1492,7 @@ impl WgApp {
     ///
     /// 说明：用于粘贴或导入场景的自动命名。
     pub(crate) fn next_config_name(&self, base: &str) -> String {
-        // 生成不冲突的配置名（pasted-2 / pasted-3 ...）。
-        if !self.configs.iter().any(|cfg| cfg.name == base) {
-            return base.to_string();
-        }
-        for idx in 2..1000 {
-            let candidate = format!("{base}-{idx}");
-            if !self.configs.iter().any(|cfg| cfg.name == candidate) {
-                return candidate;
-            }
-        }
-        format!("{base}-{}", self.configs.len() + 1)
+        next_available_name(self.configs.iter().map(|cfg| cfg.name.as_str()), base)
     }
 
     pub(crate) fn schedule_endpoint_family_refresh(
@@ -1549,106 +1546,6 @@ pub(crate) fn text_hash(text: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
-}
-
-pub(crate) struct EndpointFamilyHint {
-    base_family: EndpointFamily,
-    pending_hosts: Vec<(String, u16)>,
-}
-
-fn endpoint_family_hint_from_text(text: &str) -> EndpointFamilyHint {
-    let parsed = config::parse_config(text);
-    let Ok(parsed) = parsed else {
-        return EndpointFamilyHint {
-            base_family: EndpointFamily::Unknown,
-            pending_hosts: Vec::new(),
-        };
-    };
-    endpoint_family_hint_from_config(&parsed)
-}
-
-pub(crate) fn endpoint_family_hint_from_config(
-    cfg: &config::WireGuardConfig,
-) -> EndpointFamilyHint {
-    let mut has_v4 = false;
-    let mut has_v6 = false;
-    let mut pending_hosts = Vec::new();
-
-    for peer in &cfg.peers {
-        let Some(endpoint) = &peer.endpoint else {
-            continue;
-        };
-        let host = endpoint.host.trim();
-        if host.is_empty() {
-            continue;
-        }
-        if let Ok(addr) = host.parse::<IpAddr>() {
-            if addr.is_ipv4() {
-                has_v4 = true;
-            } else {
-                has_v6 = true;
-            }
-            continue;
-        }
-        if host.contains(':') {
-            continue;
-        }
-
-        pending_hosts.push((host.to_string(), endpoint.port));
-    }
-
-    let base_family = endpoint_family_from_flags(has_v4, has_v6);
-    if base_family == EndpointFamily::Dual {
-        pending_hosts.clear();
-    }
-
-    EndpointFamilyHint {
-        base_family,
-        pending_hosts,
-    }
-}
-
-pub(crate) async fn resolve_endpoint_family_from_text(text: String) -> EndpointFamily {
-    let hint = endpoint_family_hint_from_text(&text);
-    if hint.pending_hosts.is_empty() {
-        return hint.base_family;
-    }
-    resolve_endpoint_family(hint.base_family, hint.pending_hosts).await
-}
-
-async fn resolve_endpoint_family(
-    base_family: EndpointFamily,
-    pending_hosts: Vec<(String, u16)>,
-) -> EndpointFamily {
-    if base_family == EndpointFamily::Dual {
-        return EndpointFamily::Dual;
-    }
-
-    let mut has_v4 = matches!(base_family, EndpointFamily::V4 | EndpointFamily::Dual);
-    let mut has_v6 = matches!(base_family, EndpointFamily::V6 | EndpointFamily::Dual);
-
-    for (host, port) in pending_hosts {
-        if let Ok(addrs) = tokio::net::lookup_host((host.as_str(), port)).await {
-            for addr in addrs {
-                if addr.ip().is_ipv4() {
-                    has_v4 = true;
-                } else {
-                    has_v6 = true;
-                }
-            }
-        }
-    }
-
-    endpoint_family_from_flags(has_v4, has_v6)
-}
-
-fn endpoint_family_from_flags(has_v4: bool, has_v6: bool) -> EndpointFamily {
-    match (has_v4, has_v6) {
-        (true, true) => EndpointFamily::Dual,
-        (true, false) => EndpointFamily::V4,
-        (false, true) => EndpointFamily::V6,
-        (false, false) => EndpointFamily::Unknown,
-    }
 }
 
 /// 格式化删除后的状态提示文案。

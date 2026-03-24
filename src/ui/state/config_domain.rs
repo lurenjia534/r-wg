@@ -272,7 +272,7 @@ impl ConfigsWorkspace {
         } else {
             match config::parse_config(text.as_ref()) {
                 Ok(parsed) => DraftValidationState::Valid {
-                    endpoint_family: workspace_endpoint_family_hint_from_config(&parsed),
+                    endpoint_family: endpoint_family_hint_from_config(&parsed),
                     parsed,
                 },
                 Err(err) => DraftValidationState::Invalid {
@@ -431,39 +431,6 @@ fn configs_family_search_label(family: EndpointFamily) -> &'static str {
         EndpointFamily::V6 => "ipv6",
         EndpointFamily::Dual => "dual",
         EndpointFamily::Unknown => "unknown",
-    }
-}
-
-fn workspace_endpoint_family_hint_from_config(cfg: &config::WireGuardConfig) -> EndpointFamily {
-    let mut has_v4 = false;
-    let mut has_v6 = false;
-
-    for peer in &cfg.peers {
-        let Some(endpoint) = &peer.endpoint else {
-            continue;
-        };
-        let host = endpoint.host.trim();
-        if host.is_empty() {
-            continue;
-        }
-        if let Ok(addr) = host.parse::<IpAddr>() {
-            if addr.is_ipv4() {
-                has_v4 = true;
-            } else {
-                has_v6 = true;
-            }
-            continue;
-        }
-        if host.contains(':') {
-            has_v6 = true;
-        }
-    }
-
-    match (has_v4, has_v6) {
-        (true, true) => EndpointFamily::Dual,
-        (true, false) => EndpointFamily::V4,
-        (false, true) => EndpointFamily::V6,
-        (false, false) => EndpointFamily::Unknown,
     }
 }
 

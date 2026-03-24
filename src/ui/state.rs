@@ -1,7 +1,6 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::net::IpAddr;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +18,7 @@ use r_wg::backend::wg::{
 use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
+use super::actions::config::endpoint_family_hint_from_config;
 use super::persistence::{self, StoragePaths};
 use super::themes::{self, AppearancePolicy};
 
