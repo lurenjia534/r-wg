@@ -21,6 +21,7 @@ const ACTIVATE_RECOVERY_ATTEMPTS: usize = 10;
 pub(super) struct PrimaryGuard {
     runtime_dir: PathBuf,
     socket_path: PathBuf,
+    lock_path: PathBuf,
     _lock_file: File,
 }
 
@@ -57,6 +58,7 @@ pub(super) fn startup(activation: Arc<ActivationState>) -> Result<PlatformStartu
 impl Drop for PrimaryGuard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.socket_path);
+        let _ = fs::remove_file(&self.lock_path);
         let _ = fs::remove_dir(&self.runtime_dir);
     }
 }
@@ -207,6 +209,7 @@ fn bind_primary(
     Ok(PlatformStartup::Primary(PrimaryGuard {
         runtime_dir: paths.runtime_dir.clone(),
         socket_path: paths.socket_path.clone(),
+        lock_path: paths.lock_path.clone(),
         _lock_file: lock_file,
     }))
 }
