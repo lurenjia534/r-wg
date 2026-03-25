@@ -14,7 +14,7 @@ use gpui_component::{
 use crate::ui::state::{
     ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, EndpointFamily, WgApp,
 };
-use crate::ui::view::data::ConfigsViewData;
+use crate::ui::view::configs::ConfigsViewData;
 
 use super::inspector::{endpoint_family_tag, source_tag};
 use super::{ConfigsLayoutMode, CONFIGS_LIBRARY_ROW_HEIGHT, CONFIGS_LIBRARY_SCROLL_STATE_ID};

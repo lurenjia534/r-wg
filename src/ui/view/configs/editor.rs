@@ -6,7 +6,7 @@ use gpui_component::{
 };
 
 use crate::ui::state::{ConfigsWorkspace, WgApp};
-use crate::ui::view::data::ConfigsViewData;
+use crate::ui::view::configs::ConfigsViewData;
 
 use super::inspector::{editor_action_bar, render_diagnostics_strip};
 use super::ConfigsLayoutMode;

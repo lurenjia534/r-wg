@@ -20,7 +20,7 @@ use gpui_component::{
 };
 
 use crate::ui::state::{RouteFamilyFilter, RouteMapMode, WgApp};
-use crate::ui::view::data::ViewData;
+use crate::ui::view::shared::ViewData;
 use crate::ui::view::widgets::PageShell;
 
 use self::data::{

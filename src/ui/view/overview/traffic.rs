@@ -10,13 +10,14 @@ use gpui_component::{
 
 use crate::ui::format::format_bytes;
 use crate::ui::state::{TrafficPeriod, WgApp};
-use crate::ui::view::data::{OverviewData, TrafficSummaryData, TrafficTrendData};
 
 use super::chart::{format_avg_bytes, TrafficTrendOverlay};
 use super::common::{
     overview_section, section_title, tile_border, tile_header, tile_icon, tile_shell, tile_surface,
     OverviewSectionTone,
 };
+use super::traffic_analytics::{TrafficSummaryData, TrafficTrendData};
+use super::view_model::OverviewData;
 
 pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T>) -> GroupBox {
     let total_text = format_bytes(trend.total_bytes);

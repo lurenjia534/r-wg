@@ -2,7 +2,6 @@ use gpui::*;
 use gpui_component::{group_box::GroupBox, h_flex, v_flex, ActiveTheme as _, IconName};
 
 use crate::ui::state::WgApp;
-use crate::ui::view::data::OverviewData;
 
 use super::chart::{build_sparkline_points, sparkline_chart};
 use super::common::{
@@ -10,6 +9,7 @@ use super::common::{
     status_state_item, two_row_grid, vertical_rule, OverviewSectionTone,
 };
 use super::traffic::traffic_column;
+use super::view_model::OverviewData;
 
 pub(super) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> GroupBox {
     let runtime = &overview.runtime;

@@ -9,7 +9,7 @@ use gpui_component::{
     PixelsExt,
 };
 
-use crate::ui::view::data::TrafficTrendPoint;
+use super::traffic_analytics::TrafficTrendPoint;
 
 pub(super) struct SparklinePoint {
     label: String,

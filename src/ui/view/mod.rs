@@ -2,12 +2,12 @@
 mod about;
 mod advanced;
 mod configs;
-mod data;
 mod dns;
 mod left_panel;
 mod logs;
 mod overview;
 mod route_map;
+mod shared;
 mod top_bar;
 mod widgets;
 
@@ -19,7 +19,7 @@ use gpui_component::{
 
 use super::state::{ConfigDraftState, SidebarItem, WgApp};
 use super::themes::AppearancePolicy;
-use data::ViewData;
+use shared::ViewData;
 
 pub(crate) use widgets::{PageShell, PageShellHeader};
 

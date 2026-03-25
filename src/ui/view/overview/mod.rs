@@ -2,6 +2,8 @@ mod cards;
 mod chart;
 mod common;
 mod traffic;
+mod traffic_analytics;
+mod view_model;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -18,11 +20,11 @@ use gpui_component::{
 };
 
 use crate::ui::state::WgApp;
-use crate::ui::view::data::OverviewData;
 use crate::ui::view::widgets::{PageShell, PageShellHeader};
 
 use self::cards::{network_status_card, running_status_card, traffic_stats_card};
 use self::traffic::{traffic_summary_card, traffic_trend_card};
+use self::view_model::OverviewData;
 
 const OVERVIEW_COMPACT_BREAKPOINT: f32 = 1180.0;
 const OVERVIEW_STACK_BREAKPOINT: f32 = 980.0;

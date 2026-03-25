@@ -15,7 +15,7 @@ use r_wg::dns::DnsSelection;
 use r_wg::log;
 
 use crate::ui::state::{current_apply_report, RouteFamilyFilter, WgApp};
-use crate::ui::view::data::ViewData;
+use crate::ui::view::shared::ViewData;
 
 use super::presenter::{build_plan_explain, build_plan_presentation, RouteMapMatchTarget};
 

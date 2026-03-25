@@ -8,7 +8,7 @@ use gpui_component::{
 use crate::ui::state::{
     ConfigInspectorTab, ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, WgApp,
 };
-use crate::ui::view::data::ConfigsViewData;
+use crate::ui::view::configs::ConfigsViewData;
 
 use super::layout::{
     render_configs_compact_layout, render_configs_desktop_layout, render_configs_medium_layout,

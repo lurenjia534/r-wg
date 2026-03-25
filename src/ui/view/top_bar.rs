@@ -6,7 +6,7 @@ use gpui_component::{
 
 use super::super::state::{SidebarItem, WgApp};
 use super::super::themes::AppearancePolicy;
-use super::data::ViewData;
+use super::shared::ViewData;
 
 /// 顶部工具栏只负责全局控制，不承载页面标题语义。
 pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<WgApp>) -> Div {

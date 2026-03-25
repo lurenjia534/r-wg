@@ -15,7 +15,7 @@ use crate::ui::state::{
     ConfigInspectorTab, ConfigSource, ConfigsPrimaryPane, ConfigsWorkspace, DraftValidationState,
     EndpointFamily, WgApp,
 };
-use crate::ui::view::data::ConfigsViewData;
+use crate::ui::view::configs::ConfigsViewData;
 
 use super::{ConfigsLayoutMode, ConfigsRuntimeView};
 

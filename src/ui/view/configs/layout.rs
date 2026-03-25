@@ -14,7 +14,7 @@ use gpui_component::{
 use crate::ui::state::{
     ConfigInspectorTab, ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, WgApp,
 };
-use crate::ui::view::data::ConfigsViewData;
+use crate::ui::view::configs::ConfigsViewData;
 
 use super::editor::render_editor_panel;
 use super::inspector::{render_configs_primary_pane_tabs, render_inspector_panel};
