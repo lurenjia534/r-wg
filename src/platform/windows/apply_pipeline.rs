@@ -443,6 +443,7 @@ async fn apply_interface_metrics<'a>(
 async fn resolve_bypass_targets<'a>(
     mut ctx: ApplyContext<'a>,
 ) -> Result<(ApplyContext<'a>, Vec<ResolvedBypassOp>), NetworkApplyError> {
+    let metric_count = ctx.route_plan.metric_ops.len();
     let mut resolved_bypass_ops = Vec::with_capacity(ctx.route_plan.bypass_ops.len());
 
     for (index, op) in ctx.route_plan.bypass_ops.iter().cloned().enumerate() {
@@ -468,7 +469,7 @@ async fn resolve_bypass_targets<'a>(
                             op.host, op.port
                         )],
                         error,
-                        ctx.route_plan.metric_ops.len(),
+                        metric_count,
                         index + 1,
                         0,
                         false,
@@ -490,6 +491,8 @@ async fn apply_bypass_routes<'a>(
     mut ctx: ApplyContext<'a>,
     resolved_bypass_ops: Vec<ResolvedBypassOp>,
 ) -> Result<ApplyContext<'a>, NetworkApplyError> {
+    let metric_count = ctx.route_plan.metric_ops.len();
+
     for (bypass_index, resolved) in resolved_bypass_ops.iter().enumerate() {
         let mut applicable_endpoints = 0usize;
         let mut routable_endpoints = 0usize;
@@ -527,7 +530,7 @@ async fn apply_bypass_routes<'a>(
                             route.dest, route.prefix, resolved.op.host, resolved.op.port
                         )],
                         error,
-                        ctx.route_plan.metric_ops.len(),
+                        metric_count,
                         bypass_index + 1,
                         0,
                         false,
@@ -551,7 +554,7 @@ async fn apply_bypass_routes<'a>(
                                 route.dest, route.prefix, resolved.op.host, resolved.op.port
                             )],
                             error,
-                            ctx.route_plan.metric_ops.len(),
+                            metric_count,
                             bypass_index + 1,
                             0,
                             false,
@@ -603,6 +606,9 @@ async fn apply_bypass_routes<'a>(
 async fn apply_route_entries<'a>(
     mut ctx: ApplyContext<'a>,
 ) -> Result<ApplyContext<'a>, NetworkApplyError> {
+    let metric_count = ctx.route_plan.metric_ops.len();
+    let bypass_count = ctx.route_plan.bypass_ops.len();
+
     for (index, op) in ctx.route_plan.route_ops.iter().cloned().enumerate() {
         let entry = RouteEntry {
             dest: op.route.addr,
@@ -637,8 +643,8 @@ async fn apply_route_entries<'a>(
                         op.route.addr, op.route.cidr
                     )],
                     error,
-                    ctx.route_plan.metric_ops.len(),
-                    ctx.route_plan.bypass_ops.len(),
+                    metric_count,
+                    bypass_count,
                     index + 1,
                     false,
                     true,
@@ -675,8 +681,8 @@ async fn apply_route_entries<'a>(
                             op.route.addr, op.route.cidr
                         )],
                         error,
-                        ctx.route_plan.metric_ops.len(),
-                        ctx.route_plan.bypass_ops.len(),
+                        metric_count,
+                        bypass_count,
                         index + 1,
                         false,
                         true,
@@ -695,6 +701,10 @@ async fn apply_route_entries<'a>(
 async fn apply_dns_stage<'a>(
     mut ctx: ApplyContext<'a>,
 ) -> Result<ApplyContext<'a>, NetworkApplyError> {
+    let metric_count = ctx.route_plan.metric_ops.len();
+    let bypass_count = ctx.route_plan.bypass_ops.len();
+    let route_count = ctx.route_plan.route_ops.len();
+
     if ctx.config.interface.dns_servers.is_empty() && ctx.config.interface.dns_search.is_empty() {
         return Ok(ctx);
     }
@@ -731,9 +741,9 @@ async fn apply_dns_stage<'a>(
                                     "failed to persist Windows recovery journal after applying DNS: {error}"
                                 )],
                                 error,
-                                ctx.route_plan.metric_ops.len(),
-                                ctx.route_plan.bypass_ops.len(),
-                                ctx.route_plan.route_ops.len(),
+                                metric_count,
+                                bypass_count,
+                                route_count,
                                 false,
                                 false,
                                 true,
@@ -754,9 +764,9 @@ async fn apply_dns_stage<'a>(
                     Some(RouteApplyFailureKind::System),
                     vec![format!("failed to apply Windows DNS settings: {error}")],
                     error,
-                    ctx.route_plan.metric_ops.len(),
-                    ctx.route_plan.bypass_ops.len(),
-                    ctx.route_plan.route_ops.len(),
+                    metric_count,
+                    bypass_count,
+                    route_count,
                     false,
                     false,
                     true,
@@ -773,6 +783,10 @@ async fn apply_dns_stage<'a>(
 async fn apply_guard_stages<'a>(
     mut ctx: ApplyContext<'a>,
 ) -> Result<ApplyContext<'a>, NetworkApplyError> {
+    let metric_count = ctx.route_plan.metric_ops.len();
+    let bypass_count = ctx.route_plan.bypass_ops.len();
+    let route_count = ctx.route_plan.route_ops.len();
+
     if ctx.config.interface.dns_servers.is_empty()
         || ctx.config.interface.table == Some(RouteTable::Off)
         || (!ctx.full_v4 && !ctx.full_v6)
@@ -803,9 +817,9 @@ async fn apply_guard_stages<'a>(
                                     "failed to persist Windows recovery journal after applying NRPT: {error}"
                                 )],
                                 error,
-                                ctx.route_plan.metric_ops.len(),
-                                ctx.route_plan.bypass_ops.len(),
-                                ctx.route_plan.route_ops.len(),
+                                metric_count,
+                                bypass_count,
+                                route_count,
                                 false,
                                 false,
                                 false,
@@ -825,9 +839,9 @@ async fn apply_guard_stages<'a>(
                     Some(RouteApplyFailureKind::System),
                     vec![format!("failed to apply Windows NRPT guard: {error}")],
                     error,
-                    ctx.route_plan.metric_ops.len(),
-                    ctx.route_plan.bypass_ops.len(),
-                    ctx.route_plan.route_ops.len(),
+                    metric_count,
+                    bypass_count,
+                    route_count,
                     false,
                     false,
                     false,
@@ -866,9 +880,9 @@ async fn apply_guard_stages<'a>(
                                     "failed to persist Windows recovery journal after applying DNS guard: {error}"
                                 )],
                                 error,
-                                ctx.route_plan.metric_ops.len(),
-                                ctx.route_plan.bypass_ops.len(),
-                                ctx.route_plan.route_ops.len(),
+                                metric_count,
+                                bypass_count,
+                                route_count,
                                 false,
                                 false,
                                 false,
@@ -888,9 +902,9 @@ async fn apply_guard_stages<'a>(
                     Some(RouteApplyFailureKind::System),
                     vec![format!("failed to apply Windows DNS guard: {error}")],
                     error,
-                    ctx.route_plan.metric_ops.len(),
-                    ctx.route_plan.bypass_ops.len(),
-                    ctx.route_plan.route_ops.len(),
+                    metric_count,
+                    bypass_count,
+                    route_count,
                     false,
                     false,
                     false,
@@ -907,6 +921,10 @@ async fn apply_guard_stages<'a>(
 async fn mark_recovery_running<'a>(
     mut ctx: ApplyContext<'a>,
 ) -> Result<ApplyContext<'a>, NetworkApplyError> {
+    let metric_count = ctx.route_plan.metric_ops.len();
+    let bypass_count = ctx.route_plan.bypass_ops.len();
+    let route_count = ctx.route_plan.route_ops.len();
+
     if let Some(recovery) = ctx.state.recovery.as_mut() {
         if let Err(error) = recovery.mark_running() {
             return Err(ctx
@@ -918,9 +936,9 @@ async fn mark_recovery_running<'a>(
                         "failed to mark Windows recovery journal running: {error}"
                     )],
                     error,
-                    ctx.route_plan.metric_ops.len(),
-                    ctx.route_plan.bypass_ops.len(),
-                    ctx.route_plan.route_ops.len(),
+                    metric_count,
+                    bypass_count,
+                    route_count,
                     false,
                     false,
                     false,
