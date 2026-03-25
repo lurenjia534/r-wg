@@ -253,7 +253,7 @@ mod tests {
     use gpui_component::theme::ThemeMode;
 
     use super::*;
-    use crate::ui::themes::AppearancePolicy;
+    use crate::ui::features::themes::AppearancePolicy;
     use crate::ui::state::{ConfigSource, EndpointFamily, TunnelConfig, WgApp};
 
     fn make_app() -> WgApp {

@@ -4,8 +4,8 @@ use gpui_component::{
     h_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _,
 };
 
+use super::super::features::themes::AppearancePolicy;
 use super::super::state::{SidebarItem, WgApp};
-use super::super::themes::AppearancePolicy;
 use super::shared::ViewData;
 
 /// 顶部工具栏只负责全局控制，不承载页面标题语义。

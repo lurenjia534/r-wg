@@ -12,10 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_os = "windows"))]
 use std::sync::Arc;
 
+use super::features::themes::{self, AppearancePolicy};
 use super::persistence;
 use super::single_instance::PrimaryInstance;
 use super::state::WgApp;
-use super::themes::{self, AppearancePolicy};
 use super::tray;
 
 #[derive(Clone)]

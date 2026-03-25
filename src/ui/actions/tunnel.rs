@@ -277,8 +277,8 @@ mod tests {
     use gpui_component::theme::ThemeMode;
 
     use super::*;
+    use crate::ui::features::themes::AppearancePolicy;
     use crate::ui::state::{ConfigSource, EndpointFamily, TunnelConfig, RESTART_COOLDOWN};
-    use crate::ui::themes::AppearancePolicy;
 
     fn make_app() -> WgApp {
         WgApp::new(

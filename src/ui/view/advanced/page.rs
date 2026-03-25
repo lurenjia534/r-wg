@@ -1,23 +1,16 @@
-use gpui::{
-    div, px, Context, Div, ParentElement, Styled,
-};
+use gpui::{div, px, Context, Div, ParentElement, Styled};
 use gpui_component::group_box::GroupBoxVariant;
 use gpui_component::setting::{SettingGroup, SettingPage, Settings};
-use gpui_component::theme::ThemeMode;
 use gpui_component::ActiveTheme as _;
 
+use crate::ui::features::theme_settings_group;
 use crate::ui::state::WgApp;
 use crate::ui::view::widgets::{PageShell, PageShellHeader};
 
 use super::preferences::{
-    dns_mode_item, dns_preset_item, inspector_tab_item, log_auto_follow_item,
-    traffic_period_item,
+    dns_mode_item, dns_preset_item, inspector_tab_item, log_auto_follow_item, traffic_period_item,
 };
 use super::system::{privileged_backend_item, troubleshooting_item};
-use super::theme::{
-    reset_theme_item, theme_file_workflow_item, theme_mode_item, theme_palette_item,
-    theme_preview_item,
-};
 
 // Settings page composition.
 
@@ -27,19 +20,7 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
     let general_page = SettingPage::new("General")
         .description("Appearance and remembered app defaults.")
         .default_open(true)
-        .group(
-            SettingGroup::new()
-                .title("Appearance")
-                .description(
-                    "Separate the appearance policy from the light and dark palettes it resolves to.",
-                )
-                .item(theme_mode_item(app_handle.clone()))
-                .item(theme_palette_item(app_handle.clone(), ThemeMode::Light))
-                .item(theme_palette_item(app_handle.clone(), ThemeMode::Dark))
-                .item(reset_theme_item(app_handle.clone()))
-                .item(theme_file_workflow_item(app_handle.clone()))
-                .item(theme_preview_item(app_handle.clone())),
-        )
+        .group(theme_settings_group(app_handle.clone()))
         .group(
             SettingGroup::new()
                 .title("Workspace")

@@ -315,8 +315,8 @@ mod tests {
     use gpui_component::theme::ThemeMode;
 
     use super::{read_process_rss_bytes, SampledRuntimeMetrics};
+    use crate::ui::features::themes::AppearancePolicy;
     use crate::ui::state::{SidebarItem, WgApp};
-    use crate::ui::themes::AppearancePolicy;
 
     fn make_app() -> WgApp {
         WgApp::new(

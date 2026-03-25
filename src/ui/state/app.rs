@@ -7,7 +7,7 @@ use gpui_component::WindowExt;
 use r_wg::backend::wg::Engine;
 use r_wg::dns::{DnsMode, DnsPreset};
 
-use crate::ui::themes::{self, AppearancePolicy};
+use crate::ui::features::themes::{self, AppearancePolicy};
 
 use super::{
     ConfigInspectorTab, ConfigsState, PersistenceState, ProxiesViewMode, RouteFamilyFilter,

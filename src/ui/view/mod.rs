@@ -17,8 +17,8 @@ use gpui_component::{
     Sizable as _,
 };
 
+use super::features::themes::AppearancePolicy;
 use super::state::{ConfigDraftState, SidebarItem, WgApp};
-use super::themes::AppearancePolicy;
 use shared::ViewData;
 
 pub(crate) use widgets::{PageShell, PageShellHeader};

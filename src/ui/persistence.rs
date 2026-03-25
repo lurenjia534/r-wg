@@ -5,8 +5,8 @@ use gpui_component::theme::ThemeMode;
 use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
+use super::features::themes::AppearancePolicy;
 use super::state::{ConfigInspectorTab, ConfigSource, ProxiesViewMode, TrafficPeriod};
-use super::themes::AppearancePolicy;
 
 pub(crate) const STATE_VERSION: u32 = 3;
 const STATE_FILE_NAME: &str = "state.json";

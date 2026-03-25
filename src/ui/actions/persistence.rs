@@ -6,6 +6,7 @@ use gpui::{AppContext, Context, Timer, Window};
 use gpui_component::theme::ThemeMode;
 use r_wg::dns::{DnsMode, DnsPreset};
 
+use super::super::features::themes::{self, AppearancePolicy};
 use super::super::persistence::{
     self, PersistedConfig, PersistedConfigTrafficDayBucket, PersistedConfigTrafficHourBucket,
     PersistedSource, PersistedState, PersistedTrafficDayBucket, PersistedTrafficHourBucket,
@@ -16,7 +17,6 @@ use super::super::state::{
     StatsState, TrafficDayBucket, TrafficHourBucket, TrafficStore, TunnelConfig, UiPrefsState,
     WgApp, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
 };
-use super::super::themes::{self, AppearancePolicy};
 
 impl WgApp {
     pub(crate) fn start_load_persisted_state(

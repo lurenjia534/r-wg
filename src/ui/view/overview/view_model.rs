@@ -2,7 +2,9 @@ use chrono::Local;
 use r_wg::backend::wg::config;
 
 use crate::ui::format::{format_bytes, format_duration, format_route_table, summarize_peers};
-use crate::ui::state::{ConfigSource, TrafficTrendData, TrafficPeriod, TrafficSummaryData, TunnelConfig, WgApp};
+use crate::ui::state::{
+    ConfigSource, TrafficPeriod, TrafficSummaryData, TrafficTrendData, TunnelConfig, WgApp,
+};
 use crate::ui::view::shared::{
     format_allowed_summary, format_dns, format_endpoint, format_local_ip, ViewData,
 };
@@ -237,8 +239,8 @@ mod tests {
     use gpui_component::theme::ThemeMode;
 
     use super::OverviewData;
+    use crate::ui::features::themes::AppearancePolicy;
     use crate::ui::state::{ConfigSource, EndpointFamily, TunnelConfig, WgApp};
-    use crate::ui::themes::AppearancePolicy;
 
     fn make_app() -> WgApp {
         WgApp::new(

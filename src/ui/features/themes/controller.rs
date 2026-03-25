@@ -7,10 +7,14 @@ use gpui_component::notification::Notification;
 use gpui_component::theme::ThemeMode;
 use gpui_component::{ActiveTheme as _, WindowExt};
 
-use super::super::format::sanitize_file_stem;
-use super::super::state::WgApp;
-use super::super::theme_lint::{self, ThemeLintCounts};
-use super::super::themes;
+use crate::ui::format::sanitize_file_stem;
+use crate::ui::state::WgApp;
+
+use super::{
+    build_theme_template, ensure_themes_dir, import_theme_file, lint_theme_config, lint_theme_set,
+    resolve_theme_config, restore_curated_themes, sanitize_theme_set_with_inventory,
+    theme_name_inventory, write_theme_set, ThemeLintCounts,
+};
 
 struct ImportedThemeFile {
     path: PathBuf,
@@ -33,7 +37,7 @@ impl WgApp {
             }
         };
 
-        match themes::ensure_themes_dir(&storage) {
+        match ensure_themes_dir(&storage) {
             Ok(themes_dir) => {
                 cx.reveal_path(&themes_dir);
                 self.set_status(format!("Opened themes folder: {}", themes_dir.display()));
@@ -70,7 +74,7 @@ impl WgApp {
             multiple: true,
             prompt: Some("Import Theme JSON".into()),
         });
-        let names_in_use = themes::theme_name_inventory(Some(&storage), cx);
+        let names_in_use = theme_name_inventory(Some(&storage), cx);
 
         let view = cx.weak_entity();
         window
@@ -184,7 +188,7 @@ impl WgApp {
             }
         };
 
-        let light_theme = themes::resolve_theme_config(
+        let light_theme = resolve_theme_config(
             ThemeMode::Light,
             self.ui_prefs.theme_light_key.as_deref().map(|key| &**key),
             self.ui_prefs
@@ -194,17 +198,17 @@ impl WgApp {
             Some(&storage),
             cx,
         );
-        let dark_theme = themes::resolve_theme_config(
+        let dark_theme = resolve_theme_config(
             ThemeMode::Dark,
             self.ui_prefs.theme_dark_key.as_deref().map(|key| &**key),
             self.ui_prefs.theme_dark_name.as_deref().map(|name| &**name),
             Some(&storage),
             cx,
         );
-        let template = themes::build_theme_template(light_theme.as_ref(), dark_theme.as_ref());
-        let mut names_in_use = themes::theme_name_inventory(Some(&storage), cx);
-        let template = themes::sanitize_theme_set_with_inventory(template, &mut names_in_use);
-        let lint_counts = theme_lint::lint_theme_set(&template);
+        let template = build_theme_template(light_theme.as_ref(), dark_theme.as_ref());
+        let mut names_in_use = theme_name_inventory(Some(&storage), cx);
+        let template = sanitize_theme_set_with_inventory(template, &mut names_in_use);
+        let lint_counts = lint_theme_set(&template);
         let file_stem = sanitize_file_stem(&format!("{}-template", cx.theme().theme_name()));
 
         self.set_status("Writing theme template...");
@@ -213,9 +217,10 @@ impl WgApp {
         let view = cx.weak_entity();
         window
             .spawn(cx, async move |cx| {
-                let write_task = cx.background_spawn(async move {
-                    themes::write_theme_set(&storage, &file_stem, &template)
-                });
+                let write_task =
+                    cx.background_spawn(
+                        async move { write_theme_set(&storage, &file_stem, &template) },
+                    );
                 let result = write_task.await;
 
                 view.update_in(cx, |this, window, cx| {
@@ -267,7 +272,7 @@ impl WgApp {
             .spawn(cx, async move |cx| {
                 let lint_storage = storage.clone();
                 let restore_task =
-                    cx.background_spawn(async move { themes::restore_curated_themes(&storage) });
+                    cx.background_spawn(async move { restore_curated_themes(&storage) });
                 let result = restore_task.await;
 
                 view.update_in(cx, |this, window, cx| {
@@ -298,17 +303,17 @@ impl WgApp {
 
 async fn import_theme_files(
     paths: Vec<PathBuf>,
-    storage: super::super::persistence::StoragePaths,
+    storage: crate::ui::persistence::StoragePaths,
     mut names_in_use: std::collections::HashSet<String>,
 ) -> ThemeImportSummary {
     let mut imported = Vec::new();
     let mut failed = Vec::new();
 
     for path in paths {
-        match themes::import_theme_file(&path, &storage, &mut names_in_use) {
+        match import_theme_file(&path, &storage, &mut names_in_use) {
             Ok(imported_theme) => imported.push(ImportedThemeFile {
                 path: imported_theme.path,
-                lint_counts: theme_lint::lint_theme_set(&imported_theme.theme_set),
+                lint_counts: lint_theme_set(&imported_theme.theme_set),
             }),
             Err(err) => failed.push((path, err)),
         }
@@ -373,17 +378,17 @@ fn finish_theme_import(
 
 fn lint_counts_for_active_palettes(
     app: &WgApp,
-    storage: &super::super::persistence::StoragePaths,
+    storage: &crate::ui::persistence::StoragePaths,
     cx: &Context<WgApp>,
 ) -> ThemeLintCounts {
-    let light_theme = themes::resolve_theme_config(
+    let light_theme = resolve_theme_config(
         ThemeMode::Light,
         app.ui_prefs.theme_light_key.as_deref().map(|key| &**key),
         app.ui_prefs.theme_light_name.as_deref().map(|name| &**name),
         Some(storage),
         cx,
     );
-    let dark_theme = themes::resolve_theme_config(
+    let dark_theme = resolve_theme_config(
         ThemeMode::Dark,
         app.ui_prefs.theme_dark_key.as_deref().map(|key| &**key),
         app.ui_prefs.theme_dark_name.as_deref().map(|name| &**name),
@@ -392,9 +397,9 @@ fn lint_counts_for_active_palettes(
     );
 
     let mut counts = ThemeLintCounts::default();
-    let light_items = theme_lint::lint_theme_config(light_theme.as_ref());
+    let light_items = lint_theme_config(light_theme.as_ref());
     counts.add_items(light_items.iter());
-    let dark_items = theme_lint::lint_theme_config(dark_theme.as_ref());
+    let dark_items = lint_theme_config(dark_theme.as_ref());
     counts.add_items(dark_items.iter());
     counts
 }

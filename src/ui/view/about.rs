@@ -11,8 +11,8 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
+use super::super::features::themes::AppearancePolicy;
 use super::super::state::WgApp;
-use super::super::themes::AppearancePolicy;
 use super::widgets::backend_status_badge;
 
 const BRAND_FONT: &str = "Plus Jakarta Sans";

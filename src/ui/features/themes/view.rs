@@ -1,23 +1,35 @@
 use gpui::prelude::FluentBuilder as _;
-use gpui::{
-    div, px, Axis, Div, Entity, Hsla, IntoElement, ParentElement, SharedString, Styled,
-};
+use gpui::{div, px, Axis, Div, Entity, Hsla, IntoElement, ParentElement, SharedString, Styled};
 use gpui_component::button::{Button, ButtonGroup};
 use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
-use gpui_component::setting::{SettingField, SettingItem};
+use gpui_component::setting::{SettingField, SettingGroup, SettingItem};
 use gpui_component::theme::{Colorize as _, Theme, ThemeMode};
-use gpui_component::{
-    h_flex, v_flex, ActiveTheme as _, Selectable, Sizable as _, StyledExt as _,
-};
+use gpui_component::{h_flex, v_flex, ActiveTheme as _, Selectable, Sizable as _, StyledExt as _};
 
+use super::{
+    available_themes, lint_theme_config, resolve_theme_preference, AppearancePolicy,
+    ThemeCatalogEntry, ThemeLintItem, ThemeLintSeverity,
+};
 use crate::ui::persistence;
 use crate::ui::state::WgApp;
-use crate::ui::theme_lint::{self, ThemeLintItem, ThemeLintSeverity};
-use crate::ui::themes::{self, AppearancePolicy};
 
 // Theme policy, palette selection, preview, and lint presentation.
 
-pub(super) fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
+pub(crate) fn theme_settings_group(app: Entity<WgApp>) -> SettingGroup {
+    SettingGroup::new()
+        .title("Appearance")
+        .description(
+            "Separate the appearance policy from the light and dark palettes it resolves to.",
+        )
+        .item(theme_mode_item(app.clone()))
+        .item(theme_palette_item(app.clone(), ThemeMode::Light))
+        .item(theme_palette_item(app.clone(), ThemeMode::Dark))
+        .item(reset_theme_item(app.clone()))
+        .item(theme_file_workflow_item(app.clone()))
+        .item(theme_preview_item(app))
+}
+
+fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Appearance Policy",
         SettingField::render(move |_, _window, cx| {
@@ -79,7 +91,7 @@ pub(super) fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
     .description("Choose whether the app follows the OS, or stays pinned to light or dark.")
 }
 
-pub(super) fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
+fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
     let title = match mode {
         ThemeMode::Light => "Light Palette",
         ThemeMode::Dark => "Dark Palette",
@@ -98,7 +110,7 @@ pub(super) fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> Setting
     .description(description)
 }
 
-pub(super) fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
+fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Reset Palettes",
         SettingField::render(move |_, _window, _cx| {
@@ -122,7 +134,7 @@ pub(super) fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
     .description("Clear stored palette names and fall back to the registry defaults for each mode.")
 }
 
-pub(super) fn theme_file_workflow_item(app: Entity<WgApp>) -> SettingItem {
+fn theme_file_workflow_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Theme Files",
         SettingField::render(move |_, _window, cx| {
@@ -133,7 +145,7 @@ pub(super) fn theme_file_workflow_item(app: Entity<WgApp>) -> SettingItem {
     .description("File-based workflow for importing, templating, and restoring curated themes.")
 }
 
-pub(super) fn theme_preview_item(app: Entity<WgApp>) -> SettingItem {
+fn theme_preview_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Preview",
         SettingField::render(move |_, _window, cx| render_theme_preview_field(app.clone(), cx)),
@@ -157,7 +169,7 @@ fn render_theme_palette_field(app: Entity<WgApp>, mode: ThemeMode, cx: &mut gpui
                 .map(|name| name.to_string()),
         )
     };
-    let resolved = themes::resolve_theme_preference(
+    let resolved = resolve_theme_preference(
         mode,
         preferred_key.as_deref(),
         preferred_name.as_deref(),
@@ -184,7 +196,7 @@ fn render_theme_palette_field(app: Entity<WgApp>, mode: ThemeMode, cx: &mut gpui
             .compact()
             .dropdown_caret(true)
             .dropdown_menu_with_anchor(gpui::Corner::TopRight, move |menu: PopupMenu, _, cx| {
-                let available = themes::available_themes(mode, storage.as_ref(), cx);
+                let available = available_themes(mode, storage.as_ref(), cx);
                 let mut builtin = Vec::new();
                 let mut recommended = Vec::new();
                 let mut more = Vec::new();
@@ -282,14 +294,14 @@ fn render_theme_preview_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
             app.ui_session.show_alternate_theme_preview,
         )
     };
-    let light_resolved = themes::resolve_theme_preference(
+    let light_resolved = resolve_theme_preference(
         ThemeMode::Light,
         light_key.as_deref(),
         light_name.as_deref(),
         storage.as_ref(),
         cx,
     );
-    let dark_resolved = themes::resolve_theme_preference(
+    let dark_resolved = resolve_theme_preference(
         ThemeMode::Dark,
         dark_key.as_deref(),
         dark_name.as_deref(),
@@ -468,7 +480,7 @@ struct ThemePreviewTokens {
     muted: Hsla,
 }
 
-fn theme_preview_tokens(entry: themes::ThemeCatalogEntry) -> ThemePreviewTokens {
+fn theme_preview_tokens(entry: ThemeCatalogEntry) -> ThemePreviewTokens {
     let mut theme = Theme::default();
     theme.apply_config(&entry.config);
 
@@ -479,7 +491,7 @@ fn theme_preview_tokens(entry: themes::ThemeCatalogEntry) -> ThemePreviewTokens 
         collection_label: entry.collection.label().into(),
         approval_label: entry.badge_label().map(Into::into),
         tags: entry.tags.clone(),
-        lint_items: theme_lint::lint_theme_config(entry.config.as_ref()),
+        lint_items: lint_theme_config(entry.config.as_ref()),
         background: theme.background,
         panel: theme.group_box,
         border: theme.border,
@@ -523,7 +535,7 @@ fn theme_preview_tokens(entry: themes::ThemeCatalogEntry) -> ThemePreviewTokens 
 fn add_theme_menu_section(
     mut menu: PopupMenu,
     title: &'static str,
-    entries: Vec<themes::ThemeCatalogEntry>,
+    entries: Vec<ThemeCatalogEntry>,
     selected_key: &str,
     set_handle: Entity<WgApp>,
     mode: ThemeMode,
