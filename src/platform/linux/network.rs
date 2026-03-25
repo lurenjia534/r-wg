@@ -29,7 +29,7 @@ use policy::{
 use recovery::{
     attempt_startup_repair_sync, cleanup_policy_state, clear_persisted_apply_report,
     clear_recovery_journal, load_persisted_apply_report as load_persisted_apply_report_from_disk,
-    write_applying_journal, write_running_journal,
+    write_applying_journal, write_persisted_apply_report, write_running_journal,
 };
 
 use crate::log::events::{dns as log_dns, net as log_net};
@@ -186,7 +186,7 @@ pub async fn apply_network_config(
         }
     })?;
     let handle = netlink.handle();
-    write_applying_journal(tun_name, route_plan, state.policy.as_ref(), &report).map_err(
+    persist_applying_recovery_state(tun_name, route_plan, state.policy.as_ref(), &report).map_err(
         |error| {
             report.push_failed_kind(
                 "apply:linux:journal",
@@ -310,7 +310,12 @@ pub async fn apply_network_config(
                     )],
                 );
                 if let Err(err) =
-                    write_applying_journal(tun_name, route_plan, state.policy.as_ref(), &report)
+                    persist_applying_recovery_state(
+                        tun_name,
+                        route_plan,
+                        state.policy.as_ref(),
+                        &report,
+                    )
                 {
                     report.push_failed_kind(
                         "apply:linux:journal",
@@ -382,7 +387,12 @@ pub async fn apply_network_config(
                     )],
                 );
                 if let Err(err) =
-                    write_applying_journal(tun_name, route_plan, state.policy.as_ref(), &report)
+                    persist_applying_recovery_state(
+                        tun_name,
+                        route_plan,
+                        state.policy.as_ref(),
+                        &report,
+                    )
                 {
                     report.push_failed_kind(
                         "apply:linux:journal",
@@ -433,8 +443,13 @@ pub async fn apply_network_config(
         }
 
         report.mark_running();
-        if let Err(err) =
-            write_running_journal(tun_name, &route_ops, state.policy.as_ref(), state.dns.as_ref(), &report)
+        if let Err(err) = persist_running_recovery_state(
+            tun_name,
+            &route_ops,
+            state.policy.as_ref(),
+            state.dns.as_ref(),
+            &report,
+        )
         {
             report.push_failed_kind(
                 "apply:linux:journal",
@@ -464,9 +479,30 @@ async fn abort_apply(
     report: &RouteApplyReport,
     error: NetworkError,
 ) -> Result<NetworkApplyResult, NetworkError> {
-    let _ = write_applying_journal(tun_name, route_plan, state.policy.as_ref(), report);
+    let _ = persist_applying_recovery_state(tun_name, route_plan, state.policy.as_ref(), report);
     let _ = cleanup_network_config_impl(state, false).await;
     Err(error)
+}
+
+fn persist_applying_recovery_state(
+    tun_name: &str,
+    route_plan: &RoutePlan,
+    policy: Option<&PolicyRoutingState>,
+    report: &RouteApplyReport,
+) -> Result<(), NetworkError> {
+    write_persisted_apply_report(report)?;
+    write_applying_journal(tun_name, route_plan, policy)
+}
+
+fn persist_running_recovery_state(
+    tun_name: &str,
+    route_ops: &[RoutePlanRouteOp],
+    policy: Option<&PolicyRoutingState>,
+    dns: Option<&DnsState>,
+    report: &RouteApplyReport,
+) -> Result<(), NetworkError> {
+    write_persisted_apply_report(report)?;
+    write_running_journal(tun_name, route_ops, policy, dns)
 }
 
 /// 清理之前应用的网络配置。
