@@ -5,10 +5,9 @@ use gpui::{Context, Window, *};
 use gpui_component::{
     h_flex,
     input::InputState,
-    PixelsExt,
     resizable::{h_resizable, resizable_panel, ResizableState},
     tag::Tag,
-    v_flex, ActiveTheme as _, Sizable as _, StyledExt as _,
+    v_flex, ActiveTheme as _, PixelsExt, Sizable as _, StyledExt as _,
 };
 
 use crate::ui::state::{

@@ -44,8 +44,8 @@ use startup::{attempt_startup_repair_with_backend, StartupRepairBackend};
 mod tests {
     use super::*;
     use crate::backend::wg::route_plan::RouteApplyReport;
-    use crate::platform::linux::network::NetworkError;
     use crate::platform::linux::network::dns::DnsState;
+    use crate::platform::linux::network::NetworkError;
     use std::cell::RefCell;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -121,8 +121,9 @@ mod tests {
 
         fn open_session<'a>(
             &'a self,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Session, NetworkError>> + 'a>>
-        {
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Self::Session, NetworkError>> + 'a>,
+        > {
             self.calls.borrow_mut().push(FakeCall::OpenSession);
             Box::pin(async { Ok(()) })
         }
@@ -388,7 +389,9 @@ mod tests {
         assert_eq!(
             both_messages
                 .iter()
-                .filter(|message| message.header.family == netlink_packet_route::AddressFamily::Inet6)
+                .filter(
+                    |message| message.header.family == netlink_packet_route::AddressFamily::Inet6
+                )
                 .count(),
             3
         );
@@ -437,7 +440,8 @@ mod tests {
 
     #[test]
     fn persisted_report_round_trips_separately_from_journal_contract() {
-        let report = RouteApplyReport::new(crate::backend::wg::route_plan::RoutePlanPlatform::Linux);
+        let report =
+            RouteApplyReport::new(crate::backend::wg::route_plan::RoutePlanPlatform::Linux);
         let _ = report;
     }
 }

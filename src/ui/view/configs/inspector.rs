@@ -3,11 +3,11 @@ use gpui::{Context, Stateful, *};
 use gpui_component::{
     button::{Button, ButtonVariants},
     description_list::DescriptionList,
+    h_flex,
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
     tag::Tag,
-    h_flex, v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
-    StyledExt as _,
+    v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
 use crate::ui::format::{format_addresses, format_allowed_ips, format_dns, format_route_table};

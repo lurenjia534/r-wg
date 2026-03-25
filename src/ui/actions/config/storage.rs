@@ -1,5 +1,5 @@
-use super::*;
 use super::naming::next_available_name;
+use super::*;
 
 impl WgApp {
     pub(super) fn save_draft(

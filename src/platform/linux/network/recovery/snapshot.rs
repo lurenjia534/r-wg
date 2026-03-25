@@ -24,7 +24,9 @@ pub(crate) fn route_snapshots(route_plan: &RoutePlan) -> Vec<RecoveryRouteSnapsh
     route_snapshots_from_ops(&route_plan.route_ops)
 }
 
-pub(crate) fn route_snapshots_from_ops(route_ops: &[RoutePlanRouteOp]) -> Vec<RecoveryRouteSnapshot> {
+pub(crate) fn route_snapshots_from_ops(
+    route_ops: &[RoutePlanRouteOp],
+) -> Vec<RecoveryRouteSnapshot> {
     route_ops
         .iter()
         .filter(|route_op| matches!(route_op.kind, RoutePlanRouteKind::Allowed))

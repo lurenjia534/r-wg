@@ -4,9 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use gpui::SharedString;
 use gpui_component::IconName;
 use r_wg::backend::wg::config::{AllowedIp, RouteTable, WireGuardConfig};
-use r_wg::backend::wg::route_plan::{
-    RoutePlanBypassOp, RoutePlanFamily, RoutePlanRouteKind,
-};
+use r_wg::backend::wg::route_plan::{RoutePlanBypassOp, RoutePlanFamily, RoutePlanRouteKind};
 use r_wg::backend::wg::{OperationalRoutePlan, RoutePlanPlatform};
 
 use crate::ui::state::RouteFamilyFilter;
@@ -99,10 +97,7 @@ pub(super) fn build_plan_presentation(
                 RouteMapTone::Secondary
             },
         ),
-        chip(
-            format!("Table {route_table_text}"),
-            RouteMapTone::Secondary,
-        ),
+        chip(format!("Table {route_table_text}"), RouteMapTone::Secondary),
     ];
     if table_off {
         summary_chips.insert(1, chip("Table Off", RouteMapTone::Warning));
@@ -322,7 +317,10 @@ fn build_inventory_groups(
                     status: RouteMapItemStatus::Planned.label().into(),
                     note: note.into(),
                 }),
-                endpoint_host: peer.endpoint.as_ref().map(|endpoint| endpoint.host.clone().into()),
+                endpoint_host: peer
+                    .endpoint
+                    .as_ref()
+                    .map(|endpoint| endpoint.host.clone().into()),
                 match_target: Some(RouteMapMatchTarget {
                     addr: allowed.addr,
                     cidr: allowed.cidr,
@@ -827,7 +825,8 @@ fn build_warning_items(
             "Table=Off disables route apply",
             "Matches still exist logically, but the backend skips route installation.",
             vec![
-                "AllowedIPs remain useful for explanation, but they will not become kernel routes.".into(),
+                "AllowedIPs remain useful for explanation, but they will not become kernel routes."
+                    .into(),
                 "This is safe only if the user expects to manage routes out-of-band.".into(),
             ],
         ));
@@ -1095,7 +1094,9 @@ fn allowed_risks(
     if is_full && parsed.interface.dns_servers.is_empty() {
         risks.push("Full tunnel is active without tunnel DNS servers.".to_string());
     }
-    if route_plan.platform == RoutePlanPlatform::Linux && is_full && parsed.interface.fwmark.is_none()
+    if route_plan.platform == RoutePlanPlatform::Linux
+        && is_full
+        && parsed.interface.fwmark.is_none()
     {
         risks.push(
             "Linux full tunnel depends on fwmark/policy state for safe endpoint escape."
@@ -1125,7 +1126,12 @@ fn allowed_graph_steps(
     full_tunnel: bool,
 ) -> Vec<RouteMapGraphStep> {
     vec![
-        graph_step(RouteMapGraphStepKind::Interface, "Local Interface", interface_label, None),
+        graph_step(
+            RouteMapGraphStepKind::Interface,
+            "Local Interface",
+            interface_label,
+            None,
+        ),
         graph_step(
             RouteMapGraphStepKind::Dns,
             "DNS / Guard",
@@ -1176,11 +1182,19 @@ fn is_default_route_family(route: &AllowedIp, family: RouteFamilyFilter) -> bool
 fn cidr_contains(network: IpAddr, cidr: u8, value: IpAddr) -> bool {
     match (network, value) {
         (IpAddr::V4(network), IpAddr::V4(value)) => {
-            let mask = if cidr == 0 { 0 } else { u32::MAX << (32 - cidr) };
+            let mask = if cidr == 0 {
+                0
+            } else {
+                u32::MAX << (32 - cidr)
+            };
             (u32::from(network) & mask) == (u32::from(value) & mask)
         }
         (IpAddr::V6(network), IpAddr::V6(value)) => {
-            let mask = if cidr == 0 { 0 } else { u128::MAX << (128 - cidr) };
+            let mask = if cidr == 0 {
+                0
+            } else {
+                u128::MAX << (128 - cidr)
+            };
             (u128::from_be_bytes(network.octets()) & mask)
                 == (u128::from_be_bytes(value.octets()) & mask)
         }

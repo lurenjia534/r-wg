@@ -10,8 +10,8 @@ use super::install_model::{
     DEFAULT_STARTUP_REPAIR_UNIT_PATH, DEFAULT_UNIT_PATH,
 };
 use super::render::{
-    load_existing_install_auth_mode, render_desktop_entry, render_service_unit,
-    render_socket_unit, render_startup_repair_unit,
+    load_existing_install_auth_mode, render_desktop_entry, render_service_unit, render_socket_unit,
+    render_startup_repair_unit,
 };
 
 fn parse(args: &[&str]) -> LinuxEntryCommand {

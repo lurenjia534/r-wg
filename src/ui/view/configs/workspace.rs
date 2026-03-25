@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{Context, Render, Window, *};
-use gpui_component::{
-    input::InputState, ActiveTheme as _,
-};
+use gpui_component::{input::InputState, ActiveTheme as _};
 
 use crate::ui::state::{
     ConfigInspectorTab, ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, WgApp,

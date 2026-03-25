@@ -21,8 +21,7 @@ pub(super) const SERVICE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 pub(super) const SERVICE_IO_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) const SERVICE_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
-pub(super) const DESKTOP_ICON_SVG: &[u8] =
-    include_bytes!("../../../../resources/icons/r-wg.svg");
+pub(super) const DESKTOP_ICON_SVG: &[u8] = include_bytes!("../../../../resources/icons/r-wg.svg");
 pub(super) const DESKTOP_ICON_PNG: &[u8] =
     include_bytes!("../../../../resources/icons/hicolor/256x256/apps/r-wg.png");
 

@@ -8,7 +8,8 @@ use r_wg::backend::wg::route_plan::{
     normalize_config_for_runtime, RouteApplyAttemptState as BackendRouteApplyAttemptState,
     RouteApplyFailureKind as BackendRouteApplyFailureKind, RouteApplyKind as BackendRouteApplyKind,
     RouteApplyPhase as BackendRouteApplyPhase, RouteApplyReport as BackendRouteApplyReport,
-    RouteApplyReportSource as BackendRouteApplyReportSource, RouteApplyStatus as BackendRouteApplyStatus,
+    RouteApplyReportSource as BackendRouteApplyReportSource,
+    RouteApplyStatus as BackendRouteApplyStatus,
 };
 use r_wg::backend::wg::{OperationalRoutePlan, RoutePlanPlatform};
 use r_wg::dns::DnsSelection;

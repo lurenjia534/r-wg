@@ -1,8 +1,9 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{Context, *};
 use gpui_component::{
+    h_flex,
     input::{Input, InputState},
-    h_flex, v_flex, ActiveTheme as _, StyledExt as _,
+    v_flex, ActiveTheme as _, StyledExt as _,
 };
 
 use crate::ui::state::{ConfigsWorkspace, WgApp};

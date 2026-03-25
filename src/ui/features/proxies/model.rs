@@ -1,8 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::ui::state::{
-    ConfigSource, EndpointFamily, ProxyRunningFilter, TunnelConfig, WgApp,
-};
+use crate::ui::state::{ConfigSource, EndpointFamily, ProxyRunningFilter, TunnelConfig, WgApp};
 
 #[derive(Clone)]
 struct ProxyNameParts {

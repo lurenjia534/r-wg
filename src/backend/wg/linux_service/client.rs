@@ -190,7 +190,10 @@ impl RemoteEngine {
             .map_err(|err| connect_error(self.socket_path.as_path(), err))
     }
 
-    pub(super) fn send_command_raw(&self, command: BackendCommand) -> Result<BackendReply, io::Error> {
+    pub(super) fn send_command_raw(
+        &self,
+        command: BackendCommand,
+    ) -> Result<BackendReply, io::Error> {
         let mut stream = UnixStream::connect(self.socket_path.as_path())?;
         let _ = stream.set_read_timeout(Some(SERVICE_IO_TIMEOUT));
         let _ = stream.set_write_timeout(Some(SERVICE_IO_TIMEOUT));

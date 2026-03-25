@@ -8,8 +8,8 @@ use std::process::Command;
 
 use super::super::EngineError;
 use super::install_model::{
-    DESKTOP_ICON_PNG, DESKTOP_ICON_SVG, DEFAULT_DESKTOP_ENTRY_PATH, DEFAULT_ICON_PNG_PATH,
-    DEFAULT_ICON_SVG_PATH,
+    DEFAULT_DESKTOP_ENTRY_PATH, DEFAULT_ICON_PNG_PATH, DEFAULT_ICON_SVG_PATH, DESKTOP_ICON_PNG,
+    DESKTOP_ICON_SVG,
 };
 use super::remote_error;
 use super::render::render_desktop_entry;

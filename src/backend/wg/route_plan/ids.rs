@@ -11,7 +11,9 @@ pub(super) fn route_item_id(route_op: &RoutePlanRouteOp) -> String {
             "allowed",
             &super::util::route_text(route_op.route.addr, route_op.route.cidr),
         ),
-        RoutePlanRouteKind::DnsHost => super::util::item_id("dns-route", &route_op.route.addr.to_string()),
+        RoutePlanRouteKind::DnsHost => {
+            super::util::item_id("dns-route", &route_op.route.addr.to_string())
+        }
     }
 }
 

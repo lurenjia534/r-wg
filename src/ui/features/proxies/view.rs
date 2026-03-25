@@ -1,6 +1,4 @@
-use crate::ui::state::{
-    ConfigSource, EndpointFamily, ProxiesViewMode, ProxyRunningFilter, WgApp,
-};
+use crate::ui::state::{ConfigSource, EndpointFamily, ProxiesViewMode, ProxyRunningFilter, WgApp};
 use crate::ui::view::{PageShell, PageShellHeader};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{uniform_list, InteractiveElement as _, StatefulInteractiveElement as _, *};
@@ -37,11 +35,7 @@ fn proxy_grid_metrics() -> ProxyGridMetrics {
     }
 }
 
-pub(crate) fn render_proxies(
-    app: &mut WgApp,
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-) -> Div {
+pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) -> Div {
     app.ensure_proxy_search_input(window, cx);
     let search_input = app
         .ui
@@ -629,11 +623,7 @@ fn render_proxy_gallery_view(
         .child(Scrollbar::vertical(&scroll_handle))
 }
 
-fn render_proxy_detail_pane(
-    app: &WgApp,
-    model: &ProxiesViewModel,
-    cx: &mut Context<WgApp>,
-) -> Div {
+fn render_proxy_detail_pane(app: &WgApp, model: &ProxiesViewModel, cx: &mut Context<WgApp>) -> Div {
     let selected_config = app.selected_config();
     let selected_row = model.selected_row.as_ref();
     let is_running = selected_row.map(|row| row.is_running).unwrap_or(false);

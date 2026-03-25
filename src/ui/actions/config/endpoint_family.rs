@@ -2,8 +2,8 @@ use std::net::IpAddr;
 
 use r_wg::backend::wg::config::{self, WireGuardConfig};
 
-use crate::ui::state::EndpointFamily;
 use super::*;
+use crate::ui::state::EndpointFamily;
 
 struct EndpointFamilyResolutionHint {
     base_family: EndpointFamily,

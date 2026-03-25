@@ -4,7 +4,9 @@ use std::net::IpAddr;
 use crate::dns::{apply_dns_selection, DnsSelection};
 
 use super::super::config::{AllowedIp, PeerConfig, RouteTable, WireGuardConfig};
-use super::{FullTunnelStatus, DEFAULT_FULL_TUNNEL_FWMARK, LINUX_DEFAULT_POLICY_TABLE_ID, RoutePlanPlatform};
+use super::{
+    FullTunnelStatus, RoutePlanPlatform, DEFAULT_FULL_TUNNEL_FWMARK, LINUX_DEFAULT_POLICY_TABLE_ID,
+};
 
 pub fn normalize_config_for_runtime(
     mut config: WireGuardConfig,

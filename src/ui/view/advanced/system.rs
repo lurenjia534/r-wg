@@ -11,15 +11,11 @@ use gpui_component::description_list::DescriptionList;
 use gpui_component::dialog::DialogButtonProps;
 use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::setting::{SettingField, SettingItem};
-use gpui_component::{
-    h_flex, v_flex, ActiveTheme as _, Disableable as _, Sizable as _, WindowExt,
-};
+use gpui_component::{h_flex, v_flex, ActiveTheme as _, Disableable as _, Sizable as _, WindowExt};
 use r_wg::backend::wg::PrivilegedServiceAction;
 use r_wg::dns::{DnsMode, DnsPreset};
 
-use crate::ui::state::{
-    BackendDiagnostic, BackendHealth, SidebarItem, WgApp,
-};
+use crate::ui::state::{BackendDiagnostic, BackendHealth, SidebarItem, WgApp};
 use crate::ui::view::widgets::backend_status_tag;
 
 // DNS preset field and privileged backend diagnostics/recovery UI.

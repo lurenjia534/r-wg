@@ -111,7 +111,8 @@ extern "C" fn signal_terminate_handler(_: libc::c_int) {
 
 fn graceful_stop_for_shutdown(engine: &LocalEngine) -> Result<(), super::super::EngineError> {
     match engine.stop() {
-        Ok(()) | Err(super::super::EngineError::NotRunning)
+        Ok(())
+        | Err(super::super::EngineError::NotRunning)
         | Err(super::super::EngineError::ChannelClosed) => Ok(()),
         Err(err) => Err(err),
     }

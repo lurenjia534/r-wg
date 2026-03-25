@@ -24,10 +24,9 @@ pub use engine::{EngineError, EngineStats, EngineStatus, PeerStats, StartRequest
 pub use route_plan::{
     collect_allowed_routes, detect_full_tunnel, linux_default_policy_table_id,
     linux_policy_table_id, linux_route_table_for, windows_planned_bypass_count, FullTunnelStatus,
-    OperationalRoutePlan,
-    RouteApplyAttemptState, RouteApplyEntry, RouteApplyFailureKind, RouteApplyKind,
-    RouteApplyPhase, RouteApplyReport, RouteApplyReportSource, RouteApplyStatus, RoutePlan,
-    RoutePlanPlatform, LINUX_DEFAULT_POLICY_TABLE_ID,
+    OperationalRoutePlan, RouteApplyAttemptState, RouteApplyEntry, RouteApplyFailureKind,
+    RouteApplyKind, RouteApplyPhase, RouteApplyReport, RouteApplyReportSource, RouteApplyStatus,
+    RoutePlan, RoutePlanPlatform, LINUX_DEFAULT_POLICY_TABLE_ID,
 };
 
 #[cfg(target_os = "linux")]

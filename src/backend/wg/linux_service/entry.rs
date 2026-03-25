@@ -2,6 +2,7 @@ use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use super::super::EngineError;
 use super::install_model::{
     control_socket_path, into_string, InstallOptions, LinuxEntryCommand, ManageCommand,
     RemoveOptions, ServiceOptions, DEFAULT_INSTALLED_BINARY, DEFAULT_SOCKET_GROUP,
@@ -11,7 +12,6 @@ use super::install_model::{
 use super::manage::run_manage_command;
 use super::remote_error;
 use super::server::{install_signal_handlers, run_service};
-use super::super::EngineError;
 
 pub fn maybe_run_service_mode() -> bool {
     crate::log::init();
@@ -83,10 +83,10 @@ fn parse_service_mode_args(
                 continue;
             }
             Some("allowed_uid") => {
-                allowed_uid = Some(
-                    arg.parse()
-                        .map_err(|_| remote_error(format!("invalid --allowed-uid value: {arg}")))?,
-                );
+                allowed_uid =
+                    Some(arg.parse().map_err(|_| {
+                        remote_error(format!("invalid --allowed-uid value: {arg}"))
+                    })?);
                 continue;
             }
             Some(other) => {
@@ -177,10 +177,10 @@ fn parse_manage_command(
                 continue;
             }
             Some("allowed_uid") => {
-                allowed_uid = Some(
-                    arg.parse()
-                        .map_err(|_| remote_error(format!("invalid --allowed-uid value: {arg}")))?,
-                );
+                allowed_uid =
+                    Some(arg.parse().map_err(|_| {
+                        remote_error(format!("invalid --allowed-uid value: {arg}"))
+                    })?);
                 continue;
             }
             Some(other) => {

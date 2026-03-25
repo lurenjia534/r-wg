@@ -5,7 +5,10 @@ use super::super::dns::{cleanup_dns, DnsState};
 use super::super::netlink::{link_index, netlink_handle, NetlinkConnection};
 use super::super::policy::{cleanup_policy_rules_once, cleanup_stale_default_routes_once};
 use super::super::NetworkError;
-use super::{cleanup_exact_snapshot, clear_recovery_journal, journal_requires_exact_cleanup, load_recovery_journal, RecoveryJournal, RecoveryPolicySnapshot, RecoveryRouteSnapshot};
+use super::{
+    cleanup_exact_snapshot, clear_recovery_journal, journal_requires_exact_cleanup,
+    load_recovery_journal, RecoveryJournal, RecoveryPolicySnapshot, RecoveryRouteSnapshot,
+};
 
 type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 

@@ -4,11 +4,11 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{App, Stateful, Window, *};
 use gpui_component::{
     button::Button,
+    h_flex,
     input::{Input, InputState},
     scroll::Scrollbar,
     tag::Tag,
-    h_flex, v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
-    StyledExt as _,
+    v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
 use crate::ui::state::{

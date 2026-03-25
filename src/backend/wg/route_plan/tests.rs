@@ -1,6 +1,8 @@
 use crate::dns::{DnsMode, DnsPreset};
 
-use super::super::config::{AllowedIp, InterfaceConfig, Key, PeerConfig, RouteTable, WireGuardConfig};
+use super::super::config::{
+    AllowedIp, InterfaceConfig, Key, PeerConfig, RouteTable, WireGuardConfig,
+};
 use super::*;
 
 fn key(value: &str) -> Key {
@@ -111,7 +113,11 @@ fn linux_policy_table_id_prefers_explicit_table() {
         None
     );
     assert_eq!(
-        linux_policy_table_id(RoutePlanPlatform::Windows, Some(RouteTable::Id(321)), status),
+        linux_policy_table_id(
+            RoutePlanPlatform::Windows,
+            Some(RouteTable::Id(321)),
+            status
+        ),
         None
     );
 }

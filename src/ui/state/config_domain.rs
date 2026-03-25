@@ -10,8 +10,8 @@ use r_wg::backend::wg::config;
 use crate::ui::actions::config::endpoint_family_hint_from_config;
 
 use super::{
-    ConfigInspectorTab, ConfigsPrimaryPane, ConfigsState, DEFAULT_CONFIGS_INSPECTOR_WIDTH,
-    DEFAULT_CONFIGS_LIBRARY_WIDTH, PendingDraftAction, RuntimeState, WgApp,
+    ConfigInspectorTab, ConfigsPrimaryPane, ConfigsState, PendingDraftAction, RuntimeState, WgApp,
+    DEFAULT_CONFIGS_INSPECTOR_WIDTH, DEFAULT_CONFIGS_LIBRARY_WIDTH,
 };
 
 // Config/workspace domain models and library row builders.

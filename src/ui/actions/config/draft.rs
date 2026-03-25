@@ -54,11 +54,7 @@ impl WgApp {
         self.sync_draft_from_values(name, text, cx);
     }
 
-    pub(super) fn discard_current_draft(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn discard_current_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.configs_draft_snapshot(cx);
         if let Some(source_id) = draft.source_id.or(self.selection.selected_id) {
             self.set_selected_config_id(Some(source_id), cx);

@@ -13,8 +13,8 @@ use super::fs_ops::{
     remove_desktop_integration, write_service_unit,
 };
 use super::install_model::{
-    PrivilegedServiceAction, InstallOptions, ManageCommand, RemoveOptions, DEFAULT_SOCKET_PATH,
-    SOCKET_UNIT_NAME, STARTUP_REPAIR_UNIT_NAME, SERVICE_SUBCOMMAND, SERVICE_UNIT_NAME,
+    InstallOptions, ManageCommand, PrivilegedServiceAction, RemoveOptions, DEFAULT_SOCKET_PATH,
+    SERVICE_SUBCOMMAND, SERVICE_UNIT_NAME, SOCKET_UNIT_NAME, STARTUP_REPAIR_UNIT_NAME,
 };
 use super::is_running_as_root;
 use super::remote_error;
