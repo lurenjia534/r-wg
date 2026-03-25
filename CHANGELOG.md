@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.9 - 2026-03-25
+
+- Rewrote the README around the app-first workflow, platform support, privileged-backend install/repair flow, and source-build guidance, so first-run setup and backend management are documented much more clearly on both Linux and Windows.
+- Hardened Windows networking and service installation by copying `wintun.dll` alongside the installed service binary, relaxing endpoint bypass requirements to only require address families the host can actually route, and fixing staged apply abort accounting so failure reports stay aligned with the real progress that was reached.
+- Improved Linux tunnel reliability by vendoring `gotatun 0.4.1` locally and applying the upstream IPv6 `recvmmsg` fix, while also tightening Linux policy-routing recovery and startup-repair structure.
+- Fixed a long run of desktop UX regressions around single-instance startup and activation handoff, including Linux lock cleanup, control-pipe ownership, listener recovery, and Windows session-scoped activation so relaunch/focus behavior is more reliable.
+- Restored several important UI behaviors across the shell and config workspace, including sidebar drawer/collapse recovery, responsive and compact Configs panes, Route Map scrolling/contrast, and access to running helper recovery actions from the UI.
+- Broke the backend and UI into more focused modules across route planning, Linux service/recovery, Windows apply stages, themes, proxies, configs, overview data, and shared state boundaries, reducing code concentration ahead of the next round of feature work.
+- Repaired the release workflow so GitHub release publishing resolves repository context correctly again after downloading artifacts.
+
 ## 0.2.8 - 2026-03-20
 
 - Added a first-class route-map planning and apply pipeline: the backend now builds a shared route-plan truth model, Linux and Windows apply flows consume that plan directly, and the UI can render planned routes, applied results, explain views, graph steps, and richer inventory/inspector details from the same source.
