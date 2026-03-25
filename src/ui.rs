@@ -1,5 +1,6 @@
 mod actions;
 mod app;
+mod features;
 mod format;
 mod permissions;
 mod persistence;

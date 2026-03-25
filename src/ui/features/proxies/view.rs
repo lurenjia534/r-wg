@@ -1,16 +1,12 @@
-use std::collections::BTreeSet;
-
-use super::super::state::{
-    ConfigSource, EndpointFamily, ProxiesViewMode, ProxyRunningFilter, TunnelConfig, WgApp,
+use crate::ui::state::{
+    ConfigSource, EndpointFamily, ProxiesViewMode, ProxyRunningFilter, WgApp,
 };
-use super::proxies_grid::{proxy_grid, ProxyGridMetrics};
-use super::widgets::{PageShell, PageShellHeader};
+use crate::ui::view::{PageShell, PageShellHeader};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{uniform_list, InteractiveElement as _, StatefulInteractiveElement as _, *};
 use gpui_component::{
-    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
+    button::{Button, ButtonGroup, ButtonVariants},
     description_list::DescriptionList,
-    dialog::DialogButtonProps,
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     input::Input,
@@ -18,8 +14,11 @@ use gpui_component::{
     scroll::Scrollbar,
     tag::Tag,
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt as _,
-    WindowExt,
 };
+
+use super::controller::open_delete_dialog;
+use super::grid::{proxy_grid, ProxyGridMetrics};
+use super::model::{build_proxies_view_model, ProxiesViewModel, ProxyRowData};
 
 const PROXIES_CARD_WIDTH: f32 = 240.0;
 const PROXIES_GALLERY_CARD_HEIGHT: f32 = 104.0;
@@ -30,65 +29,6 @@ const PROXIES_GALLERY_SCROLL_STATE_ID: &str = "proxies-gallery-scroll";
 const PROXIES_LIST_SCROLL_STATE_ID: &str = "proxies-list-scroll";
 const PROXIES_SPLIT_BREAKPOINT: f32 = 1180.0;
 
-#[derive(Clone)]
-struct ProxyNameParts {
-    country: Option<String>,
-    city: Option<String>,
-    protocol: Option<String>,
-    sequence: Option<String>,
-}
-
-#[derive(Clone)]
-struct ProxyRowData {
-    id: u64,
-    name: String,
-    name_lower: String,
-    country: Option<String>,
-    city: Option<String>,
-    protocol: Option<String>,
-    sequence: Option<String>,
-    endpoint_family: EndpointFamily,
-    is_running: bool,
-    source_kind: &'static str,
-}
-
-impl ProxyRowData {
-    fn country_label(&self) -> &str {
-        self.country.as_deref().unwrap_or("—")
-    }
-
-    fn city_label(&self) -> &str {
-        self.city.as_deref().unwrap_or("—")
-    }
-
-    fn protocol_label(&self) -> &str {
-        self.protocol.as_deref().unwrap_or("—")
-    }
-
-    fn sequence_label(&self) -> &str {
-        self.sequence.as_deref().unwrap_or("—")
-    }
-
-    fn location_label(&self) -> String {
-        match (self.country.as_deref(), self.city.as_deref()) {
-            (Some(country), Some(city)) => format!("{country} / {city}"),
-            (Some(country), None) => country.to_string(),
-            (None, Some(city)) => city.to_string(),
-            (None, None) => "—".to_string(),
-        }
-    }
-}
-
-struct ProxiesViewModel {
-    rows: Vec<ProxyRowData>,
-    filtered_rows: Vec<ProxyRowData>,
-    countries: Vec<String>,
-    cities: Vec<String>,
-    protocols: Vec<String>,
-    selected_row: Option<ProxyRowData>,
-    selected_visible: bool,
-}
-
 fn proxy_grid_metrics() -> ProxyGridMetrics {
     ProxyGridMetrics {
         card_width: px(PROXIES_CARD_WIDTH),
@@ -97,7 +37,11 @@ fn proxy_grid_metrics() -> ProxyGridMetrics {
     }
 }
 
-pub(crate) fn render_proxies(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) -> Div {
+pub(crate) fn render_proxies(
+    app: &mut WgApp,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) -> Div {
     app.ensure_proxy_search_input(window, cx);
     let search_input = app
         .ui
@@ -685,7 +629,11 @@ fn render_proxy_gallery_view(
         .child(Scrollbar::vertical(&scroll_handle))
 }
 
-fn render_proxy_detail_pane(app: &WgApp, model: &ProxiesViewModel, cx: &mut Context<WgApp>) -> Div {
+fn render_proxy_detail_pane(
+    app: &WgApp,
+    model: &ProxiesViewModel,
+    cx: &mut Context<WgApp>,
+) -> Div {
     let selected_config = app.selected_config();
     let selected_row = model.selected_row.as_ref();
     let is_running = selected_row.map(|row| row.is_running).unwrap_or(false);
@@ -1084,126 +1032,6 @@ fn proxy_filter_menu_button(
         })
 }
 
-fn build_proxies_view_model(app: &WgApp, query: &str) -> ProxiesViewModel {
-    let rows = app
-        .configs
-        .iter()
-        .map(|config| proxy_row_data(config, app.runtime.running_id == Some(config.id)))
-        .collect::<Vec<_>>();
-    let countries = rows
-        .iter()
-        .filter_map(|row| row.country.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let cities = rows
-        .iter()
-        .filter(|row| {
-            app.selection
-                .proxy_country_filter
-                .as_deref()
-                .is_none_or(|country| row.country.as_deref() == Some(country))
-        })
-        .filter_map(|row| row.city.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let protocols = rows
-        .iter()
-        .filter(|row| {
-            app.selection
-                .proxy_country_filter
-                .as_deref()
-                .is_none_or(|country| row.country.as_deref() == Some(country))
-                && app
-                    .selection
-                    .proxy_city_filter
-                    .as_deref()
-                    .is_none_or(|city| row.city.as_deref() == Some(city))
-        })
-        .filter_map(|row| row.protocol.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let filtered_rows = rows
-        .iter()
-        .filter(|row| {
-            (query.is_empty() || row.name_lower.contains(query))
-                && app
-                    .selection
-                    .proxy_country_filter
-                    .as_deref()
-                    .is_none_or(|country| row.country.as_deref() == Some(country))
-                && app
-                    .selection
-                    .proxy_city_filter
-                    .as_deref()
-                    .is_none_or(|city| row.city.as_deref() == Some(city))
-                && app
-                    .selection
-                    .proxy_protocol_filter
-                    .as_deref()
-                    .is_none_or(|protocol| row.protocol.as_deref() == Some(protocol))
-                && match app.selection.proxy_running_filter {
-                    ProxyRunningFilter::All => true,
-                    ProxyRunningFilter::Running => row.is_running,
-                    ProxyRunningFilter::Idle => !row.is_running,
-                }
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let selected_row = app
-        .selection
-        .selected_id
-        .and_then(|selected_id| rows.iter().find(|row| row.id == selected_id).cloned());
-    let selected_visible = app
-        .selection
-        .selected_id
-        .is_some_and(|selected_id| filtered_rows.iter().any(|row| row.id == selected_id));
-
-    ProxiesViewModel {
-        rows,
-        filtered_rows,
-        countries,
-        cities,
-        protocols,
-        selected_row,
-        selected_visible,
-    }
-}
-
-fn proxy_row_data(config: &TunnelConfig, is_running: bool) -> ProxyRowData {
-    let parts = parse_proxy_name(&config.name);
-    ProxyRowData {
-        id: config.id,
-        name: config.name.clone(),
-        name_lower: config.name_lower.clone(),
-        country: parts.country,
-        city: parts.city,
-        protocol: parts.protocol,
-        sequence: parts.sequence,
-        endpoint_family: config.endpoint_family,
-        is_running,
-        source_kind: match config.source {
-            ConfigSource::File { .. } => "File",
-            ConfigSource::Paste => "Paste",
-        },
-    }
-}
-
-fn parse_proxy_name(name: &str) -> ProxyNameParts {
-    let segments = name
-        .split('-')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    ProxyNameParts {
-        country: segments.first().map(|segment| segment.to_ascii_uppercase()),
-        city: segments.get(1).map(|segment| segment.to_ascii_uppercase()),
-        protocol: segments.get(2).map(|segment| segment.to_ascii_uppercase()),
-        sequence: segments.last().map(|segment| segment.to_string()),
-    }
-}
-
 fn clear_proxy_filters(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     app.selection.proxy_country_filter = None;
     app.selection.proxy_city_filter = None;
@@ -1238,110 +1066,4 @@ fn column_label(text: impl Into<SharedString>, cx: &Context<WgApp>) -> Div {
 
 fn column_value(text: impl Into<SharedString>) -> Div {
     div().text_sm().truncate().child(text.into())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn open_delete_dialog(
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-    title: impl Into<String>,
-    body: impl Into<String>,
-    note: Option<String>,
-    ids: Vec<u64>,
-    skip_running: bool,
-    clear_selection: bool,
-) {
-    let app_handle = cx.entity();
-    let title = title.into();
-    let body = body.into();
-    let note = note.clone();
-
-    window.open_dialog(cx, move |dialog, _window, cx| {
-        let app_handle = app_handle.clone();
-        let ids = ids.clone();
-        let note_skip = skip_running;
-        let clear_selection = clear_selection;
-        let mut dialog = dialog
-            .title(div().text_lg().child(title.clone()))
-            .confirm()
-            .button_props(
-                DialogButtonProps::default()
-                    .ok_text("Delete")
-                    .ok_variant(ButtonVariant::Danger)
-                    .cancel_text("Cancel"),
-            )
-            .child(div().text_sm().child(body.clone()));
-
-        if let Some(note) = note.clone() {
-            dialog = dialog.child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(note),
-            );
-        }
-
-        let delete_action = {
-            let app_handle = app_handle.clone();
-            let ids = ids.clone();
-            move |window: &mut Window, cx: &mut App| {
-                perform_delete(&app_handle, &ids, note_skip, clear_selection, window, cx);
-            }
-        };
-
-        dialog = dialog.footer(move |_ok, _cancel, _window, _cx| {
-            let app_handle = app_handle.clone();
-            let ids = ids.clone();
-            let delete_button = Button::new("proxy-dialog-delete")
-                .label("Delete")
-                .danger()
-                .on_click(move |_, window, cx| {
-                    perform_delete(&app_handle, &ids, note_skip, clear_selection, window, cx);
-                    window.close_dialog(cx);
-                });
-            let cancel_button = Button::new("proxy-dialog-cancel")
-                .label("Cancel")
-                .outline()
-                .on_click(|_, window, cx| {
-                    window.close_dialog(cx);
-                });
-            vec![
-                cancel_button.into_any_element(),
-                delete_button.into_any_element(),
-            ]
-        });
-
-        dialog = dialog.on_ok(move |_, window, cx| {
-            delete_action(window, cx);
-            true
-        });
-
-        dialog
-    });
-}
-
-fn perform_delete(
-    app_handle: &Entity<WgApp>,
-    ids: &[u64],
-    skip_running: bool,
-    clear_selection: bool,
-    window: &mut Window,
-    _cx: &mut App,
-) {
-    let app_handle = app_handle.clone();
-    let ids = ids.to_vec();
-    let note_skip = skip_running;
-    window.on_next_frame(move |window, cx| {
-        app_handle.update(cx, |this, cx| {
-            if note_skip {
-                this.delete_configs_skip_running(&ids, window, cx);
-            } else {
-                this.delete_configs_blocking_running(&ids, window, cx);
-            }
-            if clear_selection {
-                this.selection.proxy_select_mode = false;
-                this.selection.proxy_selected_ids.clear();
-            }
-        });
-    });
 }

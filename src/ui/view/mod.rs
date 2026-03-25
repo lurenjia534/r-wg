@@ -7,8 +7,6 @@ mod dns;
 mod left_panel;
 mod logs;
 mod overview;
-mod proxies;
-mod proxies_grid;
 mod route_map;
 mod top_bar;
 mod widgets;
@@ -22,6 +20,8 @@ use gpui_component::{
 use super::state::{ConfigDraftState, SidebarItem, WgApp};
 use super::themes::AppearancePolicy;
 use data::ViewData;
+
+pub(crate) use widgets::{PageShell, PageShellHeader};
 
 impl WgApp {
     fn shared_view_data(&self, cx: &mut Context<Self>) -> ViewData {
@@ -107,7 +107,7 @@ impl Render for WgApp {
                             .into_any_element()
                     }
                     SidebarItem::Proxies => {
-                        proxies::render_proxies(self, window, cx).into_any_element()
+                        super::features::render_proxies(self, window, cx).into_any_element()
                     }
                     SidebarItem::Logs => logs::render_logs(self, window, cx).into_any_element(),
                     SidebarItem::Dns => dns::render_dns(self, cx).into_any_element(),
