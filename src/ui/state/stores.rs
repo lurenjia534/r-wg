@@ -1,3 +1,27 @@
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+use gpui::{Entity, SharedString};
+use gpui_component::input::InputState;
+use gpui_component::theme::ThemeMode;
+use r_wg::backend::wg::route_plan::RouteApplyReport;
+use r_wg::backend::wg::PeerStats;
+use r_wg::dns::{DnsMode, DnsPreset};
+
+use crate::ui::persistence::{self, StoragePaths};
+use crate::ui::themes::AppearancePolicy;
+
+use super::{
+    BackendDiagnostic, BackendHealth, ConfigInspectorTab, ConfigsWorkspace,
+    DEFAULT_CONFIGS_INSPECTOR_WIDTH, DEFAULT_CONFIGS_LIBRARY_WIDTH,
+    DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH, DEFAULT_ROUTE_MAP_INVENTORY_WIDTH, LoadedConfigState,
+    PendingStart, ProxiesViewMode, ProxyRunningFilter, RESTART_COOLDOWN, RouteFamilyFilter,
+    RouteMapMode, SidebarItem, TrafficPeriod, TrafficStore, TunnelConfig,
+};
+
 // App state containers excluding the WgApp facade.
 
 pub(crate) struct ConfigsState {
@@ -10,7 +34,7 @@ pub(crate) struct ConfigsState {
 }
 
 impl ConfigsState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             configs: Vec::new(),
             storage: None,
@@ -115,7 +139,7 @@ pub(crate) struct SelectionState {
 }
 
 impl SelectionState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             persistence_loaded: false,
             selected_id: None,
@@ -204,7 +228,7 @@ pub(crate) fn current_apply_report() -> Option<RouteApplyReport> {
 }
 
 impl RuntimeState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             running: false,
             busy: false,
@@ -311,7 +335,7 @@ pub(crate) struct StatsState {
 }
 
 impl StatsState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             peer_stats: Vec::new(),
             stats_note: "Peer stats unavailable".into(),
@@ -407,7 +431,7 @@ pub(crate) struct UiPrefsState {
 }
 
 impl UiPrefsState {
-    fn new(
+    pub(super) fn new(
         appearance_policy: AppearancePolicy,
         resolved_theme_mode: ThemeMode,
         theme_light_key: Option<SharedString>,
@@ -463,7 +487,7 @@ pub(crate) struct UiSessionState {
 }
 
 impl UiSessionState {
-    fn from_prefs(prefs: &UiPrefsState) -> Self {
+    pub(super) fn from_prefs(prefs: &UiPrefsState) -> Self {
         Self {
             traffic_period: prefs.preferred_traffic_period,
             sidebar_active: SidebarItem::Overview,
@@ -489,7 +513,7 @@ pub(crate) struct PersistenceState {
 }
 
 impl PersistenceState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             next_revision: 0,
             queued_revision: None,
@@ -521,7 +545,7 @@ pub(crate) struct RouteMapSearchState {
 }
 
 impl RouteMapSearchState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             raw_query: SharedString::default(),
             debounced_query: SharedString::default(),
@@ -531,15 +555,24 @@ impl RouteMapSearchState {
         }
     }
 
-    fn enqueue(&mut self) -> u64 {
+    pub(super) fn enqueue(&mut self) -> u64 {
         self.next_revision = self.next_revision.saturating_add(1);
         self.queued_revision = Some(self.next_revision);
         self.next_revision
     }
 
-    fn take_queued_revision(&mut self) -> Option<u64> {
+    pub(super) fn take_queued_revision(&mut self) -> Option<u64> {
         self.queued_revision.take()
     }
+}
+
+fn init_rate_history() -> VecDeque<f32> {
+    // 预填充 0，保持曲线长度稳定。
+    let mut history = VecDeque::with_capacity(crate::ui::state::SPARKLINE_SAMPLES);
+    for _ in 0..crate::ui::state::SPARKLINE_SAMPLES {
+        history.push_back(0.0);
+    }
+    history
 }
 
 pub(crate) struct UiState {
@@ -557,7 +590,7 @@ pub(crate) struct UiState {
 }
 
 impl UiState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             log_input: None,
             proxy_search_input: None,

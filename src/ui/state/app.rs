@@ -1,3 +1,20 @@
+use std::time::Duration;
+
+use gpui::{SharedString, Timer, Window};
+use gpui_component::notification::Notification;
+use gpui_component::theme::ThemeMode;
+use gpui_component::WindowExt;
+use r_wg::backend::wg::Engine;
+use r_wg::dns::{DnsMode, DnsPreset};
+
+use crate::ui::themes::{self, AppearancePolicy};
+
+use super::{
+    ConfigInspectorTab, ConfigsState, PersistenceState, ProxiesViewMode, RouteFamilyFilter,
+    RouteMapMode, RuntimeState, SelectionState, SidebarItem, StatsState, TrafficPeriod,
+    UiPrefsState, UiSessionState, UiState,
+};
+
 // WgApp facade and UI preference/session mutation helpers.
 
 pub(crate) struct WgApp {
@@ -424,13 +441,4 @@ impl WgApp {
     ) {
         window.push_notification(Notification::success(message.into()), cx);
     }
-}
-
-fn init_rate_history() -> VecDeque<f32> {
-    // 预填充 0，保持曲线长度稳定。
-    let mut history = VecDeque::with_capacity(SPARKLINE_SAMPLES);
-    for _ in 0..SPARKLINE_SAMPLES {
-        history.push_back(0.0);
-    }
-    history
 }

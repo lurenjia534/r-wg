@@ -1,6 +1,27 @@
+use gpui::prelude::FluentBuilder as _;
+use gpui::{Context, Stateful, *};
+use gpui_component::{
+    button::{Button, ButtonVariants},
+    description_list::DescriptionList,
+    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
+    scroll::ScrollableElement,
+    tag::Tag,
+    h_flex, v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
+    StyledExt as _,
+};
+
+use crate::ui::format::{format_addresses, format_allowed_ips, format_dns, format_route_table};
+use crate::ui::state::{
+    ConfigInspectorTab, ConfigSource, ConfigsPrimaryPane, ConfigsWorkspace, DraftValidationState,
+    EndpointFamily, WgApp,
+};
+use crate::ui::view::data::ConfigsViewData;
+
+use super::{ConfigsLayoutMode, ConfigsRuntimeView};
+
 // Inspector panes, diagnostics, activity cards, and helper tags.
 
-fn render_inspector_panel(
+pub(super) fn render_inspector_panel(
     runtime: &ConfigsRuntimeView,
     workspace: &Entity<ConfigsWorkspace>,
     inspector_tab: ConfigInspectorTab,
@@ -262,7 +283,7 @@ fn inspector_tab_row(
         ))
 }
 
-fn render_configs_primary_pane_tabs(
+pub(super) fn render_configs_primary_pane_tabs(
     workspace: &Entity<ConfigsWorkspace>,
     primary_pane: ConfigsPrimaryPane,
     data: &ConfigsViewData,
@@ -431,7 +452,10 @@ fn inspector_tab_button(
         })
 }
 
-fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<ConfigsWorkspace>) -> Div {
+pub(super) fn render_diagnostics_strip(
+    data: &ConfigsViewData,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Div {
     let (tone_bg, tone_border, tone_bar, title, detail, icon, line_tag) =
         match &data.draft.validation {
             DraftValidationState::Idle => (
@@ -535,7 +559,7 @@ fn render_diagnostics_strip(data: &ConfigsViewData, cx: &mut Context<ConfigsWork
         )
 }
 
-fn editor_action_bar(
+pub(super) fn editor_action_bar(
     data: &ConfigsViewData,
     app_handle: &Entity<WgApp>,
     _cx: &mut Context<ConfigsWorkspace>,
@@ -721,14 +745,14 @@ fn activity_value_or_fallback(value: &str, fallback: &str) -> String {
     }
 }
 
-fn source_tag(source: &ConfigSource) -> Tag {
+pub(super) fn source_tag(source: &ConfigSource) -> Tag {
     match source {
         ConfigSource::File { .. } => Tag::secondary().small().child("Imported"),
         ConfigSource::Paste => Tag::secondary().small().child("Saved"),
     }
 }
 
-fn endpoint_family_tag(family: EndpointFamily) -> Tag {
+pub(super) fn endpoint_family_tag(family: EndpointFamily) -> Tag {
     match family {
         EndpointFamily::V4 => Tag::secondary().small().child("IPv4"),
         EndpointFamily::V6 => Tag::secondary().small().child("IPv6"),

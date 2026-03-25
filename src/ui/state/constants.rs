@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 // Shared UI-state constants.
 
 /// 速度曲线采样点数量（固定窗口）。

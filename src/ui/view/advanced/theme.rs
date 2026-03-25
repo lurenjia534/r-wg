@@ -1,6 +1,23 @@
+use gpui::prelude::FluentBuilder as _;
+use gpui::{
+    div, px, Axis, Div, Entity, Hsla, IntoElement, ParentElement, SharedString, Styled,
+};
+use gpui_component::button::{Button, ButtonGroup};
+use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_component::setting::{SettingField, SettingItem};
+use gpui_component::theme::{Colorize as _, Theme, ThemeMode};
+use gpui_component::{
+    h_flex, v_flex, ActiveTheme as _, Selectable, Sizable as _, StyledExt as _,
+};
+
+use crate::ui::persistence;
+use crate::ui::state::WgApp;
+use crate::ui::theme_lint::{self, ThemeLintItem, ThemeLintSeverity};
+use crate::ui::themes::{self, AppearancePolicy};
+
 // Theme policy, palette selection, preview, and lint presentation.
 
-fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Appearance Policy",
         SettingField::render(move |_, _window, cx| {
@@ -62,7 +79,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
     .description("Choose whether the app follows the OS, or stays pinned to light or dark.")
 }
 
-fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
+pub(super) fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
     let title = match mode {
         ThemeMode::Light => "Light Palette",
         ThemeMode::Dark => "Dark Palette",
@@ -81,7 +98,7 @@ fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
     .description(description)
 }
 
-fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Reset Palettes",
         SettingField::render(move |_, _window, _cx| {
@@ -105,7 +122,7 @@ fn reset_theme_item(app: Entity<WgApp>) -> SettingItem {
     .description("Clear stored palette names and fall back to the registry defaults for each mode.")
 }
 
-fn theme_file_workflow_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn theme_file_workflow_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Theme Files",
         SettingField::render(move |_, _window, cx| {
@@ -116,7 +133,7 @@ fn theme_file_workflow_item(app: Entity<WgApp>) -> SettingItem {
     .description("File-based workflow for importing, templating, and restoring curated themes.")
 }
 
-fn theme_preview_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn theme_preview_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Preview",
         SettingField::render(move |_, _window, cx| render_theme_preview_field(app.clone(), cx)),

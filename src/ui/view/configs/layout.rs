@@ -1,7 +1,30 @@
+use std::sync::Arc;
+
+use gpui::prelude::FluentBuilder as _;
+use gpui::{Context, Window, *};
+use gpui_component::{
+    h_flex,
+    input::InputState,
+    PixelsExt,
+    resizable::{h_resizable, resizable_panel, ResizableState},
+    tag::Tag,
+    v_flex, ActiveTheme as _, Sizable as _, StyledExt as _,
+};
+
+use crate::ui::state::{
+    ConfigInspectorTab, ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, WgApp,
+};
+use crate::ui::view::data::ConfigsViewData;
+
+use super::editor::render_editor_panel;
+use super::inspector::{render_configs_primary_pane_tabs, render_inspector_panel};
+use super::library::render_library_panel;
+use super::{ConfigsLayoutMode, ConfigsRuntimeView, CONFIGS_MEDIUM_INSPECTOR_HEIGHT};
+
 // Desktop, medium, and compact layouts plus the shared shell header.
 
 #[allow(clippy::too_many_arguments)]
-fn render_configs_desktop_layout(
+pub(super) fn render_configs_desktop_layout(
     app_handle: &Entity<WgApp>,
     workspace: &Entity<ConfigsWorkspace>,
     runtime: &ConfigsRuntimeView,
@@ -93,7 +116,7 @@ fn render_configs_desktop_layout(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_configs_medium_layout(
+pub(super) fn render_configs_medium_layout(
     app_handle: &Entity<WgApp>,
     workspace: &Entity<ConfigsWorkspace>,
     runtime: &ConfigsRuntimeView,
@@ -197,7 +220,7 @@ fn render_configs_medium_layout(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_configs_compact_layout(
+pub(super) fn render_configs_compact_layout(
     app_handle: &Entity<WgApp>,
     workspace: &Entity<ConfigsWorkspace>,
     runtime: &ConfigsRuntimeView,
@@ -267,7 +290,10 @@ fn render_configs_compact_layout(
         .into_any_element()
 }
 
-fn render_configs_shell_header(data: &ConfigsViewData, cx: &mut Context<ConfigsWorkspace>) -> Div {
+pub(super) fn render_configs_shell_header(
+    data: &ConfigsViewData,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Div {
     let selected_name = data.title.clone();
 
     div()

@@ -1,6 +1,17 @@
+use gpui::{div, Entity, ParentElement};
+use gpui_component::button::{Button, ButtonGroup};
+use gpui_component::setting::{SettingField, SettingItem};
+use gpui_component::{Selectable, Sizable};
+
+use crate::ui::state::{ConfigInspectorTab, TrafficPeriod, WgApp};
+
+use super::system::{
+    dns_mode_from_value, dns_mode_options, dns_mode_value, render_dns_preset_field,
+};
+
 // Log, DNS mode, traffic range, and inspector default controls.
 
-fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {
     let get_handle = app.clone();
     let set_handle = app;
 
@@ -18,7 +29,7 @@ fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {
     .description("Keep the log pane pinned to the latest runtime events.")
 }
 
-fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
     let options = dns_mode_options();
     let get_handle = app.clone();
     let set_handle = app;
@@ -39,7 +50,7 @@ fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
     .description("Choose whether config DNS, system DNS, or presets take precedence.")
 }
 
-fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "DNS Preset",
         SettingField::render(move |_, _window, cx| render_dns_preset_field(app.clone(), cx)),
@@ -47,7 +58,7 @@ fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {
     .description("Only used when DNS mode fills or overrides resolver records.")
 }
 
-fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Preferred Traffic Range",
         SettingField::render(move |_, _window, cx| {
@@ -97,7 +108,7 @@ fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
     .description("Applies now and stays remembered for future sessions.")
 }
 
-fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Inspector View",
         SettingField::render(move |_, _window, cx| {

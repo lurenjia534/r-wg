@@ -1,3 +1,24 @@
+use gpui::{
+    div, px, Context, Div, ParentElement, Styled,
+};
+use gpui_component::group_box::GroupBoxVariant;
+use gpui_component::setting::{SettingGroup, SettingPage, Settings};
+use gpui_component::theme::ThemeMode;
+use gpui_component::ActiveTheme as _;
+
+use crate::ui::state::WgApp;
+use crate::ui::view::widgets::{PageShell, PageShellHeader};
+
+use super::preferences::{
+    dns_mode_item, dns_preset_item, inspector_tab_item, log_auto_follow_item,
+    traffic_period_item,
+};
+use super::system::{privileged_backend_item, troubleshooting_item};
+use super::theme::{
+    reset_theme_item, theme_file_workflow_item, theme_mode_item, theme_palette_item,
+    theme_preview_item,
+};
+
 // Settings page composition.
 
 pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {

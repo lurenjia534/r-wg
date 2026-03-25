@@ -1,7 +1,28 @@
+use std::sync::Arc;
+
+use gpui::prelude::FluentBuilder as _;
+use gpui::{App, Stateful, Window, *};
+use gpui_component::{
+    button::Button,
+    input::{Input, InputState},
+    scroll::Scrollbar,
+    tag::Tag,
+    h_flex, v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
+    StyledExt as _,
+};
+
+use crate::ui::state::{
+    ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, EndpointFamily, WgApp,
+};
+use crate::ui::view::data::ConfigsViewData;
+
+use super::inspector::{endpoint_family_tag, source_tag};
+use super::{ConfigsLayoutMode, CONFIGS_LIBRARY_ROW_HEIGHT, CONFIGS_LIBRARY_SCROLL_STATE_ID};
+
 // Library search, list, and row rendering.
 
 #[allow(clippy::too_many_arguments)]
-fn render_library_panel(
+pub(super) fn render_library_panel(
     app_handle: &Entity<WgApp>,
     selected_id: Option<u64>,
     data: &ConfigsViewData,
@@ -363,4 +384,3 @@ fn render_library_row(
             }
         })
 }
-

@@ -1,34 +1,15 @@
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::{Hash, Hasher};
-use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime};
+mod app;
+mod backend;
+mod config_domain;
+mod constants;
+mod navigation;
+mod stores;
+mod traffic;
 
-use chrono::NaiveDate;
-use gpui::{Entity, SharedString, Subscription, Timer, Window};
-use gpui_component::theme::ThemeMode;
-use gpui_component::{input::InputState, notification::Notification, IconName, WindowExt};
-use r_wg::backend::wg::route_plan::RouteApplyReport;
-use r_wg::backend::wg::{
-    config, Engine, PeerStats, PrivilegedServiceAction, PrivilegedServiceStatus,
-};
-use r_wg::dns::{DnsMode, DnsPreset};
-use serde::{Deserialize, Serialize};
-
-use super::actions::config::endpoint_family_hint_from_config;
-use super::persistence::{self, StoragePaths};
-use super::themes::{self, AppearancePolicy};
-
-// API-preserving split: keep the public `state` surface stable while separating
-// shared constants, config/workspace models, traffic stats, backend diagnostics,
-// navigation enums, state containers, and the WgApp facade into focused files.
-include!("state/constants.rs");
-include!("state/config_domain.rs");
-include!("state/traffic.rs");
-include!("state/backend.rs");
-include!("state/navigation.rs");
-include!("state/stores.rs");
-include!("state/app.rs");
+pub(crate) use app::*;
+pub(crate) use backend::*;
+pub(crate) use config_domain::*;
+pub(crate) use constants::*;
+pub(crate) use navigation::*;
+pub(crate) use stores::*;
+pub(crate) use traffic::*;

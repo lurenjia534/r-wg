@@ -1,6 +1,30 @@
+use gpui::prelude::FluentBuilder as _;
+use std::env::consts::{ARCH, OS};
+use std::time::{Duration, SystemTime};
+
+use chrono::{DateTime, Local};
+use gpui::{
+    div, Axis, Div, Entity, IntoElement, ParentElement, SharedString, Styled, Timer, Window,
+};
+use gpui_component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_component::description_list::DescriptionList;
+use gpui_component::dialog::DialogButtonProps;
+use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_component::setting::{SettingField, SettingItem};
+use gpui_component::{
+    h_flex, v_flex, ActiveTheme as _, Disableable as _, Sizable as _, WindowExt,
+};
+use r_wg::backend::wg::PrivilegedServiceAction;
+use r_wg::dns::{DnsMode, DnsPreset};
+
+use crate::ui::state::{
+    BackendDiagnostic, BackendHealth, SidebarItem, WgApp,
+};
+use crate::ui::view::widgets::backend_status_tag;
+
 // DNS preset field and privileged backend diagnostics/recovery UI.
 
-fn privileged_backend_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn privileged_backend_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Service Status",
         SettingField::render(move |_, window, cx| {
@@ -10,7 +34,7 @@ fn privileged_backend_item(app: Entity<WgApp>) -> SettingItem {
     .layout(Axis::Vertical)
 }
 
-fn troubleshooting_item() -> SettingItem {
+pub(super) fn troubleshooting_item() -> SettingItem {
     SettingItem::new(
         "Troubleshooting",
         SettingField::render(|_, _, cx| {
@@ -43,7 +67,7 @@ fn troubleshooting_item() -> SettingItem {
     .description("What Refresh, Repair, and Remove do.")
 }
 
-fn render_dns_preset_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
+pub(super) fn render_dns_preset_field(app: Entity<WgApp>, cx: &mut gpui::App) -> Div {
     let (mode, preset) = {
         let app = app.read(cx);
         (app.ui_prefs.dns_mode, app.ui_prefs.dns_preset)
@@ -502,7 +526,7 @@ fn format_checked_timestamp(checked_at: SystemTime) -> String {
     format!("{absolute} ({})", format_checked_age(checked_at))
 }
 
-fn backend_recommended_action(diagnostic: &BackendDiagnostic) -> &'static str {
+pub(super) fn backend_recommended_action(diagnostic: &BackendDiagnostic) -> &'static str {
     match diagnostic.health {
         BackendHealth::Running => {
             "Repair or Remove can stop the running helper before applying system changes."
@@ -551,15 +575,15 @@ fn helper_control_endpoint() -> &'static str {
     }
 }
 
-fn should_show_repair_action(diagnostic: &BackendDiagnostic) -> bool {
+pub(super) fn should_show_repair_action(diagnostic: &BackendDiagnostic) -> bool {
     diagnostic.allows_action(PrivilegedServiceAction::Repair)
 }
 
-fn should_show_remove_action(diagnostic: &BackendDiagnostic) -> bool {
+pub(super) fn should_show_remove_action(diagnostic: &BackendDiagnostic) -> bool {
     diagnostic.allows_action(PrivilegedServiceAction::Remove)
 }
 
-fn backend_recovery_note(diagnostic: &BackendDiagnostic) -> Option<SharedString> {
+pub(super) fn backend_recovery_note(diagnostic: &BackendDiagnostic) -> Option<SharedString> {
     let note = match diagnostic.health {
         BackendHealth::Running => {
             "Repair or Remove can stop the running helper first when you need to recover or uninstall it."
@@ -604,7 +628,7 @@ fn shared(value: &'static str) -> SharedString {
     SharedString::new_static(value)
 }
 
-fn dns_mode_options() -> Vec<(SharedString, SharedString)> {
+pub(super) fn dns_mode_options() -> Vec<(SharedString, SharedString)> {
     vec![
         (
             shared("follow_config"),
@@ -619,7 +643,7 @@ fn dns_mode_options() -> Vec<(SharedString, SharedString)> {
     ]
 }
 
-fn dns_mode_value(mode: DnsMode) -> SharedString {
+pub(super) fn dns_mode_value(mode: DnsMode) -> SharedString {
     match mode {
         DnsMode::FollowConfig => shared("follow_config"),
         DnsMode::UseSystemDns => shared("system"),
@@ -628,7 +652,7 @@ fn dns_mode_value(mode: DnsMode) -> SharedString {
     }
 }
 
-fn dns_mode_from_value(value: &SharedString) -> DnsMode {
+pub(super) fn dns_mode_from_value(value: &SharedString) -> DnsMode {
     match value.as_ref() {
         "system" => DnsMode::UseSystemDns,
         "auto_fill" => DnsMode::AutoFillMissingFamilies,

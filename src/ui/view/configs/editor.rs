@@ -1,6 +1,19 @@
+use gpui::prelude::FluentBuilder as _;
+use gpui::{Context, *};
+use gpui_component::{
+    input::{Input, InputState},
+    h_flex, v_flex, ActiveTheme as _, StyledExt as _,
+};
+
+use crate::ui::state::{ConfigsWorkspace, WgApp};
+use crate::ui::view::data::ConfigsViewData;
+
+use super::inspector::{editor_action_bar, render_diagnostics_strip};
+use super::ConfigsLayoutMode;
+
 // Draft editor rendering and editor-side actions.
 
-fn render_editor_panel(
+pub(super) fn render_editor_panel(
     app_handle: &Entity<WgApp>,
     workspace: &Entity<ConfigsWorkspace>,
     data: &ConfigsViewData,
@@ -184,4 +197,3 @@ fn render_editor_panel(
                 ),
         )
 }
-

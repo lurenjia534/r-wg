@@ -1,3 +1,9 @@
+use std::time::SystemTime;
+
+use gpui::SharedString;
+use r_wg::backend::wg::{PrivilegedServiceAction, PrivilegedServiceStatus};
+use serde::{Deserialize, Serialize};
+
 // Backend health/status modeling and action gating.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

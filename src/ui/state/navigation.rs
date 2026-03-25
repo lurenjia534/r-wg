@@ -1,3 +1,6 @@
+use gpui_component::IconName;
+use serde::{Deserialize, Serialize};
+
 // Shared UI enums for inspector, navigation, and route-map filters.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

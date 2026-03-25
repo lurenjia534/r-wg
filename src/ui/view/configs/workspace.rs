@@ -1,20 +1,37 @@
+use std::sync::Arc;
+
+use gpui::{Context, Render, Window, *};
+use gpui_component::{
+    input::InputState, ActiveTheme as _,
+};
+
+use crate::ui::state::{
+    ConfigInspectorTab, ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, WgApp,
+};
+use crate::ui::view::data::ConfigsViewData;
+
+use super::layout::{
+    render_configs_compact_layout, render_configs_desktop_layout, render_configs_medium_layout,
+    render_configs_shell_header,
+};
+
 // Configs workspace bootstrap, snapshots, and responsive page selection.
 
-const CONFIGS_DESKTOP_BREAKPOINT: f32 = 1420.0;
-const CONFIGS_COMPACT_BREAKPOINT: f32 = 1040.0;
-const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 76.0;
-const CONFIGS_LIBRARY_SCROLL_STATE_ID: &str = "configs-library-scroll";
-const CONFIGS_MEDIUM_INSPECTOR_HEIGHT: f32 = 328.0;
+pub(crate) const CONFIGS_DESKTOP_BREAKPOINT: f32 = 1420.0;
+pub(crate) const CONFIGS_COMPACT_BREAKPOINT: f32 = 1040.0;
+pub(crate) const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 76.0;
+pub(crate) const CONFIGS_LIBRARY_SCROLL_STATE_ID: &str = "configs-library-scroll";
+pub(crate) const CONFIGS_MEDIUM_INSPECTOR_HEIGHT: f32 = 328.0;
 
-struct ConfigsRuntimeView {
-    selected_id: Option<u64>,
-    latest_status: String,
-    last_error: String,
-    running_name: String,
+pub(crate) struct ConfigsRuntimeView {
+    pub(crate) selected_id: Option<u64>,
+    pub(crate) latest_status: String,
+    pub(crate) last_error: String,
+    pub(crate) running_name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ConfigsLayoutMode {
+pub(crate) enum ConfigsLayoutMode {
     Desktop,
     Medium,
     Compact,
