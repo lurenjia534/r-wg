@@ -300,7 +300,12 @@ That is the preferred place to manage backend state unless you are packaging or 
 - release packaging currently targets Linux (`tar.gz`) and Windows (`zip`)
 - the temporary local `ashpd` patch is no longer required; the project uses the crates.io release directly
 
+## License
+
+Unless noted otherwise, the `r-wg` project is licensed under the Apache License 2.0. See `LICENSE`.
+
+The vendored `gotatun` code under `vendor/gotatun` remains licensed under `MPL-2.0`, including local modifications applied to that vendored copy. See `vendor/gotatun/Cargo.toml` and `vendor/gotatun/README.md` for the upstream license declaration.
+
 ## In one sentence
 
 r-wg is meant to feel like a real desktop WireGuard client: install the backend once, choose a tunnel, click on, and let the app handle the privileged networking work behind the scenes.
-
