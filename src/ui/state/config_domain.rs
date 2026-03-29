@@ -80,6 +80,7 @@ pub(crate) enum DraftValidationState {
 pub(crate) struct ConfigDraftState {
     /// 这份 draft 对应的已保存配置 ID；None 表示尚未保存的新 draft。
     pub(crate) source_id: Option<u64>,
+    pub(crate) revision: u64,
     pub(crate) name: SharedString,
     pub(crate) text: SharedString,
     pub(crate) base_name: SharedString,
@@ -94,6 +95,7 @@ impl ConfigDraftState {
     pub(crate) fn new() -> Self {
         Self {
             source_id: None,
+            revision: 0,
             name: SharedString::new_static(""),
             text: SharedString::new_static(""),
             base_name: SharedString::new_static(""),
@@ -273,6 +275,7 @@ impl ConfigsWorkspace {
         let text_changed = self.draft.text != text;
         self.draft.name = name;
         self.draft.text = text;
+        self.draft.revision = self.draft.revision.wrapping_add(1);
         self.refresh_draft_flags(running_id);
         if text_changed {
             self.draft.validation = DraftValidationState::Idle;
@@ -307,6 +310,7 @@ impl ConfigsWorkspace {
     ) {
         self.draft = ConfigDraftState {
             source_id: Some(source_id),
+            revision: 1,
             name: name.clone(),
             text: text.clone(),
             base_name: name,
@@ -323,6 +327,7 @@ impl ConfigsWorkspace {
     pub(crate) fn set_unsaved_draft(&mut self, name: SharedString, text: SharedString) {
         self.draft = ConfigDraftState {
             source_id: None,
+            revision: 1,
             name,
             text,
             base_name: SharedString::new_static(""),

@@ -68,6 +68,7 @@ pub(crate) enum SidebarItem {
     Advanced,
     Topology,
     RouteMap,
+    Tools,
     About,
 }
 
@@ -86,6 +87,7 @@ impl SidebarItem {
             Self::Advanced => "preferences",
             Self::Topology => "topology",
             Self::RouteMap => "route-map",
+            Self::Tools => "tools",
             Self::About => "about",
         }
     }
@@ -104,6 +106,7 @@ impl SidebarItem {
             Self::Advanced => "Preferences",
             Self::Topology => "Topology",
             Self::RouteMap => "Route Map",
+            Self::Tools => "Tools",
             Self::About => "About",
         }
     }
@@ -122,6 +125,7 @@ impl SidebarItem {
             Self::Advanced => IconName::Settings2,
             Self::Topology => IconName::Frame,
             Self::RouteMap => IconName::Map,
+            Self::Tools => IconName::Search,
             Self::About => IconName::Info,
         }
     }

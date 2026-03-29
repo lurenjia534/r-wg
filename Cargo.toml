@@ -9,7 +9,7 @@ gpui = "0.2.2"
 gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
 gpui-component-assets = "0.5.1"
 gotatun = { version = "0.4.1", features = ["device", "tun"] }
-tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process"] }
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process", "time"] }
 base64 = "0.22.1"
 chrono = "0.4.43"
 crossbeam-queue = "0.3.12"

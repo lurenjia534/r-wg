@@ -484,6 +484,7 @@ fn primary_nav_entries(
 fn insight_nav_entries(active_item: SidebarItem) -> Vec<NavEntry> {
     vec![
         NavEntry::item(SidebarItem::RouteMap, active_item == SidebarItem::RouteMap),
+        NavEntry::item(SidebarItem::Tools, active_item == SidebarItem::Tools),
         NavEntry::group(
             "coming-soon",
             "Coming Soon",

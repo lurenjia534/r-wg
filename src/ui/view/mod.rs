@@ -8,6 +8,7 @@ mod logs;
 mod overview;
 mod route_map;
 mod shared;
+mod tools;
 mod top_bar;
 mod widgets;
 
@@ -118,6 +119,15 @@ impl Render for WgApp {
                             .as_ref()
                             .expect("root data should exist outside Configs");
                         route_map::render_route_map(self, data, window, cx).into_any_element()
+                    }
+                    SidebarItem::Tools => {
+                        let workspace = self.ensure_tools_workspace(window, cx);
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .child(workspace)
+                            .into_any_element()
                     }
                     _ => overview::render_placeholder(cx).into_any_element(),
                 };

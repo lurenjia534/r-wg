@@ -49,6 +49,7 @@ impl WgApp {
             }
         });
         self.refresh_configs_workspace_row_flags(cx);
+        self.refresh_tools_active_config(cx);
     }
 }
 

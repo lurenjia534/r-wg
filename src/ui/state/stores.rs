@@ -17,9 +17,9 @@ use crate::ui::persistence::{self, StoragePaths};
 use super::{
     BackendDiagnostic, BackendHealth, ConfigInspectorTab, ConfigsWorkspace, LoadedConfigState,
     PendingStart, ProxiesViewMode, ProxyRunningFilter, RouteFamilyFilter, RouteMapMode,
-    SidebarItem, TrafficPeriod, TrafficStore, TunnelConfig, DEFAULT_CONFIGS_INSPECTOR_WIDTH,
-    DEFAULT_CONFIGS_LIBRARY_WIDTH, DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH,
-    DEFAULT_ROUTE_MAP_INVENTORY_WIDTH, RESTART_COOLDOWN,
+    SidebarItem, ToolsWorkspace, TrafficPeriod, TrafficStore, TunnelConfig,
+    DEFAULT_CONFIGS_INSPECTOR_WIDTH, DEFAULT_CONFIGS_LIBRARY_WIDTH,
+    DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH, DEFAULT_ROUTE_MAP_INVENTORY_WIDTH, RESTART_COOLDOWN,
 };
 
 // App state containers excluding the WgApp facade.
@@ -581,6 +581,7 @@ pub(crate) struct UiState {
     pub(crate) route_map_search_input: Option<Entity<InputState>>,
     pub(crate) route_map_search: RouteMapSearchState,
     pub(crate) configs_workspace: Option<Entity<ConfigsWorkspace>>,
+    pub(crate) tools_workspace: Option<Entity<ToolsWorkspace>>,
     // 日志状态与提示。
     pub(crate) status: SharedString,
     pub(crate) last_error: Option<SharedString>,
@@ -597,6 +598,7 @@ impl UiState {
             route_map_search_input: None,
             route_map_search: RouteMapSearchState::new(),
             configs_workspace: None,
+            tools_workspace: None,
             status: "Ready".into(),
             last_error: None,
             backend: BackendDiagnostic::default_for_platform(),

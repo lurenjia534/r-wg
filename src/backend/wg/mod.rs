@@ -9,6 +9,7 @@ mod ipc;
 #[cfg(target_os = "linux")]
 mod linux_service;
 pub mod route_plan;
+pub mod tools;
 #[cfg(target_os = "windows")]
 mod windows_pipe;
 #[cfg(target_os = "windows")]

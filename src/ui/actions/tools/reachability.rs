@@ -1,0 +1,252 @@
+use gpui::{AppContext as _, Context, Window};
+use r_wg::backend::wg::tools::{
+    probe_reachability_blocking, AddressFamilyPreference, ReachabilityMode, ReachabilityRequest,
+};
+
+use crate::ui::state::{
+    ActiveConfigParseState, AsyncJobState, ReachabilityAuditFilter, ReachabilitySingleViewModel,
+    ReachabilityTab, ToolsTab, ToolsWorkspace,
+};
+
+const REACHABILITY_DEFAULT_TIMEOUT_MS: &str = "1500";
+
+impl ToolsWorkspace {
+    pub(crate) fn set_reachability_mode(&mut self, value: ReachabilityMode) -> bool {
+        if self.reachability.form.mode == value {
+            return false;
+        }
+        self.reachability.form.mode = value;
+        true
+    }
+
+    pub(crate) fn set_family_preference(&mut self, value: AddressFamilyPreference) -> bool {
+        if self.reachability.form.family_preference == value {
+            return false;
+        }
+        self.reachability.form.family_preference = value;
+        true
+    }
+
+    pub(crate) fn set_stop_on_first_success(&mut self, value: bool) -> bool {
+        if self.reachability.form.stop_on_first_success == value {
+            return false;
+        }
+        self.reachability.form.stop_on_first_success = value;
+        true
+    }
+
+    pub(crate) fn set_reachability_tab(&mut self, value: ReachabilityTab) -> bool {
+        if self.reachability.active_tab == value {
+            return false;
+        }
+        self.reachability.active_tab = value;
+        true
+    }
+
+    pub(crate) fn set_reachability_audit_filter(&mut self, value: ReachabilityAuditFilter) -> bool {
+        if self.reachability.audit_filter == value {
+            return false;
+        }
+        self.reachability.audit_filter = value;
+        true
+    }
+
+    pub(crate) fn run_reachability(&mut self, cx: &mut Context<Self>) {
+        if self.reachability.single.is_running() || self.reachability.audit.is_running() {
+            return;
+        }
+
+        let Some(request) = self.build_reachability_request(cx) else {
+            return;
+        };
+
+        self.reachability.single_generation = self.reachability.single_generation.wrapping_add(1);
+        let generation = self.reachability.single_generation;
+        let cancel = self.reachability.single.set_running(generation);
+        self.reachability.form_error = None;
+        cx.notify();
+
+        cx.spawn(async move |view, cx| {
+            let task = cx.background_spawn(async move {
+                if cancel.is_cancelled() {
+                    return Err("cancelled".to_string());
+                }
+                let result = probe_reachability_blocking(request).map_err(|err| err.to_string())?;
+                if cancel.is_cancelled() {
+                    return Err("cancelled".to_string());
+                }
+                Ok::<_, String>(ReachabilitySingleViewModel { result })
+            });
+            let result = task.await;
+            let _ = view.update(cx, |this, cx| {
+                if this.reachability.single.generation() != Some(generation) {
+                    return;
+                }
+                match result {
+                    Ok(view_model) => this.reachability.single = AsyncJobState::Ready(view_model),
+                    Err(message) if message == "cancelled" => {
+                        this.reachability.single = AsyncJobState::Idle
+                    }
+                    Err(message) => {
+                        this.reachability.single = AsyncJobState::Failed(message.into())
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn load_reachability_prefill_peer(
+        &mut self,
+        peer_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(parsed) = self.active_config.parsed_config() else {
+            self.reachability.form_error = Some(active_config_unavailable_message(self).into());
+            cx.notify();
+            return;
+        };
+        let endpoint = parsed
+            .peers
+            .get(peer_index)
+            .and_then(|peer| peer.endpoint.as_ref())
+            .cloned();
+
+        let Some(endpoint) = endpoint else {
+            self.reachability.form_error = Some("The selected peer has no endpoint.".into());
+            cx.notify();
+            return;
+        };
+
+        if let Some(input) = self.reachability.target_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_value(format_endpoint_text(&endpoint), window, cx);
+            });
+        }
+        if let Some(input) = self.reachability.port_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+            });
+        }
+        self.reachability.form.mode = ReachabilityMode::TcpConnect;
+        self.reachability.form_error = None;
+        self.active_tab = ToolsTab::Reachability;
+        self.reachability.active_tab = ReachabilityTab::Single;
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_reachability_audit(&mut self, cx: &mut Context<Self>) {
+        self.reachability.audit.cancel();
+        self.reachability.audit_progress = None;
+        cx.notify();
+    }
+
+    fn build_reachability_request(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<ReachabilityRequest> {
+        let target = self
+            .reachability
+            .target_input
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string())
+            .unwrap_or_default();
+        let port_override = match parse_optional_u16(
+            self.reachability
+                .port_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+                .unwrap_or_default()
+                .trim(),
+        ) {
+            Ok(value) => value,
+            Err(message) => {
+                self.reachability.form_error = Some(message.into());
+                cx.notify();
+                return None;
+            }
+        };
+        let timeout_ms = match parse_timeout_ms(
+            self.reachability
+                .timeout_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+                .unwrap_or_else(|| REACHABILITY_DEFAULT_TIMEOUT_MS.to_string())
+                .trim(),
+        ) {
+            Ok(value) => value,
+            Err(message) => {
+                self.reachability.form_error = Some(message.into());
+                cx.notify();
+                return None;
+            }
+        };
+
+        Some(ReachabilityRequest {
+            target,
+            mode: self.reachability.form.mode,
+            port_override,
+            family_preference: self.reachability.form.family_preference,
+            timeout_ms,
+            max_addresses: 8,
+            stop_on_first_success: self.reachability.form.stop_on_first_success,
+        })
+    }
+}
+
+pub(super) fn parse_optional_u16(value: &str) -> Result<Option<u16>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let parsed = value
+        .parse::<u16>()
+        .map_err(|_| "Port override must be a non-zero integer.".to_string())?;
+    if parsed == 0 {
+        return Err("Port override must be a non-zero integer.".to_string());
+    }
+    Ok(Some(parsed))
+}
+
+pub(super) fn parse_timeout_ms(value: &str) -> Result<u64, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(REACHABILITY_DEFAULT_TIMEOUT_MS.parse().unwrap());
+    }
+    value
+        .parse::<u64>()
+        .map_err(|_| "Timeout must be an integer in milliseconds.".to_string())
+        .and_then(|value| {
+            if value == 0 {
+                Err("Timeout must be greater than zero.".to_string())
+            } else {
+                Ok(value)
+            }
+        })
+}
+
+pub(super) fn format_endpoint_text(endpoint: &r_wg::backend::wg::config::Endpoint) -> String {
+    if endpoint.host.contains(':')
+        && endpoint
+            .host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_ipv6())
+            .unwrap_or(false)
+    {
+        format!("[{}]:{}", endpoint.host, endpoint.port)
+    } else {
+        format!("{}:{}", endpoint.host, endpoint.port)
+    }
+}
+
+fn active_config_unavailable_message(workspace: &ToolsWorkspace) -> String {
+    match &workspace.active_config.parse_state {
+        ActiveConfigParseState::Loading => "Active config is still being parsed.".to_string(),
+        ActiveConfigParseState::Invalid(message) => {
+            format!("Active config is not usable: {message}")
+        }
+        _ => "No active config is available for prefill.".to_string(),
+    }
+}

@@ -8,4 +8,5 @@ mod persistence;
 mod route_map;
 mod stats;
 mod status;
+pub(crate) mod tools;
 mod tunnel;
