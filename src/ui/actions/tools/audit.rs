@@ -3,18 +3,18 @@ use std::{
     time::Duration,
 };
 
-use futures_util::stream::{self, StreamExt as _};
+use futures_util::stream::{self, StreamExt as _, TryStreamExt as _};
 use gpui::{AppContext as _, Context, Timer};
 use r_wg::backend::wg::config::{self, PeerConfig};
-use r_wg::backend::wg::tools::{
-    probe_reachability, AddressFamilyPreference, ReachabilityMode, ReachabilityRequest,
-};
+use r_wg::backend::wg::tools::{probe_reachability, ReachabilityRequest};
 use tokio::runtime::Builder;
+use tokio::time::sleep;
 
 use super::active_config::resolve_active_config_text_request;
 use crate::ui::state::{
     AsyncJobState, JobCancelHandle, ReachabilityAuditPhase, ReachabilityAuditProgress,
-    ReachabilityAuditViewModel, ReachabilityBatchResult, ReachabilityBatchRow,
+    ReachabilityAuditRequest, ReachabilityAuditViewModel, ReachabilityBatchResult,
+    ReachabilityBatchRow,
     ReachabilityBatchStatus, ToolsWorkspace,
 };
 
@@ -35,17 +35,10 @@ impl ToolsWorkspace {
             return;
         }
 
-        let timeout_ms = match super::reachability::parse_timeout_ms(
-            self.reachability
-                .timeout_input
-                .as_ref()
-                .map(|input| input.read(cx).value().to_string())
-                .unwrap_or_else(|| "1500".to_string())
-                .trim(),
-        ) {
-            Ok(value) => value,
+        let audit_request = match self.current_reachability_audit_request(cx) {
+            Ok(request) => request,
             Err(message) => {
-                self.reachability.form_error = Some(message.into());
+                self.reachability.audit_error = Some(message.into());
                 cx.notify();
                 return;
             }
@@ -53,16 +46,13 @@ impl ToolsWorkspace {
 
         let requests = self.app.read(cx).saved_config_text_requests();
         if requests.is_empty() {
-            self.reachability.form_error = Some("No saved configs are available.".into());
+            self.reachability.audit_error = Some("No saved configs are available.".into());
             cx.notify();
             return;
         }
 
         self.reachability.audit_generation = self.reachability.audit_generation.wrapping_add(1);
         let generation = self.reachability.audit_generation;
-        let mode = self.reachability.form.mode;
-        let family_preference = self.reachability.form.family_preference;
-        let stop_on_first_success = self.reachability.form.stop_on_first_success;
         let cancel = self.reachability.audit.set_running(generation);
         let progress = Arc::new(Mutex::new(ReachabilityAuditProgress {
             phase: ReachabilityAuditPhase::LoadingConfigs,
@@ -72,7 +62,10 @@ impl ToolsWorkspace {
             completed_endpoints: 0,
         }));
         self.reachability.audit_progress = Some(progress_snapshot(&progress));
-        self.reachability.form_error = None;
+        self.reachability.audit_error = None;
+        self.reachability.audit_notice = None;
+        self.reachability.audit_cancelling = false;
+        self.reachability.audit_page = 0;
         cx.notify();
 
         self.spawn_audit_progress_poller(generation, progress.clone(), cx);
@@ -82,10 +75,7 @@ impl ToolsWorkspace {
             let task = cx.background_spawn(async move {
                 build_batch_reachability_result_blocking(
                     requests,
-                    mode,
-                    family_preference,
-                    timeout_ms,
-                    stop_on_first_success,
+                    audit_request,
                     cancel,
                     progress_for_task,
                 )
@@ -100,14 +90,20 @@ impl ToolsWorkspace {
                     Ok(view_model) => {
                         this.reachability.audit = AsyncJobState::Ready(view_model);
                         this.reachability.audit_progress = Some(final_progress);
+                        this.reachability.audit_cancelling = false;
+                        this.reachability.audit_notice = None;
                     }
                     Err(message) if message == "cancelled" => {
                         this.reachability.audit = AsyncJobState::Idle;
                         this.reachability.audit_progress = None;
+                        this.reachability.audit_cancelling = false;
+                        this.reachability.audit_notice = Some("Audit cancelled.".into());
                     }
                     Err(message) => {
                         this.reachability.audit = AsyncJobState::Failed(message.into());
                         this.reachability.audit_progress = Some(final_progress);
+                        this.reachability.audit_cancelling = false;
+                        this.reachability.audit_notice = None;
                     }
                 }
                 cx.notify();
@@ -147,10 +143,7 @@ impl ToolsWorkspace {
 
 fn build_batch_reachability_result_blocking(
     requests: Vec<crate::ui::state::ActiveConfigTextRequest>,
-    mode: ReachabilityMode,
-    family_preference: AddressFamilyPreference,
-    timeout_ms: u64,
-    stop_on_first_success: bool,
+    request: ReachabilityAuditRequest,
     cancel: JobCancelHandle,
     progress: SharedAuditProgress,
 ) -> Result<ReachabilityAuditViewModel, String> {
@@ -162,24 +155,18 @@ fn build_batch_reachability_result_blocking(
     runtime.block_on(async move {
         let result = build_batch_reachability_result(
             requests,
-            mode,
-            family_preference,
-            timeout_ms,
-            stop_on_first_success,
+            request,
             cancel,
             progress,
         )
         .await?;
-        Ok(ReachabilityAuditViewModel { result })
+        Ok(ReachabilityAuditViewModel { request, result })
     })
 }
 
 async fn build_batch_reachability_result(
     requests: Vec<crate::ui::state::ActiveConfigTextRequest>,
-    mode: ReachabilityMode,
-    family_preference: AddressFamilyPreference,
-    timeout_ms: u64,
-    stop_on_first_success: bool,
+    request: ReachabilityAuditRequest,
     cancel: JobCancelHandle,
     progress: SharedAuditProgress,
 ) -> Result<ReachabilityBatchResult, String> {
@@ -262,48 +249,52 @@ async fn build_batch_reachability_result(
         let cancel = cancel.clone();
         let progress = progress.clone();
         async move {
-            let row = if cancel.is_cancelled() {
-                ReachabilityBatchRow {
+            if cancel.is_cancelled() {
+                increment_completed_endpoints(&progress);
+                return Err("cancelled".to_string());
+            }
+
+            let probe_request = ReachabilityRequest {
+                target: job.target.clone(),
+                mode: request.mode,
+                port_override: None,
+                family_preference: request.family_preference,
+                timeout_ms: request.timeout_ms,
+                max_addresses: 8,
+                stop_on_first_success: request.stop_on_first_success,
+            };
+            let probe_result = tokio::select! {
+                _ = wait_for_cancel(cancel.clone()) => Err("cancelled".to_string()),
+                result = probe_reachability(probe_request) => result.map_err(|err| err.to_string()),
+            };
+
+            let row = match probe_result {
+                Ok(result) => ReachabilityBatchRow {
                     config_name: job.config_name.into(),
                     peer_label: job.peer_label.into(),
                     target: job.target.into(),
-                    status: ReachabilityBatchStatus::Cancelled,
-                    summary: "Cancelled".into(),
+                    status: ReachabilityBatchStatus::from_verdict(result.verdict),
+                    summary: result.summary.into(),
+                },
+                Err(message) if message == "cancelled" => {
+                    increment_completed_endpoints(&progress);
+                    return Err(message);
                 }
-            } else {
-                let request = ReachabilityRequest {
-                    target: job.target.clone(),
-                    mode,
-                    port_override: None,
-                    family_preference,
-                    timeout_ms,
-                    max_addresses: 8,
-                    stop_on_first_success,
-                };
-                match probe_reachability(request).await {
-                    Ok(result) => ReachabilityBatchRow {
-                        config_name: job.config_name.into(),
-                        peer_label: job.peer_label.into(),
-                        target: job.target.into(),
-                        status: ReachabilityBatchStatus::from_verdict(result.verdict),
-                        summary: result.summary.into(),
-                    },
-                    Err(err) => ReachabilityBatchRow {
-                        config_name: job.config_name.into(),
-                        peer_label: job.peer_label.into(),
-                        target: job.target.into(),
-                        status: ReachabilityBatchStatus::Failed,
-                        summary: err.to_string().into(),
-                    },
-                }
+                Err(err) => ReachabilityBatchRow {
+                    config_name: job.config_name.into(),
+                    peer_label: job.peer_label.into(),
+                    target: job.target.into(),
+                    status: ReachabilityBatchStatus::Failed,
+                    summary: err.into(),
+                },
             };
             increment_completed_endpoints(&progress);
-            row
+            Ok::<_, String>(row)
         }
     }))
     .buffer_unordered(REACHABILITY_BATCH_CONCURRENCY)
-    .collect::<Vec<_>>()
-    .await;
+    .try_collect::<Vec<_>>()
+    .await?;
 
     update_progress(&progress, |state| {
         state.phase = ReachabilityAuditPhase::Finalizing;
@@ -317,6 +308,10 @@ async fn build_batch_reachability_result(
             .then(left.peer_label.as_ref().cmp(right.peer_label.as_ref()))
     });
 
+    let resolved_rows = rows
+        .iter()
+        .filter(|row| row.status == ReachabilityBatchStatus::Resolved)
+        .count();
     let reachable_rows = rows
         .iter()
         .filter(|row| row.status == ReachabilityBatchStatus::Reachable)
@@ -332,15 +327,14 @@ async fn build_batch_reachability_result(
     let issue_rows = rows
         .iter()
         .filter(|row| {
-            matches!(
-                row.status,
-                ReachabilityBatchStatus::ParseError
-                    | ReachabilityBatchStatus::ReadError
-                    | ReachabilityBatchStatus::NoEndpoint
-                    | ReachabilityBatchStatus::Cancelled
-            )
-        })
-        .count();
+                matches!(
+                    row.status,
+                    ReachabilityBatchStatus::ParseError
+                        | ReachabilityBatchStatus::ReadError
+                        | ReachabilityBatchStatus::NoEndpoint
+                )
+            })
+            .count();
 
     update_progress(&progress, |state| {
         state.phase = ReachabilityAuditPhase::Completed;
@@ -350,6 +344,7 @@ async fn build_batch_reachability_result(
     Ok(ReachabilityBatchResult {
         total_configs,
         endpoint_rows,
+        resolved_rows,
         reachable_rows,
         partial_rows,
         failed_rows,
@@ -389,6 +384,12 @@ fn progress_snapshot(progress: &SharedAuditProgress) -> ReachabilityAuditProgres
         .lock()
         .expect("audit progress lock poisoned")
         .clone()
+}
+
+async fn wait_for_cancel(cancel: JobCancelHandle) {
+    while !cancel.is_cancelled() {
+        sleep(Duration::from_millis(25)).await;
+    }
 }
 
 fn peer_label(index: usize, peer: &PeerConfig) -> String {

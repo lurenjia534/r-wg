@@ -18,11 +18,13 @@ use r_wg::backend::wg::tools::{
 
 use crate::ui::state::{
     AsyncJobState, ReachabilityAuditFilter, ReachabilityAuditPhase, ReachabilityAuditProgress,
-    ReachabilityBatchStatus, ReachabilitySingleViewModel, ReachabilityTab, ReachabilityToolState,
-    ToolsWorkspace,
+    ReachabilityBatchStatus, ReachabilityFormState, ReachabilitySingleViewModel,
+    ReachabilityTab, ToolsWorkspace,
 };
 
-use super::components::{empty_result_state, error_banner};
+use super::components::{empty_result_state, error_banner, warning_banner};
+
+const AUDIT_PAGE_SIZE: usize = 50;
 
 pub(super) fn render_reachability_tab(
     workspace: &ToolsWorkspace,
@@ -30,21 +32,8 @@ pub(super) fn render_reachability_tab(
     window: &mut Window,
     cx: &mut Context<ToolsWorkspace>,
 ) -> Div {
-    let target_input = workspace
-        .reachability
-        .target_input
-        .clone()
-        .expect("reach target input should exist");
-    let port_input = workspace
-        .reachability
-        .port_input
-        .clone()
-        .expect("reach port input should exist");
-    let timeout_input = workspace
-        .reachability
-        .timeout_input
-        .clone()
-        .expect("reach timeout input should exist");
+    let inputs_disabled =
+        workspace.reachability.single.is_running() || workspace.reachability.audit.is_running();
 
     let workspace_handle = cx.entity();
     let sub_tabs = TabBar::new("tools-reach-subtabs")
@@ -69,102 +58,10 @@ pub(super) fn render_reachability_tab(
         .child(Tab::new().label(ReachabilityTab::Single.label()).small())
         .child(Tab::new().label(ReachabilityTab::Audit.label()).small());
 
-    let form = v_flex()
-        .gap_3()
-        .child(sub_tabs)
-        .child(render_single_input_box(
-            "Target",
-            "Hostname, IP literal, or host:port.",
-            &target_input,
-            render_reachability_prefill_action(workspace, window, cx),
-            cx,
-        ))
-        .child(render_single_input_box(
-            "Port Override",
-            "Optional when the target already includes :port.",
-            &port_input,
-            None,
-            cx,
-        ))
-        .child(render_single_input_box(
-            "Timeout (ms)",
-            "Per resolve or connect attempt timeout.",
-            &timeout_input,
-            None,
-            cx,
-        ))
-        .child(render_reachability_toggles(&workspace.reachability, cx))
-        .child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("Resolve checks the current host resolver. TCP Connect checks host-side TCP reachability only. It does not prove WireGuard UDP liveness."),
-        )
-        .child(match workspace.reachability.active_tab {
-            ReachabilityTab::Single => h_flex()
-                .justify_end()
-                .child(
-                    Button::new("tools-reach-run")
-                        .label(if workspace.reachability.single.is_running() {
-                            "Testing..."
-                        } else {
-                            "Test"
-                        })
-                        .primary()
-                        .small()
-                        .disabled(
-                            workspace.reachability.single.is_running()
-                                || workspace.reachability.audit.is_running(),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.run_reachability(cx);
-                        })),
-                )
-                .into_any_element(),
-            ReachabilityTab::Audit => h_flex()
-                .justify_between()
-                .gap_2()
-                .flex_wrap()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Audit runs against every saved config and checks each peer endpoint it can parse."),
-                )
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            Button::new("tools-reach-audit-run")
-                                .label(if workspace.reachability.audit.is_running() {
-                                    "Auditing..."
-                                } else {
-                                    "Run Audit"
-                                })
-                                .primary()
-                                .small()
-                                .disabled(
-                                    workspace.reachability.single.is_running()
-                                        || workspace.reachability.audit.is_running(),
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.run_reachability_audit(cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("tools-reach-audit-cancel")
-                                .label("Cancel")
-                                .outline()
-                                .small()
-                                .disabled(!workspace.reachability.audit.is_running())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.cancel_reachability_audit(cx);
-                                })),
-                        ),
-                )
-                .into_any_element(),
-        });
+    let form = v_flex().gap_3().child(sub_tabs).child(match workspace.reachability.active_tab {
+        ReachabilityTab::Single => render_single_form(workspace, window, inputs_disabled, cx).into_any_element(),
+        ReachabilityTab::Audit => render_audit_form(workspace, inputs_disabled, cx).into_any_element(),
+    });
 
     let result = render_reachability_result_panel(workspace, cx);
 
@@ -180,12 +77,12 @@ pub(super) fn render_reachability_tab(
     } else {
         div()
             .flex()
-            .flex_col()
-            .gap_3()
+            .gap_4()
             .flex_1()
             .min_h(px(0.0))
-            .child(form)
-            .child(result)
+            .items_start()
+            .child(div().w(px(460.0)).min_w(px(360.0)).max_w(px(520.0)).child(form))
+            .child(div().flex_1().min_w(px(0.0)).child(result))
     }
 }
 
@@ -194,6 +91,7 @@ fn render_single_input_box(
     description: &str,
     input: &Entity<gpui_component::input::InputState>,
     action: Option<AnyElement>,
+    disabled: bool,
     cx: &mut Context<ToolsWorkspace>,
 ) -> GroupBox {
     GroupBox::new().fill().title(title.to_string()).child(
@@ -221,76 +119,295 @@ fn render_single_input_box(
                     .bg(cx.theme().group_box)
                     .px_2()
                     .py_1()
-                    .child(Input::new(input).appearance(false).bordered(false)),
+                    .child(
+                        Input::new(input)
+                            .appearance(false)
+                            .bordered(false)
+                            .disabled(disabled),
+                    ),
             ),
     )
 }
 
+fn render_single_form(
+    workspace: &ToolsWorkspace,
+    window: &mut Window,
+    inputs_disabled: bool,
+    cx: &mut Context<ToolsWorkspace>,
+) -> Div {
+    let target_input = workspace
+        .reachability
+        .target_input
+        .clone()
+        .expect("reach target input should exist");
+    let port_input = workspace
+        .reachability
+        .port_input
+        .clone()
+        .expect("reach port input should exist");
+    let timeout_input = workspace
+        .reachability
+        .single_timeout_input
+        .clone()
+        .expect("reach single timeout input should exist");
+
+    v_flex()
+        .gap_3()
+        .child(render_single_input_box(
+            "Target",
+            "Hostname, IP literal, or host:port.",
+            &target_input,
+            render_reachability_prefill_action(workspace, window, inputs_disabled, cx),
+            inputs_disabled,
+            cx,
+        ))
+        .child(render_single_input_box(
+            "Port Override",
+            "Optional when the target already includes :port.",
+            &port_input,
+            None,
+            inputs_disabled,
+            cx,
+        ))
+        .child(render_single_input_box(
+            "Timeout (ms)",
+            "Per resolve or connect attempt timeout.",
+            &timeout_input,
+            None,
+            inputs_disabled,
+            cx,
+        ))
+        .child(render_reachability_toggles(
+            ReachabilityTab::Single,
+            &workspace.reachability.single_form,
+            inputs_disabled,
+            |this, value| this.set_single_reachability_mode(value),
+            |this, value| this.set_single_family_preference(value),
+            |this, value| this.set_single_stop_on_first_success(value),
+            cx,
+        ))
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Resolve checks the current host resolver. TCP Connect checks host-side TCP reachability only. It does not prove WireGuard UDP liveness."),
+        )
+        .child(
+            h_flex()
+                .justify_end()
+                .child(
+                    Button::new("tools-reach-run")
+                        .label(if workspace.reachability.single.is_running() {
+                            "Testing..."
+                        } else {
+                            "Test"
+                        })
+                        .primary()
+                        .small()
+                        .disabled(inputs_disabled)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.run_reachability(cx);
+                        })),
+                ),
+        )
+}
+
+fn render_audit_form(
+    workspace: &ToolsWorkspace,
+    inputs_disabled: bool,
+    cx: &mut Context<ToolsWorkspace>,
+) -> Div {
+    let timeout_input = workspace
+        .reachability
+        .audit_timeout_input
+        .clone()
+        .expect("reach audit timeout input should exist");
+
+    v_flex()
+        .gap_3()
+        .child(render_single_input_box(
+            "Timeout (ms)",
+            "Per resolve or connect attempt timeout for each saved endpoint.",
+            &timeout_input,
+            None,
+            inputs_disabled,
+            cx,
+        ))
+        .child(render_reachability_toggles(
+            ReachabilityTab::Audit,
+            &workspace.reachability.audit_form,
+            inputs_disabled,
+            |this, value| this.set_audit_reachability_mode(value),
+            |this, value| this.set_audit_family_preference(value),
+            |this, value| this.set_audit_stop_on_first_success(value),
+            cx,
+        ))
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Audit runs against every saved config and checks each peer endpoint it can parse."),
+        )
+        .child(
+            h_flex()
+                .justify_between()
+                .gap_2()
+                .flex_wrap()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Target, port override, and active-config endpoint prefill only apply to Single Test."),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new("tools-reach-audit-run")
+                                .label(if workspace.reachability.audit_cancelling {
+                                    "Cancelling..."
+                                } else if workspace.reachability.audit.is_running() {
+                                    "Auditing..."
+                                } else {
+                                    "Run Audit"
+                                })
+                                .primary()
+                                .small()
+                                .disabled(inputs_disabled)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.run_reachability_audit(cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("tools-reach-audit-cancel")
+                                .label(if workspace.reachability.audit_cancelling {
+                                    "Cancelling..."
+                                } else {
+                                    "Cancel"
+                                })
+                                .outline()
+                                .small()
+                                .disabled(
+                                    !workspace.reachability.audit.is_running()
+                                        || workspace.reachability.audit_cancelling,
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.cancel_reachability_audit(cx);
+                                })),
+                        ),
+                ),
+        )
+}
+
 fn render_reachability_toggles(
-    state: &ReachabilityToolState,
+    tab: ReachabilityTab,
+    form: &ReachabilityFormState,
+    disabled: bool,
+    set_mode: impl Fn(&mut ToolsWorkspace, ReachabilityMode) -> bool + 'static + Copy,
+    set_family: impl Fn(&mut ToolsWorkspace, AddressFamilyPreference) -> bool + 'static + Copy,
+    set_stop_mode: impl Fn(&mut ToolsWorkspace, bool) -> bool + 'static + Copy,
     cx: &mut Context<ToolsWorkspace>,
 ) -> GroupBox {
-    let mode_group = ButtonGroup::new("tools-reach-mode")
+    let (mode_group_id, mode_resolve_id, mode_tcp_id, family_group_id, stop_group_id, stop_first_id, stop_all_id) =
+        match tab {
+            ReachabilityTab::Single => (
+                "tools-single-mode",
+                "tools-single-mode-resolve",
+                "tools-single-mode-tcp",
+                "tools-single-family",
+                "tools-single-stop",
+                "tools-single-stop-first",
+                "tools-single-stop-all",
+            ),
+            ReachabilityTab::Audit => (
+                "tools-audit-mode",
+                "tools-audit-mode-resolve",
+                "tools-audit-mode-tcp",
+                "tools-audit-family",
+                "tools-audit-stop",
+                "tools-audit-stop-first",
+                "tools-audit-stop-all",
+            ),
+        };
+    let mode_group = ButtonGroup::new(mode_group_id)
         .outline()
         .compact()
         .small()
         .child(
-            Button::new("tools-reach-mode-resolve")
+            Button::new(mode_resolve_id)
                 .label("Resolve")
-                .selected(state.form.mode == ReachabilityMode::ResolveOnly)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if this.set_reachability_mode(ReachabilityMode::ResolveOnly) {
+                .selected(form.mode == ReachabilityMode::ResolveOnly)
+                .disabled(disabled)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if set_mode(this, ReachabilityMode::ResolveOnly) {
                         cx.notify();
                     }
                 })),
         )
         .child(
-            Button::new("tools-reach-mode-tcp")
+            Button::new(mode_tcp_id)
                 .label("TCP Connect")
-                .selected(state.form.mode == ReachabilityMode::TcpConnect)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if this.set_reachability_mode(ReachabilityMode::TcpConnect) {
+                .selected(form.mode == ReachabilityMode::TcpConnect)
+                .disabled(disabled)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if set_mode(this, ReachabilityMode::TcpConnect) {
                         cx.notify();
                     }
                 })),
         );
 
-    let family_group = ButtonGroup::new("tools-reach-family")
+    let family_group = ButtonGroup::new(family_group_id)
         .outline()
         .compact()
         .small()
-        .child(family_button(AddressFamilyPreference::System, state, cx))
         .child(family_button(
-            AddressFamilyPreference::PreferIpv4,
-            state,
+            tab,
+            AddressFamilyPreference::System,
+            form,
+            disabled,
+            set_family,
             cx,
         ))
         .child(family_button(
+            tab,
+            AddressFamilyPreference::PreferIpv4,
+            form,
+            disabled,
+            set_family,
+            cx,
+        ))
+        .child(family_button(
+            tab,
             AddressFamilyPreference::PreferIpv6,
-            state,
+            form,
+            disabled,
+            set_family,
             cx,
         ));
 
-    let stop_group = ButtonGroup::new("tools-reach-stop")
+    let stop_group = ButtonGroup::new(stop_group_id)
         .outline()
         .compact()
         .small()
         .child(
-            Button::new("tools-reach-stop-first")
+            Button::new(stop_first_id)
                 .label("Stop on First Success")
-                .selected(state.form.stop_on_first_success)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if this.set_stop_on_first_success(true) {
+                .selected(form.stop_on_first_success)
+                .disabled(disabled)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if set_stop_mode(this, true) {
                         cx.notify();
                     }
                 })),
         )
         .child(
-            Button::new("tools-reach-stop-all")
+            Button::new(stop_all_id)
                 .label("Try All Addresses")
-                .selected(!state.form.stop_on_first_success)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if this.set_stop_on_first_success(false) {
+                .selected(!form.stop_on_first_success)
+                .disabled(disabled)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if set_stop_mode(this, false) {
                         cx.notify();
                     }
                 })),
@@ -318,6 +435,7 @@ fn render_reachability_toggles(
 fn render_reachability_prefill_action(
     workspace: &ToolsWorkspace,
     _window: &mut Window,
+    disabled: bool,
     cx: &mut Context<ToolsWorkspace>,
 ) -> Option<AnyElement> {
     let Some(parsed) = workspace.active_config.parsed_config() else {
@@ -352,6 +470,7 @@ fn render_reachability_prefill_action(
                 .label("Use current endpoint")
                 .outline()
                 .xsmall()
+                .disabled(disabled)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.load_reachability_prefill_peer(peer_index, window, cx);
                 }))
@@ -364,6 +483,7 @@ fn render_reachability_prefill_action(
             .label("Use current endpoint")
             .outline()
             .xsmall()
+            .disabled(disabled)
             .dropdown_caret(true)
             .dropdown_menu_with_anchor(Corner::TopRight, {
                 let workspace = cx.entity();
@@ -389,13 +509,42 @@ fn render_reachability_result_panel(
     workspace: &ToolsWorkspace,
     cx: &mut Context<ToolsWorkspace>,
 ) -> GroupBox {
+    let active_error = match workspace.reachability.active_tab {
+        ReachabilityTab::Single => workspace.reachability.single_error.clone(),
+        ReachabilityTab::Audit => workspace.reachability.audit_error.clone(),
+    };
+    let active_notice = match workspace.reachability.active_tab {
+        ReachabilityTab::Single => None,
+        ReachabilityTab::Audit => workspace.reachability.audit_notice.clone(),
+    };
+    let stale_message = match workspace.reachability.active_tab {
+        ReachabilityTab::Single => match &workspace.reachability.single {
+            AsyncJobState::Ready(view_model) => workspace
+                .current_reachability_request_snapshot(cx)
+                .ok()
+                .filter(|request| request != &view_model.request)
+                .map(|_| "Inputs changed since this result was produced. Re-run Test to refresh."),
+            _ => None,
+        },
+        ReachabilityTab::Audit => match &workspace.reachability.audit {
+            AsyncJobState::Ready(view_model) => workspace
+                .current_reachability_audit_request(cx)
+                .ok()
+                .filter(|request| request != &view_model.request)
+                .map(|_| "Audit settings changed since this result was produced. Re-run Audit to refresh."),
+            _ => None,
+        },
+    };
     GroupBox::new().fill().title("Result".to_string()).child(
         v_flex()
             .gap_3()
-            .when_some(
-                workspace.reachability.form_error.clone(),
-                |this, message| this.child(error_banner(message, cx)),
-            )
+            .when_some(stale_message, |this, message| {
+                this.child(warning_banner(message, cx))
+            })
+            .when_some(active_notice, |this, message| {
+                this.child(warning_banner(message, cx))
+            })
+            .when_some(active_error, |this, message| this.child(error_banner(message, cx)))
             .child(match workspace.reachability.active_tab {
                 ReachabilityTab::Single => render_single_result(workspace, cx).into_any_element(),
                 ReachabilityTab::Audit => render_audit_result(workspace, cx).into_any_element(),
@@ -456,11 +605,13 @@ fn render_reachability_result(
             result
                 .resolved
                 .iter()
-                .map(|addr| addr.to_string())
+                .map(|addr| format_resolved_address(result.mode, *addr))
                 .collect(),
             cx,
         ))
-        .when(!result.attempts.is_empty(), |this| {
+        .when(
+            result.mode != ReachabilityMode::ResolveOnly && !result.attempts.is_empty(),
+            |this| {
             this.child(
                 GroupBox::new().fill().title("Attempts".to_string()).child(
                     div()
@@ -511,7 +662,7 @@ fn render_reachability_result(
                                                 ),
                                         )
                                 })),
-                        ),
+                    ),
                 ),
             )
         })
@@ -527,10 +678,22 @@ fn render_audit_result(workspace: &ToolsWorkspace, cx: &mut Context<ToolsWorkspa
         AsyncJobState::Failed(message) => error_banner(message.clone(), cx),
         AsyncJobState::Ready(view_model) => {
             let result = &view_model.result;
-            let filtered_rows = result
+            let audit_mode = view_model.request.mode;
+            let visible_rows = result
                 .rows
                 .iter()
                 .filter(|row| workspace.reachability.audit_filter.matches(row.status))
+                .count();
+            let max_page = visible_rows.saturating_sub(1) / AUDIT_PAGE_SIZE;
+            let current_page = workspace.reachability.audit_page.min(max_page);
+            let page_start = current_page.saturating_mul(AUDIT_PAGE_SIZE);
+            let page_end = (page_start + AUDIT_PAGE_SIZE).min(visible_rows);
+            let paged_rows = result
+                .rows
+                .iter()
+                .filter(|row| workspace.reachability.audit_filter.matches(row.status))
+                .skip(page_start)
+                .take(AUDIT_PAGE_SIZE)
                 .collect::<Vec<_>>();
             div().child(
                 GroupBox::new()
@@ -563,10 +726,17 @@ fn render_audit_result(workspace: &ToolsWorkspace, cx: &mut Context<ToolsWorkspa
                                             .child(format!("{} endpoints", result.endpoint_rows)),
                                     )
                                     .child(
-                                        Tag::success()
-                                            .small()
-                                            .rounded_full()
-                                            .child(format!("{} reachable", result.reachable_rows)),
+                                        if audit_mode == ReachabilityMode::ResolveOnly {
+                                            Tag::info()
+                                                .small()
+                                                .rounded_full()
+                                                .child(format!("{} resolved", result.resolved_rows))
+                                        } else {
+                                            Tag::success()
+                                                .small()
+                                                .rounded_full()
+                                                .child(format!("{} reachable", result.reachable_rows))
+                                        },
                                     )
                                     .when(result.partial_rows > 0, |this| {
                                         this.child(
@@ -593,15 +763,23 @@ fn render_audit_result(workspace: &ToolsWorkspace, cx: &mut Context<ToolsWorkspa
                                         )
                                     }),
                             )
-                            .child(render_audit_filter_bar(workspace, filtered_rows.len(), cx))
-                            .child(div().max_h(px(360.0)).overflow_y_scrollbar().child(
-                                if filtered_rows.is_empty() {
+                            .child(render_audit_filter_bar(
+                                workspace,
+                                visible_rows,
+                                current_page,
+                                max_page,
+                                page_start,
+                                page_end,
+                                cx,
+                            ))
+                            .child(div().max_h(px(520.0)).overflow_y_scrollbar().child(
+                                if paged_rows.is_empty() {
                                     empty_result_state("No rows match the current filter.", cx)
                                         .into_any_element()
                                 } else {
                                     v_flex()
                                         .gap_2()
-                                        .children(filtered_rows.into_iter().map(|row| {
+                                        .children(paged_rows.into_iter().map(|row| {
                                             div()
                                                 .rounded_lg()
                                                 .border_1()
@@ -685,9 +863,20 @@ fn render_audit_progress_state(
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Saved config audit is running…"),
+                    .child(if workspace.reachability.audit_cancelling {
+                        "Stopping queued and in-flight probes…"
+                    } else {
+                        "Saved config audit is running…"
+                    }),
             ),
-        None => empty_result_state("Saved config audit is running…", cx),
+        None => empty_result_state(
+            if workspace.reachability.audit_cancelling {
+                "Stopping queued and in-flight probes…"
+            } else {
+                "Saved config audit is running…"
+            },
+            cx,
+        ),
     }
 }
 
@@ -733,6 +922,10 @@ fn render_audit_progress_summary(
 fn render_audit_filter_bar(
     workspace: &ToolsWorkspace,
     visible_rows: usize,
+    current_page: usize,
+    max_page: usize,
+    page_start: usize,
+    page_end: usize,
     cx: &mut Context<ToolsWorkspace>,
 ) -> Div {
     h_flex()
@@ -741,32 +934,85 @@ fn render_audit_filter_bar(
         .gap_3()
         .flex_wrap()
         .child(
-            ButtonGroup::new("tools-reach-audit-filter")
-                .outline()
-                .compact()
-                .small()
-                .child(audit_filter_button(
-                    ReachabilityAuditFilter::All,
-                    workspace.reachability.audit_filter,
-                    cx,
-                ))
-                .child(audit_filter_button(
-                    ReachabilityAuditFilter::Failures,
-                    workspace.reachability.audit_filter,
-                    cx,
-                ))
-                .child(audit_filter_button(
-                    ReachabilityAuditFilter::Issues,
-                    workspace.reachability.audit_filter,
-                    cx,
-                )),
+            h_flex()
+                .items_center()
+                .gap_2()
+                .flex_wrap()
+                .child(
+                    ButtonGroup::new("tools-reach-audit-filter")
+                        .outline()
+                        .compact()
+                        .small()
+                        .child(audit_filter_button(
+                            ReachabilityAuditFilter::All,
+                            workspace.reachability.audit_filter,
+                            cx,
+                        ))
+                        .child(audit_filter_button(
+                            ReachabilityAuditFilter::Failures,
+                            workspace.reachability.audit_filter,
+                            cx,
+                        ))
+                        .child(audit_filter_button(
+                            ReachabilityAuditFilter::Issues,
+                            workspace.reachability.audit_filter,
+                            cx,
+                        )),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new("tools-reach-audit-prev-page")
+                                .label("Prev")
+                                .outline()
+                                .xsmall()
+                                .disabled(current_page == 0)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let current = this.reachability.audit_page;
+                                    if current > 0 && this.set_reachability_audit_page(current - 1) {
+                                        cx.notify();
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new("tools-reach-audit-next-page")
+                                .label("Next")
+                                .outline()
+                                .xsmall()
+                                .disabled(current_page >= max_page || visible_rows == 0)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let current = this.reachability.audit_page;
+                                    if this.set_reachability_audit_page(current + 1) {
+                                        cx.notify();
+                                    }
+                                })),
+                        ),
+                ),
         )
-        .child(
+        .child(v_flex().gap_1().items_end().child(
             div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(format!("{visible_rows} visible rows")),
-        )
+        ).child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(if visible_rows == 0 {
+                    "Page 0 of 0".to_string()
+                } else {
+                    format!(
+                        "Showing {}-{} of {} | Page {} of {}",
+                        page_start + 1,
+                        page_end,
+                        visible_rows,
+                        current_page + 1,
+                        max_page + 1
+                    )
+                }),
+        ))
 }
 
 fn render_socket_list(
@@ -803,23 +1049,53 @@ fn render_socket_list(
 }
 
 fn family_button(
+    tab: ReachabilityTab,
     family: AddressFamilyPreference,
-    state: &ReachabilityToolState,
+    form: &ReachabilityFormState,
+    disabled: bool,
+    set_family: impl Fn(&mut ToolsWorkspace, AddressFamilyPreference) -> bool + 'static + Copy,
     cx: &mut Context<ToolsWorkspace>,
 ) -> Button {
     let (id, label) = match family {
-        AddressFamilyPreference::System => ("tools-reach-family-system", "System"),
-        AddressFamilyPreference::PreferIpv4 => ("tools-reach-family-v4", "Prefer IPv4"),
-        AddressFamilyPreference::PreferIpv6 => ("tools-reach-family-v6", "Prefer IPv6"),
+        AddressFamilyPreference::System => (
+            match tab {
+                ReachabilityTab::Single => "tools-single-family-system",
+                ReachabilityTab::Audit => "tools-audit-family-system",
+            },
+            "System",
+        ),
+        AddressFamilyPreference::PreferIpv4 => (
+            match tab {
+                ReachabilityTab::Single => "tools-single-family-v4",
+                ReachabilityTab::Audit => "tools-audit-family-v4",
+            },
+            "Prefer IPv4",
+        ),
+        AddressFamilyPreference::PreferIpv6 => (
+            match tab {
+                ReachabilityTab::Single => "tools-single-family-v6",
+                ReachabilityTab::Audit => "tools-audit-family-v6",
+            },
+            "Prefer IPv6",
+        ),
     };
     Button::new(id)
         .label(label)
-        .selected(state.form.family_preference == family)
+        .selected(form.family_preference == family)
+        .disabled(disabled)
         .on_click(cx.listener(move |this, _, _, cx| {
-            if this.set_family_preference(family) {
+            if set_family(this, family) {
                 cx.notify();
             }
         }))
+}
+
+fn format_resolved_address(mode: ReachabilityMode, address: std::net::SocketAddr) -> String {
+    if mode == ReachabilityMode::ResolveOnly {
+        address.ip().to_string()
+    } else {
+        address.to_string()
+    }
 }
 
 fn attempt_result_tag(result: ReachabilityAttemptResult) -> Tag {
@@ -851,8 +1127,7 @@ fn batch_status_tag(status: ReachabilityBatchStatus) -> Tag {
         }
         ReachabilityBatchStatus::Failed
         | ReachabilityBatchStatus::ParseError
-        | ReachabilityBatchStatus::ReadError
-        | ReachabilityBatchStatus::Cancelled => {
+        | ReachabilityBatchStatus::ReadError => {
             Tag::danger().small().rounded_full().child(status.label())
         }
         ReachabilityBatchStatus::NoEndpoint => Tag::secondary()

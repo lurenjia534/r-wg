@@ -5,29 +5,38 @@ use r_wg::backend::wg::tools::{
 };
 
 use crate::ui::state::{
-    ActiveConfigParseState, AsyncJobState, CidrViewModel, ToolsTab, ToolsWorkspace,
+    ActiveConfigParseState, AsyncJobState, CidrRequestSnapshot, CidrViewModel, ToolsTab,
+    ToolsWorkspace,
 };
 
 const CIDR_RESULT_LIMIT: usize = 1024;
 
 impl ToolsWorkspace {
+    pub(crate) fn current_cidr_request(&self, cx: &gpui::App) -> CidrRequestSnapshot {
+        CidrRequestSnapshot {
+            include_text: self
+                .cidr
+                .include_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+                .unwrap_or_default(),
+            exclude_text: self
+                .cidr
+                .exclude_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+                .unwrap_or_default(),
+        }
+    }
+
     pub(crate) fn compute_cidr(&mut self, cx: &mut Context<Self>) {
         if self.cidr.job.is_running() {
             return;
         }
 
-        let includes = self
-            .cidr
-            .include_input
-            .as_ref()
-            .map(|input| input.read(cx).value().to_string())
-            .unwrap_or_default();
-        let excludes = self
-            .cidr
-            .exclude_input
-            .as_ref()
-            .map(|input| input.read(cx).value().to_string())
-            .unwrap_or_default();
+        let request = self.current_cidr_request(cx);
+        let includes = request.include_text.clone();
+        let excludes = request.exclude_text.clone();
 
         self.cidr.generation = self.cidr.generation.wrapping_add(1);
         let generation = self.cidr.generation;
@@ -46,7 +55,7 @@ impl ToolsWorkspace {
                 if cancel.is_cancelled() {
                     return Err("cancelled".to_string());
                 }
-                Ok::<_, String>(CidrViewModel::from_result(result))
+                Ok::<_, String>(CidrViewModel::from_result(result, request))
             });
             let result = task.await;
             let _ = view.update(cx, |this, cx| {
@@ -116,8 +125,17 @@ impl ToolsWorkspace {
                         input.set_value(view_model.remaining_text.clone(), window, cx);
                     });
                 }
-                self.cidr.job = AsyncJobState::Ready(view_model);
+                if let Some(input) = self.cidr.exclude_input.as_ref() {
+                    input.update(cx, |input, cx| {
+                        input.set_value("", window, cx);
+                    });
+                }
+                let request = self.current_cidr_request(cx);
+                self.cidr.job = AsyncJobState::Ready(view_model.with_request(request));
                 self.active_tab = ToolsTab::Cidr;
+                let _ = self.app.update(cx, |app, cx| {
+                    app.push_success_toast("Loaded AllowedIPs into Include; Exclude cleared", window, cx);
+                });
                 cx.notify();
             }
             Err(message) => {
@@ -129,7 +147,7 @@ impl ToolsWorkspace {
 }
 
 impl CidrViewModel {
-    pub(crate) fn from_result(result: CidrExclusionResult) -> Self {
+    pub(crate) fn from_result(result: CidrExclusionResult, request: CidrRequestSnapshot) -> Self {
         let normalized_include_text = format_prefix_list(&result.normalized_includes).into();
         let normalized_exclude_text = format_prefix_list(&result.normalized_excludes).into();
         let remaining_text = format_prefix_list(&result.remaining).into();
@@ -140,6 +158,7 @@ impl CidrViewModel {
             .collect();
 
         Self {
+            request,
             normalized_include_text,
             normalized_exclude_text,
             remaining_text,
@@ -186,12 +205,25 @@ impl CidrViewModel {
         ];
 
         Self {
+            request: CidrRequestSnapshot {
+                include_text: String::new(),
+                exclude_text: String::new(),
+            },
             normalized_include_text: normalized_text.clone(),
             normalized_exclude_text: SharedString::from(""),
             remaining_text: normalized_text,
             allowed_ips_assignment,
             summary_rows,
         }
+    }
+
+    pub(crate) fn with_request(mut self, request: CidrRequestSnapshot) -> Self {
+        self.request = request;
+        self
+    }
+
+    pub(crate) fn has_remaining_prefixes(&self) -> bool {
+        !self.remaining_text.as_ref().trim().is_empty()
     }
 }
 

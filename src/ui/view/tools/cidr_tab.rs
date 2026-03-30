@@ -11,7 +11,9 @@ use gpui_component::{
 
 use crate::ui::state::{AsyncJobState, CidrViewModel, ToolsWorkspace};
 
-use super::components::{empty_result_state, error_banner, readonly_text_block, summary_block};
+use super::components::{
+    empty_result_state, error_banner, readonly_text_block, summary_block, warning_banner,
+};
 
 pub(super) fn render_cidr_tab(
     workspace: &ToolsWorkspace,
@@ -29,6 +31,7 @@ pub(super) fn render_cidr_tab(
         .exclude_input
         .clone()
         .expect("cidr exclude input should exist");
+    let inputs_disabled = workspace.cidr.job.is_running();
 
     let form = v_flex()
         .gap_3()
@@ -36,7 +39,8 @@ pub(super) fn render_cidr_tab(
             "Include",
             "Routes you want to keep before exclusions are applied.",
             &include_input,
-            render_cidr_prefill_action(workspace, window, cx),
+            render_cidr_prefill_action(workspace, window, inputs_disabled, cx),
+            inputs_disabled,
             cx,
         ))
         .child(render_editor_box(
@@ -44,6 +48,7 @@ pub(super) fn render_cidr_tab(
             "Routes to subtract from the include set. Supports single IPs and CIDR.",
             &exclude_input,
             None,
+            inputs_disabled,
             cx,
         ))
         .child(
@@ -74,7 +79,7 @@ pub(super) fn render_cidr_tab(
                 ),
         );
 
-    let result = render_cidr_result_panel(workspace, cx);
+    let result = render_cidr_result_panel(workspace, stack, cx);
 
     if stack {
         div()
@@ -88,12 +93,12 @@ pub(super) fn render_cidr_tab(
     } else {
         div()
             .flex()
-            .flex_col()
-            .gap_3()
+            .gap_4()
             .flex_1()
             .min_h(px(0.0))
-            .child(form)
-            .child(result)
+            .items_start()
+            .child(div().w(px(460.0)).min_w(px(360.0)).max_w(px(520.0)).child(form))
+            .child(div().flex_1().min_w(px(0.0)).child(result))
     }
 }
 
@@ -102,6 +107,7 @@ fn render_editor_box(
     description: &str,
     input: &Entity<gpui_component::input::InputState>,
     action: Option<AnyElement>,
+    disabled: bool,
     cx: &mut Context<ToolsWorkspace>,
 ) -> GroupBox {
     GroupBox::new().fill().title(title.to_string()).child(
@@ -130,7 +136,13 @@ fn render_editor_box(
                     .bg(cx.theme().group_box)
                     .px_2()
                     .py_2()
-                    .child(Input::new(input).appearance(false).bordered(false).h_full()),
+                    .child(
+                        Input::new(input)
+                            .appearance(false)
+                            .bordered(false)
+                            .disabled(disabled)
+                            .h_full(),
+                    ),
             ),
     )
 }
@@ -138,6 +150,7 @@ fn render_editor_box(
 fn render_cidr_prefill_action(
     workspace: &ToolsWorkspace,
     _window: &mut Window,
+    disabled: bool,
     cx: &mut Context<ToolsWorkspace>,
 ) -> Option<AnyElement> {
     let Some(parsed) = workspace.active_config.parsed_config() else {
@@ -173,6 +186,7 @@ fn render_cidr_prefill_action(
                 .label("Load from active config")
                 .outline()
                 .xsmall()
+                .disabled(disabled)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.load_cidr_prefill_peer(peer_index, window, cx);
                 }))
@@ -185,6 +199,7 @@ fn render_cidr_prefill_action(
             .label("Load from active config")
             .outline()
             .xsmall()
+            .disabled(disabled)
             .dropdown_caret(true)
             .dropdown_menu_with_anchor(Corner::TopRight, {
                 let workspace = cx.entity();
@@ -219,8 +234,15 @@ fn render_cidr_prefill_action(
 
 fn render_cidr_result_panel(
     workspace: &ToolsWorkspace,
+    stack: bool,
     cx: &mut Context<ToolsWorkspace>,
 ) -> GroupBox {
+    let stale_message = match &workspace.cidr.job {
+        AsyncJobState::Ready(result) if workspace.current_cidr_request(cx) != result.request => {
+            Some("Inputs changed since this result was produced. Re-run Compute to refresh.")
+        }
+        _ => None,
+    };
     let result_actions = match &workspace.cidr.job {
         AsyncJobState::Ready(result) => Some(
             h_flex()
@@ -250,6 +272,7 @@ fn render_cidr_result_panel(
                         .label("Copy as AllowedIPs")
                         .outline()
                         .xsmall()
+                        .disabled(!result.has_remaining_prefixes())
                         .on_click({
                             let app = workspace.app.clone();
                             let payload = result.allowed_ips_assignment.clone();
@@ -270,6 +293,9 @@ fn render_cidr_result_panel(
     GroupBox::new().fill().title("CIDR Result".to_string()).child(
         v_flex()
             .gap_3()
+            .when_some(stale_message, |this, message| {
+                this.child(warning_banner(message, cx))
+            })
             .when_some(result_actions, |this, actions| this.child(actions))
             .child(match &workspace.cidr.job {
                 AsyncJobState::Idle => empty_result_state(
@@ -280,16 +306,20 @@ fn render_cidr_result_panel(
                 AsyncJobState::Running { .. } => empty_result_state("CIDR computation is running…", cx)
                     .into_any_element(),
                 AsyncJobState::Failed(message) => error_banner(message.clone(), cx).into_any_element(),
-                AsyncJobState::Ready(result) => render_cidr_result_sections(result, cx).into_any_element(),
+                AsyncJobState::Ready(result) => render_cidr_result_sections(result, stack, cx).into_any_element(),
             }),
     )
 }
 
-fn render_cidr_result_sections(result: &CidrViewModel, cx: &mut Context<ToolsWorkspace>) -> Div {
+fn render_cidr_result_sections(
+    result: &CidrViewModel,
+    stack: bool,
+    cx: &mut Context<ToolsWorkspace>,
+) -> Div {
     div()
         .grid()
         .gap_3()
-        .grid_cols(2)
+        .grid_cols(if stack { 1 } else { 2 })
         .child(readonly_text_block(
             "Remaining CIDRs",
             result.remaining_text.as_ref(),

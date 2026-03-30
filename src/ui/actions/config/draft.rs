@@ -8,7 +8,7 @@ impl WgApp {
             cx.notify();
         });
         self.refresh_configs_workspace_row_flags(cx);
-        self.refresh_tools_active_config(cx);
+        self.sync_tools_active_config_snapshot(cx);
     }
 
     pub(super) fn set_saved_draft(
@@ -27,7 +27,7 @@ impl WgApp {
         });
         self.refresh_configs_workspace_row_flags(cx);
         self.apply_draft_validation(cx);
-        self.refresh_tools_active_config(cx);
+        self.sync_tools_active_config_snapshot(cx);
     }
 
     pub(super) fn set_unsaved_draft(
@@ -45,7 +45,7 @@ impl WgApp {
         });
         self.refresh_configs_workspace_row_flags(cx);
         self.apply_draft_validation(cx);
-        self.refresh_tools_active_config(cx);
+        self.sync_tools_active_config_snapshot(cx);
     }
 
     pub(crate) fn sync_draft_from_inputs(&mut self, cx: &mut Context<Self>) {

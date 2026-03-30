@@ -77,7 +77,7 @@ impl WgApp {
         self.selection.selected_id = selected_id;
         self.selection.selection_revision = self.selection.selection_revision.wrapping_add(1);
         self.sync_configs_selection_snapshot(cx);
-        self.refresh_tools_active_config(cx);
+        self.sync_tools_active_config_snapshot(cx);
         true
     }
 

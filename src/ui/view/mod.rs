@@ -122,6 +122,7 @@ impl Render for WgApp {
                     }
                     SidebarItem::Tools => {
                         let workspace = self.ensure_tools_workspace(window, cx);
+                        self.refresh_tools_active_config_for_display(cx);
                         div()
                             .flex()
                             .flex_1()

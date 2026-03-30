@@ -253,6 +253,6 @@ impl WgApp {
             config_input.update(cx, |input, cx| input.set_value("", window, cx));
         }
         self.sync_configs_selection_snapshot(cx);
-        self.refresh_tools_active_config(cx);
+        self.sync_tools_active_config_snapshot(cx);
     }
 }

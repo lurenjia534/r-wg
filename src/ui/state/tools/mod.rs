@@ -102,6 +102,7 @@ pub(crate) struct ToolsWorkspace {
     pub(crate) active_config: ActiveConfigSnapshot,
     pub(crate) active_config_generation: u64,
     pub(crate) active_config_cancel: Option<JobCancelHandle>,
+    pub(crate) active_config_refresh_pending: bool,
     pub(crate) cidr: CidrToolState,
     pub(crate) reachability: ReachabilityToolState,
 }
@@ -114,6 +115,7 @@ impl ToolsWorkspace {
             active_config: ActiveConfigSnapshot::default(),
             active_config_generation: 0,
             active_config_cancel: None,
+            active_config_refresh_pending: true,
             cidr: CidrToolState::default(),
             reachability: ReachabilityToolState::default(),
         }

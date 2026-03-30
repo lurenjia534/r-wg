@@ -33,17 +33,24 @@ impl WgApp {
         workspace.update(cx, |workspace, cx| {
             workspace.ensure_inputs(window, cx);
         });
-        self.refresh_tools_active_config(cx);
         workspace
     }
 
-    pub(crate) fn refresh_tools_active_config(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_tools_active_config_snapshot(&mut self, cx: &mut Context<Self>) {
+        self.update_tools_active_config(false, cx);
+    }
+
+    pub(crate) fn refresh_tools_active_config_for_display(&mut self, cx: &mut Context<Self>) {
+        self.update_tools_active_config(true, cx);
+    }
+
+    fn update_tools_active_config(&mut self, allow_parse: bool, cx: &mut Context<Self>) {
         let Some(workspace) = self.ui.tools_workspace.clone() else {
             return;
         };
         let bridge = self.build_active_config_bridge(cx);
         workspace.update(cx, |workspace, cx| {
-            workspace.sync_active_config_bridge(bridge, cx);
+            workspace.sync_active_config_bridge(bridge, allow_parse, cx);
         });
     }
 
@@ -242,7 +249,7 @@ impl ToolsWorkspace {
                 &input,
                 |this, _, event: &InputEvent, cx: &mut gpui::Context<Self>| {
                     if matches!(event, InputEvent::Change)
-                        && this.reachability.form_error.take().is_some()
+                        && this.reachability.single_error.take().is_some()
                     {
                         cx.notify();
                     }
@@ -258,7 +265,7 @@ impl ToolsWorkspace {
                 &input,
                 |this, _, event: &InputEvent, cx: &mut gpui::Context<Self>| {
                     if matches!(event, InputEvent::Change)
-                        && this.reachability.form_error.take().is_some()
+                        && this.reachability.single_error.take().is_some()
                     {
                         cx.notify();
                     }
@@ -268,7 +275,7 @@ impl ToolsWorkspace {
             self.reachability.port_subscription = Some(subscription);
         }
 
-        if self.reachability.timeout_input.is_none() {
+        if self.reachability.single_timeout_input.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("1500"));
             input.update(cx, |input, cx| {
                 input.set_value("1500", window, cx);
@@ -277,20 +284,40 @@ impl ToolsWorkspace {
                 &input,
                 |this, _, event: &InputEvent, cx: &mut gpui::Context<Self>| {
                     if matches!(event, InputEvent::Change)
-                        && this.reachability.form_error.take().is_some()
+                        && this.reachability.single_error.take().is_some()
                     {
                         cx.notify();
                     }
                 },
             );
-            self.reachability.timeout_input = Some(input);
-            self.reachability.timeout_subscription = Some(subscription);
+            self.reachability.single_timeout_input = Some(input);
+            self.reachability.single_timeout_subscription = Some(subscription);
+        }
+
+        if self.reachability.audit_timeout_input.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("1500"));
+            input.update(cx, |input, cx| {
+                input.set_value("1500", window, cx);
+            });
+            let subscription = cx.subscribe(
+                &input,
+                |this, _, event: &InputEvent, cx: &mut gpui::Context<Self>| {
+                    if matches!(event, InputEvent::Change)
+                        && this.reachability.audit_error.take().is_some()
+                    {
+                        cx.notify();
+                    }
+                },
+            );
+            self.reachability.audit_timeout_input = Some(input);
+            self.reachability.audit_timeout_subscription = Some(subscription);
         }
     }
 
     fn sync_active_config_bridge(
         &mut self,
         bridge: ActiveConfigBridge,
+        allow_parse: bool,
         cx: &mut gpui::Context<Self>,
     ) {
         let same_identity = self.active_config.identity == bridge.snapshot.identity;
@@ -300,16 +327,37 @@ impl ToolsWorkspace {
                 ActiveConfigParseState::Ready(_) | ActiveConfigParseState::Invalid(_)
             )
             && matches!(bridge.snapshot.parse_state, ActiveConfigParseState::Loading);
+        let should_spawn_parse = allow_parse && bridge.request.is_some() && !can_keep_parse_state;
+        let parse_state = if bridge.request.is_none() {
+            bridge.snapshot.parse_state.clone()
+        } else if can_keep_parse_state {
+            self.active_config.parse_state.clone()
+        } else if should_spawn_parse {
+            ActiveConfigParseState::Loading
+        } else {
+            ActiveConfigParseState::None
+        };
+        let refresh_pending = bridge.request.is_some() && !can_keep_parse_state && !should_spawn_parse;
 
-        if bridge.request.is_none() || can_keep_parse_state {
+        if self.active_config.identity == bridge.snapshot.identity
+            && self.active_config.source == bridge.snapshot.source
+            && self.active_config.source_label == bridge.snapshot.source_label
+            && active_config_parse_state_matches(&self.active_config.parse_state, &parse_state)
+            && self.active_config_refresh_pending == refresh_pending
+        {
+            return;
+        }
+
+        if !should_spawn_parse {
             let parse_state = if can_keep_parse_state {
                 self.active_config.parse_state.clone()
             } else {
-                bridge.snapshot.parse_state
+                parse_state
             };
             self.active_config_cancel
                 .take()
                 .map(|cancel| cancel.cancel());
+            self.active_config_refresh_pending = refresh_pending;
             self.active_config = ActiveConfigSnapshot {
                 revision: self.active_config.revision.wrapping_add(1),
                 identity: bridge.snapshot.identity,
@@ -329,6 +377,7 @@ impl ToolsWorkspace {
             .take()
             .map(|existing| existing.cancel());
         self.active_config_cancel = Some(cancel.clone());
+        self.active_config_refresh_pending = false;
         let source_label = bridge.snapshot.source_label.clone();
         self.active_config = ActiveConfigSnapshot {
             revision: self.active_config.revision.wrapping_add(1),
@@ -367,6 +416,7 @@ impl ToolsWorkspace {
                             parse_state: ActiveConfigParseState::Ready(Arc::new(parsed)),
                         };
                         this.active_config_cancel = None;
+                        this.active_config_refresh_pending = false;
                     }
                     Err(message) if message == "cancelled" => {}
                     Err(message) => {
@@ -378,12 +428,26 @@ impl ToolsWorkspace {
                             parse_state: ActiveConfigParseState::Invalid(message.into()),
                         };
                         this.active_config_cancel = None;
+                        this.active_config_refresh_pending = false;
                     }
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+}
+
+fn active_config_parse_state_matches(
+    left: &ActiveConfigParseState,
+    right: &ActiveConfigParseState,
+) -> bool {
+    match (left, right) {
+        (ActiveConfigParseState::None, ActiveConfigParseState::None)
+        | (ActiveConfigParseState::Loading, ActiveConfigParseState::Loading)
+        | (ActiveConfigParseState::Ready(_), ActiveConfigParseState::Ready(_)) => true,
+        (ActiveConfigParseState::Invalid(left), ActiveConfigParseState::Invalid(right)) => left == right,
+        _ => false,
     }
 }
 

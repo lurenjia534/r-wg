@@ -1,7 +1,8 @@
 use gpui::{Entity, SharedString, Subscription};
 use gpui_component::input::InputState;
 use r_wg::backend::wg::tools::{
-    AddressFamilyPreference, ReachabilityMode, ReachabilityResult, ReachabilityVerdict,
+    AddressFamilyPreference, ReachabilityMode, ReachabilityRequest, ReachabilityResult,
+    ReachabilityVerdict,
 };
 
 use super::AsyncJobState;
@@ -49,7 +50,6 @@ impl ReachabilityAuditFilter {
                 ReachabilityBatchStatus::ParseError
                     | ReachabilityBatchStatus::ReadError
                     | ReachabilityBatchStatus::NoEndpoint
-                    | ReachabilityBatchStatus::Cancelled
             ),
         }
     }
@@ -92,6 +92,14 @@ impl Default for ReachabilityFormState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReachabilityAuditRequest {
+    pub(crate) mode: ReachabilityMode,
+    pub(crate) family_preference: AddressFamilyPreference,
+    pub(crate) stop_on_first_success: bool,
+    pub(crate) timeout_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReachabilityBatchStatus {
     Resolved,
     Reachable,
@@ -100,7 +108,6 @@ pub(crate) enum ReachabilityBatchStatus {
     ParseError,
     ReadError,
     NoEndpoint,
-    Cancelled,
 }
 
 impl ReachabilityBatchStatus {
@@ -113,7 +120,6 @@ impl ReachabilityBatchStatus {
             Self::ParseError => "Parse Error",
             Self::ReadError => "Read Error",
             Self::NoEndpoint => "No Endpoint",
-            Self::Cancelled => "Cancelled",
         }
     }
 
@@ -140,6 +146,7 @@ pub(crate) struct ReachabilityBatchRow {
 pub(crate) struct ReachabilityBatchResult {
     pub(crate) total_configs: usize,
     pub(crate) endpoint_rows: usize,
+    pub(crate) resolved_rows: usize,
     pub(crate) reachable_rows: usize,
     pub(crate) partial_rows: usize,
     pub(crate) failed_rows: usize,
@@ -157,24 +164,33 @@ pub(crate) struct ReachabilityAuditProgress {
 }
 
 pub(crate) struct ReachabilitySingleViewModel {
+    pub(crate) request: ReachabilityRequest,
     pub(crate) result: ReachabilityResult,
 }
 
 pub(crate) struct ReachabilityAuditViewModel {
+    pub(crate) request: ReachabilityAuditRequest,
     pub(crate) result: ReachabilityBatchResult,
 }
 
 pub(crate) struct ReachabilityToolState {
     pub(crate) target_input: Option<Entity<InputState>>,
     pub(crate) port_input: Option<Entity<InputState>>,
-    pub(crate) timeout_input: Option<Entity<InputState>>,
+    pub(crate) single_timeout_input: Option<Entity<InputState>>,
+    pub(crate) audit_timeout_input: Option<Entity<InputState>>,
     pub(crate) target_subscription: Option<Subscription>,
     pub(crate) port_subscription: Option<Subscription>,
-    pub(crate) timeout_subscription: Option<Subscription>,
+    pub(crate) single_timeout_subscription: Option<Subscription>,
+    pub(crate) audit_timeout_subscription: Option<Subscription>,
     pub(crate) active_tab: ReachabilityTab,
-    pub(crate) form: ReachabilityFormState,
-    pub(crate) form_error: Option<SharedString>,
+    pub(crate) single_form: ReachabilityFormState,
+    pub(crate) single_error: Option<SharedString>,
+    pub(crate) audit_form: ReachabilityFormState,
+    pub(crate) audit_error: Option<SharedString>,
+    pub(crate) audit_notice: Option<SharedString>,
+    pub(crate) audit_cancelling: bool,
     pub(crate) audit_filter: ReachabilityAuditFilter,
+    pub(crate) audit_page: usize,
     pub(crate) audit_progress: Option<ReachabilityAuditProgress>,
     pub(crate) single_generation: u64,
     pub(crate) single: AsyncJobState<ReachabilitySingleViewModel>,
@@ -187,14 +203,21 @@ impl Default for ReachabilityToolState {
         Self {
             target_input: None,
             port_input: None,
-            timeout_input: None,
+            single_timeout_input: None,
+            audit_timeout_input: None,
             target_subscription: None,
             port_subscription: None,
-            timeout_subscription: None,
+            single_timeout_subscription: None,
+            audit_timeout_subscription: None,
             active_tab: ReachabilityTab::Single,
-            form: ReachabilityFormState::default(),
-            form_error: None,
+            single_form: ReachabilityFormState::default(),
+            single_error: None,
+            audit_form: ReachabilityFormState::default(),
+            audit_error: None,
+            audit_notice: None,
+            audit_cancelling: false,
             audit_filter: ReachabilityAuditFilter::All,
+            audit_page: 0,
             audit_progress: None,
             single_generation: 0,
             single: AsyncJobState::Idle,

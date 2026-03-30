@@ -34,6 +34,19 @@ pub(super) fn error_banner<T>(message: impl Into<SharedString>, cx: &mut Context
         .child(message.into())
 }
 
+pub(super) fn warning_banner<T>(message: impl Into<SharedString>, cx: &mut Context<T>) -> Div {
+    div()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().warning.alpha(0.45))
+        .bg(cx.theme().warning.alpha(0.08))
+        .px_3()
+        .py_2()
+        .text_sm()
+        .text_color(cx.theme().warning)
+        .child(message.into())
+}
+
 pub(super) fn readonly_text_block<T>(
     title: &str,
     content: &str,

@@ -4,34 +4,115 @@ use r_wg::backend::wg::tools::{
 };
 
 use crate::ui::state::{
-    ActiveConfigParseState, AsyncJobState, ReachabilityAuditFilter, ReachabilitySingleViewModel,
-    ReachabilityTab, ToolsTab, ToolsWorkspace,
+    ActiveConfigParseState, AsyncJobState, ReachabilityAuditFilter, ReachabilityAuditRequest,
+    ReachabilitySingleViewModel, ReachabilityTab, ToolsTab, ToolsWorkspace,
 };
 
 const REACHABILITY_DEFAULT_TIMEOUT_MS: &str = "1500";
 
 impl ToolsWorkspace {
-    pub(crate) fn set_reachability_mode(&mut self, value: ReachabilityMode) -> bool {
-        if self.reachability.form.mode == value {
+    pub(crate) fn current_reachability_request_snapshot(
+        &self,
+        cx: &gpui::App,
+    ) -> Result<ReachabilityRequest, String> {
+        let target = self
+            .reachability
+            .target_input
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string())
+            .unwrap_or_default();
+        let port_override = parse_optional_u16(
+            self.reachability
+                .port_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+                .unwrap_or_default()
+                .trim(),
+        )?;
+        let timeout_ms = parse_timeout_ms(
+            self.reachability
+                .single_timeout_input
+                .as_ref()
+                .map(|input| input.read(cx).value().to_string())
+                .unwrap_or_else(|| REACHABILITY_DEFAULT_TIMEOUT_MS.to_string())
+                .trim(),
+        )?;
+
+        Ok(ReachabilityRequest {
+            target,
+            mode: self.reachability.single_form.mode,
+            port_override,
+            family_preference: self.reachability.single_form.family_preference,
+            timeout_ms,
+            max_addresses: 8,
+            stop_on_first_success: self.reachability.single_form.stop_on_first_success,
+        })
+    }
+
+    pub(crate) fn current_reachability_audit_request(
+        &self,
+        cx: &gpui::App,
+    ) -> Result<ReachabilityAuditRequest, String> {
+        Ok(ReachabilityAuditRequest {
+            mode: self.reachability.audit_form.mode,
+            family_preference: self.reachability.audit_form.family_preference,
+            stop_on_first_success: self.reachability.audit_form.stop_on_first_success,
+            timeout_ms: parse_timeout_ms(
+                self.reachability
+                    .audit_timeout_input
+                    .as_ref()
+                    .map(|input| input.read(cx).value().to_string())
+                    .unwrap_or_else(|| REACHABILITY_DEFAULT_TIMEOUT_MS.to_string())
+                    .trim(),
+            )?,
+        })
+    }
+
+    pub(crate) fn set_single_reachability_mode(&mut self, value: ReachabilityMode) -> bool {
+        if self.reachability.single_form.mode == value {
             return false;
         }
-        self.reachability.form.mode = value;
+        self.reachability.single_form.mode = value;
         true
     }
 
-    pub(crate) fn set_family_preference(&mut self, value: AddressFamilyPreference) -> bool {
-        if self.reachability.form.family_preference == value {
+    pub(crate) fn set_single_family_preference(&mut self, value: AddressFamilyPreference) -> bool {
+        if self.reachability.single_form.family_preference == value {
             return false;
         }
-        self.reachability.form.family_preference = value;
+        self.reachability.single_form.family_preference = value;
         true
     }
 
-    pub(crate) fn set_stop_on_first_success(&mut self, value: bool) -> bool {
-        if self.reachability.form.stop_on_first_success == value {
+    pub(crate) fn set_single_stop_on_first_success(&mut self, value: bool) -> bool {
+        if self.reachability.single_form.stop_on_first_success == value {
             return false;
         }
-        self.reachability.form.stop_on_first_success = value;
+        self.reachability.single_form.stop_on_first_success = value;
+        true
+    }
+
+    pub(crate) fn set_audit_reachability_mode(&mut self, value: ReachabilityMode) -> bool {
+        if self.reachability.audit_form.mode == value {
+            return false;
+        }
+        self.reachability.audit_form.mode = value;
+        true
+    }
+
+    pub(crate) fn set_audit_family_preference(&mut self, value: AddressFamilyPreference) -> bool {
+        if self.reachability.audit_form.family_preference == value {
+            return false;
+        }
+        self.reachability.audit_form.family_preference = value;
+        true
+    }
+
+    pub(crate) fn set_audit_stop_on_first_success(&mut self, value: bool) -> bool {
+        if self.reachability.audit_form.stop_on_first_success == value {
+            return false;
+        }
+        self.reachability.audit_form.stop_on_first_success = value;
         true
     }
 
@@ -48,6 +129,15 @@ impl ToolsWorkspace {
             return false;
         }
         self.reachability.audit_filter = value;
+        self.reachability.audit_page = 0;
+        true
+    }
+
+    pub(crate) fn set_reachability_audit_page(&mut self, value: usize) -> bool {
+        if self.reachability.audit_page == value {
+            return false;
+        }
+        self.reachability.audit_page = value;
         true
     }
 
@@ -63,7 +153,7 @@ impl ToolsWorkspace {
         self.reachability.single_generation = self.reachability.single_generation.wrapping_add(1);
         let generation = self.reachability.single_generation;
         let cancel = self.reachability.single.set_running(generation);
-        self.reachability.form_error = None;
+        self.reachability.single_error = None;
         cx.notify();
 
         cx.spawn(async move |view, cx| {
@@ -71,11 +161,12 @@ impl ToolsWorkspace {
                 if cancel.is_cancelled() {
                     return Err("cancelled".to_string());
                 }
-                let result = probe_reachability_blocking(request).map_err(|err| err.to_string())?;
+                let result =
+                    probe_reachability_blocking(request.clone()).map_err(|err| err.to_string())?;
                 if cancel.is_cancelled() {
                     return Err("cancelled".to_string());
                 }
-                Ok::<_, String>(ReachabilitySingleViewModel { result })
+                Ok::<_, String>(ReachabilitySingleViewModel { request, result })
             });
             let result = task.await;
             let _ = view.update(cx, |this, cx| {
@@ -104,7 +195,7 @@ impl ToolsWorkspace {
         cx: &mut Context<Self>,
     ) {
         let Some(parsed) = self.active_config.parsed_config() else {
-            self.reachability.form_error = Some(active_config_unavailable_message(self).into());
+            self.reachability.single_error = Some(active_config_unavailable_message(self).into());
             cx.notify();
             return;
         };
@@ -115,7 +206,7 @@ impl ToolsWorkspace {
             .cloned();
 
         let Some(endpoint) = endpoint else {
-            self.reachability.form_error = Some("The selected peer has no endpoint.".into());
+            self.reachability.single_error = Some("The selected peer has no endpoint.".into());
             cx.notify();
             return;
         };
@@ -130,16 +221,20 @@ impl ToolsWorkspace {
                 input.set_value("", window, cx);
             });
         }
-        self.reachability.form.mode = ReachabilityMode::TcpConnect;
-        self.reachability.form_error = None;
+        self.reachability.single_form.mode = ReachabilityMode::TcpConnect;
+        self.reachability.single_error = None;
         self.active_tab = ToolsTab::Reachability;
         self.reachability.active_tab = ReachabilityTab::Single;
         cx.notify();
     }
 
     pub(crate) fn cancel_reachability_audit(&mut self, cx: &mut Context<Self>) {
+        if !self.reachability.audit.is_running() || self.reachability.audit_cancelling {
+            return;
+        }
         self.reachability.audit.cancel();
-        self.reachability.audit_progress = None;
+        self.reachability.audit_cancelling = true;
+        self.reachability.audit_notice = None;
         cx.notify();
     }
 
@@ -147,52 +242,14 @@ impl ToolsWorkspace {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<ReachabilityRequest> {
-        let target = self
-            .reachability
-            .target_input
-            .as_ref()
-            .map(|input| input.read(cx).value().to_string())
-            .unwrap_or_default();
-        let port_override = match parse_optional_u16(
-            self.reachability
-                .port_input
-                .as_ref()
-                .map(|input| input.read(cx).value().to_string())
-                .unwrap_or_default()
-                .trim(),
-        ) {
-            Ok(value) => value,
+        match self.current_reachability_request_snapshot(cx) {
+            Ok(request) => Some(request),
             Err(message) => {
-                self.reachability.form_error = Some(message.into());
+                self.reachability.single_error = Some(message.into());
                 cx.notify();
-                return None;
+                None
             }
-        };
-        let timeout_ms = match parse_timeout_ms(
-            self.reachability
-                .timeout_input
-                .as_ref()
-                .map(|input| input.read(cx).value().to_string())
-                .unwrap_or_else(|| REACHABILITY_DEFAULT_TIMEOUT_MS.to_string())
-                .trim(),
-        ) {
-            Ok(value) => value,
-            Err(message) => {
-                self.reachability.form_error = Some(message.into());
-                cx.notify();
-                return None;
-            }
-        };
-
-        Some(ReachabilityRequest {
-            target,
-            mode: self.reachability.form.mode,
-            port_override,
-            family_preference: self.reachability.form.family_preference,
-            timeout_ms,
-            max_addresses: 8,
-            stop_on_first_success: self.reachability.form.stop_on_first_success,
-        })
+        }
     }
 }
 
