@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use tokio::net::{lookup_host, TcpStream};
 use tokio::runtime::Builder;
-use tokio::time::{timeout, Duration};
+use tokio::time::{sleep, timeout, Duration};
 
 use crate::backend::wg::config::Endpoint;
 
@@ -221,6 +221,28 @@ pub fn probe_reachability_blocking(
     runtime.block_on(probe_reachability(request))
 }
 
+pub async fn probe_reachability_until_cancel(
+    request: ReachabilityRequest,
+    is_cancelled: impl Fn() -> bool + Send + Sync + 'static,
+) -> Result<ReachabilityResult, String> {
+    tokio::select! {
+        _ = wait_for_cancel(is_cancelled) => Err("cancelled".to_string()),
+        result = probe_reachability(request) => result.map_err(|err| err.to_string()),
+    }
+}
+
+pub fn probe_reachability_blocking_until_cancel(
+    request: ReachabilityRequest,
+    is_cancelled: impl Fn() -> bool + Send + Sync + 'static,
+) -> Result<ReachabilityResult, String> {
+    let runtime = Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|err| format!("failed to initialize reachability runtime: {err}"))?;
+    runtime.block_on(probe_reachability_until_cancel(request, is_cancelled))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NormalizedRequest {
     host: String,
@@ -249,7 +271,7 @@ fn normalize_request(request: &ReachabilityRequest) -> Result<NormalizedRequest,
     }
 
     let display_target = match port {
-        Some(port) => format_endpoint_text(&host, port),
+        Some(port) => format_endpoint_display_parts(&host, port),
         None => host.clone(),
     };
 
@@ -337,7 +359,11 @@ fn order_addresses(
     ordered
 }
 
-fn format_endpoint_text(host: &str, port: u16) -> String {
+pub fn format_endpoint_display(endpoint: &Endpoint) -> String {
+    format_endpoint_display_parts(&endpoint.host, endpoint.port)
+}
+
+fn format_endpoint_display_parts(host: &str, port: u16) -> String {
     if host.contains(':')
         && host
             .parse::<IpAddr>()
@@ -347,6 +373,12 @@ fn format_endpoint_text(host: &str, port: u16) -> String {
         format!("[{host}]:{port}")
     } else {
         format!("{host}:{port}")
+    }
+}
+
+async fn wait_for_cancel(is_cancelled: impl Fn() -> bool) {
+    while !is_cancelled() {
+        sleep(Duration::from_millis(25)).await;
     }
 }
 

@@ -8,9 +8,10 @@ pub use cidr::{
     CidrExclusionStats, CidrNormalizationResult, CidrNormalizationStats,
 };
 pub use reachability::{
-    probe_reachability, probe_reachability_blocking, AddressFamilyPreference, ReachabilityAttempt,
-    ReachabilityAttemptResult, ReachabilityMode, ReachabilityRequest, ReachabilityResult,
-    ReachabilityVerdict,
+    format_endpoint_display, probe_reachability, probe_reachability_blocking,
+    probe_reachability_blocking_until_cancel, probe_reachability_until_cancel,
+    AddressFamilyPreference, ReachabilityAttempt, ReachabilityAttemptResult, ReachabilityMode,
+    ReachabilityRequest, ReachabilityResult, ReachabilityVerdict,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

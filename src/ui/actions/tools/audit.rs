@@ -6,11 +6,11 @@ use std::{
 use futures_util::stream::{self, StreamExt as _, TryStreamExt as _};
 use gpui::{AppContext as _, Context, Timer};
 use r_wg::backend::wg::config::{self, PeerConfig};
-use r_wg::backend::wg::tools::{probe_reachability, ReachabilityRequest};
+use r_wg::backend::wg::tools::format_endpoint_display;
 use tokio::runtime::Builder;
-use tokio::time::sleep;
 
 use super::active_config::resolve_active_config_text_request;
+use super::reachability::run_reachability_probe_with_cancel;
 use crate::ui::state::{
     AsyncJobState, JobCancelHandle, ReachabilityAuditPhase, ReachabilityAuditProgress,
     ReachabilityAuditRequest, ReachabilityAuditViewModel, ReachabilityBatchResult,
@@ -220,7 +220,7 @@ async fn build_batch_reachability_result(
             jobs.push(BatchEndpointJob {
                 config_name: config_name.clone(),
                 peer_label: peer_label(index, peer),
-                target: super::reachability::format_endpoint_text(endpoint),
+                target: format_endpoint_display(endpoint),
             });
         }
 
@@ -254,7 +254,7 @@ async fn build_batch_reachability_result(
                 return Err("cancelled".to_string());
             }
 
-            let probe_request = ReachabilityRequest {
+            let probe_request = r_wg::backend::wg::tools::ReachabilityRequest {
                 target: job.target.clone(),
                 mode: request.mode,
                 port_override: None,
@@ -263,10 +263,7 @@ async fn build_batch_reachability_result(
                 max_addresses: 8,
                 stop_on_first_success: request.stop_on_first_success,
             };
-            let probe_result = tokio::select! {
-                _ = wait_for_cancel(cancel.clone()) => Err("cancelled".to_string()),
-                result = probe_reachability(probe_request) => result.map_err(|err| err.to_string()),
-            };
+            let probe_result = run_reachability_probe_with_cancel(probe_request, cancel.clone());
 
             let row = match probe_result {
                 Ok(result) => ReachabilityBatchRow {
@@ -384,12 +381,6 @@ fn progress_snapshot(progress: &SharedAuditProgress) -> ReachabilityAuditProgres
         .lock()
         .expect("audit progress lock poisoned")
         .clone()
-}
-
-async fn wait_for_cancel(cancel: JobCancelHandle) {
-    while !cancel.is_cancelled() {
-        sleep(Duration::from_millis(25)).await;
-    }
 }
 
 fn peer_label(index: usize, peer: &PeerConfig) -> String {

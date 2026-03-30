@@ -1,11 +1,13 @@
 use gpui::{AppContext as _, Context, Window};
 use r_wg::backend::wg::tools::{
-    probe_reachability_blocking, AddressFamilyPreference, ReachabilityMode, ReachabilityRequest,
+    format_endpoint_display, probe_reachability_blocking_until_cancel, AddressFamilyPreference,
+    ReachabilityMode, ReachabilityRequest,
 };
 
 use crate::ui::state::{
-    ActiveConfigParseState, AsyncJobState, ReachabilityAuditFilter, ReachabilityAuditRequest,
-    ReachabilitySingleViewModel, ReachabilityTab, ToolsTab, ToolsWorkspace,
+    ActiveConfigParseState, AsyncJobState, JobCancelHandle, ReachabilityAuditFilter,
+    ReachabilityAuditRequest, ReachabilitySingleViewModel, ReachabilityTab, ToolsTab,
+    ToolsWorkspace,
 };
 
 const REACHABILITY_DEFAULT_TIMEOUT_MS: &str = "1500";
@@ -161,11 +163,7 @@ impl ToolsWorkspace {
                 if cancel.is_cancelled() {
                     return Err("cancelled".to_string());
                 }
-                let result =
-                    probe_reachability_blocking(request.clone()).map_err(|err| err.to_string())?;
-                if cancel.is_cancelled() {
-                    return Err("cancelled".to_string());
-                }
+                let result = run_reachability_probe_with_cancel(request.clone(), cancel.clone())?;
                 Ok::<_, String>(ReachabilitySingleViewModel { request, result })
             });
             let result = task.await;
@@ -213,7 +211,7 @@ impl ToolsWorkspace {
 
         if let Some(input) = self.reachability.target_input.as_ref() {
             input.update(cx, |input, cx| {
-                input.set_value(format_endpoint_text(&endpoint), window, cx);
+                input.set_value(format_endpoint_display(&endpoint), window, cx);
             });
         }
         if let Some(input) = self.reachability.port_input.as_ref() {
@@ -253,6 +251,13 @@ impl ToolsWorkspace {
     }
 }
 
+pub(super) fn run_reachability_probe_with_cancel(
+    request: ReachabilityRequest,
+    cancel: JobCancelHandle,
+) -> Result<r_wg::backend::wg::tools::ReachabilityResult, String> {
+    probe_reachability_blocking_until_cancel(request, move || cancel.is_cancelled())
+}
+
 pub(super) fn parse_optional_u16(value: &str) -> Result<Option<u16>, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -282,20 +287,6 @@ pub(super) fn parse_timeout_ms(value: &str) -> Result<u64, String> {
                 Ok(value)
             }
         })
-}
-
-pub(super) fn format_endpoint_text(endpoint: &r_wg::backend::wg::config::Endpoint) -> String {
-    if endpoint.host.contains(':')
-        && endpoint
-            .host
-            .parse::<std::net::IpAddr>()
-            .map(|ip| ip.is_ipv6())
-            .unwrap_or(false)
-    {
-        format!("[{}]:{}", endpoint.host, endpoint.port)
-    } else {
-        format!("{}:{}", endpoint.host, endpoint.port)
-    }
 }
 
 fn active_config_unavailable_message(workspace: &ToolsWorkspace) -> String {
