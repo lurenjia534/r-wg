@@ -6,7 +6,7 @@ use gpui_component::{
     h_flex,
     input::Input,
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
-    scroll::ScrollableElement as _,
+    scroll::{ScrollableElement as _, Scrollbar},
     tab::{Tab, TabBar},
     tag::Tag,
     v_flex, ActiveTheme as _, Disableable as _, Selectable, Sizable as _, StyledExt as _,
@@ -18,13 +18,13 @@ use r_wg::backend::wg::tools::{
 
 use crate::ui::state::{
     AsyncJobState, ReachabilityAuditFilter, ReachabilityAuditPhase, ReachabilityAuditProgress,
-    ReachabilityBatchStatus, ReachabilityFormState, ReachabilitySingleViewModel,
-    ReachabilityTab, ToolsWorkspace,
+    ReachabilityBatchRow, ReachabilityBatchStatus, ReachabilityFormState,
+    ReachabilitySingleViewModel, ReachabilityTab, ToolsWorkspace,
 };
 
 use super::components::{empty_result_state, error_banner, warning_banner};
 
-const AUDIT_PAGE_SIZE: usize = 50;
+const AUDIT_LIST_SCROLL_STATE_ID: &str = "tools-reach-audit-scroll";
 
 pub(super) fn render_reachability_tab(
     workspace: &ToolsWorkspace,
@@ -63,7 +63,7 @@ pub(super) fn render_reachability_tab(
         ReachabilityTab::Audit => render_audit_form(workspace, inputs_disabled, cx).into_any_element(),
     });
 
-    let result = render_reachability_result_panel(workspace, cx);
+    let result = render_reachability_result_panel(workspace, window, cx);
 
     if stack {
         div()
@@ -507,6 +507,7 @@ fn render_reachability_prefill_action(
 
 fn render_reachability_result_panel(
     workspace: &ToolsWorkspace,
+    window: &mut Window,
     cx: &mut Context<ToolsWorkspace>,
 ) -> GroupBox {
     let active_error = match workspace.reachability.active_tab {
@@ -547,7 +548,9 @@ fn render_reachability_result_panel(
             .when_some(active_error, |this, message| this.child(error_banner(message, cx)))
             .child(match workspace.reachability.active_tab {
                 ReachabilityTab::Single => render_single_result(workspace, cx).into_any_element(),
-                ReachabilityTab::Audit => render_audit_result(workspace, cx).into_any_element(),
+                ReachabilityTab::Audit => {
+                    render_audit_result(workspace, window, cx).into_any_element()
+                }
             }),
     )
 }
@@ -668,7 +671,11 @@ fn render_reachability_result(
         })
 }
 
-fn render_audit_result(workspace: &ToolsWorkspace, cx: &mut Context<ToolsWorkspace>) -> Div {
+fn render_audit_result(
+    workspace: &ToolsWorkspace,
+    window: &mut Window,
+    cx: &mut Context<ToolsWorkspace>,
+) -> Div {
     match &workspace.reachability.audit {
         AsyncJobState::Idle => empty_result_state(
             "Run an audit to scan all saved configs and summarize endpoint reachability.",
@@ -679,22 +686,34 @@ fn render_audit_result(workspace: &ToolsWorkspace, cx: &mut Context<ToolsWorkspa
         AsyncJobState::Ready(view_model) => {
             let result = &view_model.result;
             let audit_mode = view_model.request.mode;
-            let visible_rows = result
+            let filtered_indices = result
                 .rows
                 .iter()
-                .filter(|row| workspace.reachability.audit_filter.matches(row.status))
-                .count();
-            let max_page = visible_rows.saturating_sub(1) / AUDIT_PAGE_SIZE;
-            let current_page = workspace.reachability.audit_page.min(max_page);
-            let page_start = current_page.saturating_mul(AUDIT_PAGE_SIZE);
-            let page_end = (page_start + AUDIT_PAGE_SIZE).min(visible_rows);
-            let paged_rows = result
-                .rows
-                .iter()
-                .filter(|row| workspace.reachability.audit_filter.matches(row.status))
-                .skip(page_start)
-                .take(AUDIT_PAGE_SIZE)
+                .enumerate()
+                .filter(|(_, row)| workspace.reachability.audit_filter.matches(row.status))
+                .map(|(ix, _)| ix)
                 .collect::<Vec<_>>();
+            let visible_rows = filtered_indices.len();
+            let rows = result.rows.clone();
+            let visible_indices = filtered_indices.clone();
+            let scroll_handle = window
+                .use_keyed_state(AUDIT_LIST_SCROLL_STATE_ID, cx, |_, _| {
+                    UniformListScrollHandle::new()
+                })
+                .read(cx)
+                .clone();
+            let list = uniform_list(
+                "tools-reach-audit-list",
+                visible_indices.len(),
+                move |visible_range, _window, cx| {
+                    visible_range
+                        .map(|ix| render_audit_row(&rows[visible_indices[ix]], cx))
+                        .collect::<Vec<_>>()
+                },
+            )
+            .track_scroll(scroll_handle.clone())
+            .w_full()
+            .flex_1();
             div().child(
                 GroupBox::new()
                     .fill()
@@ -763,88 +782,27 @@ fn render_audit_result(workspace: &ToolsWorkspace, cx: &mut Context<ToolsWorkspa
                                         )
                                     }),
                             )
-                            .child(render_audit_filter_bar(
-                                workspace,
-                                visible_rows,
-                                current_page,
-                                max_page,
-                                page_start,
-                                page_end,
-                                cx,
-                            ))
-                            .child(div().max_h(px(520.0)).overflow_y_scrollbar().child(
-                                if paged_rows.is_empty() {
+                            .child(render_audit_filter_bar(workspace, visible_rows, cx))
+                            .child(
+                                div()
+                                    .relative()
+                                    .max_h(px(520.0))
+                                    .min_h(px(220.0))
+                                    .overflow_hidden()
+                                    .child(if filtered_indices.is_empty() {
                                     empty_result_state("No rows match the current filter.", cx)
                                         .into_any_element()
                                 } else {
-                                    v_flex()
-                                        .gap_2()
-                                        .children(paged_rows.into_iter().map(|row| {
-                                            div()
-                                                .rounded_lg()
-                                                .border_1()
-                                                .border_color(cx.theme().border.alpha(0.6))
-                                                .bg(cx.theme().group_box)
-                                                .px_3()
-                                                .py_2()
-                                                .child(
-                                                    v_flex()
-                                                        .gap_1()
-                                                        .child(
-                                                            h_flex()
-                                                                .items_center()
-                                                                .justify_between()
-                                                                .gap_3()
-                                                                .flex_wrap()
-                                                                .child(
-                                                                    h_flex()
-                                                                        .items_center()
-                                                                        .gap_2()
-                                                                        .flex_wrap()
-                                                                        .child(
-                                                                            div()
-                                                                                .text_sm()
-                                                                                .font_semibold()
-                                                                                .child(
-                                                                                    row.config_name
-                                                                                        .clone(),
-                                                                                ),
-                                                                        )
-                                                                        .child(
-                                                                            Tag::secondary()
-                                                                                .small()
-                                                                                .rounded_full()
-                                                                                .child(
-                                                                                    row.peer_label
-                                                                                        .clone(),
-                                                                                ),
-                                                                        ),
-                                                                )
-                                                                .child(batch_status_tag(
-                                                                    row.status,
-                                                                )),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(
-                                                                    cx.theme().muted_foreground,
-                                                                )
-                                                                .child(row.target.clone()),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(
-                                                                    cx.theme().muted_foreground,
-                                                                )
-                                                                .child(row.summary.clone()),
-                                                        ),
-                                                )
-                                        }))
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .flex_1()
+                                        .min_h(px(0.0))
+                                        .child(list)
+                                        .child(Scrollbar::vertical(&scroll_handle))
                                         .into_any_element()
-                                },
-                            )),
+                                }),
+                            ),
                     ),
             )
         }
@@ -922,10 +880,6 @@ fn render_audit_progress_summary(
 fn render_audit_filter_bar(
     workspace: &ToolsWorkspace,
     visible_rows: usize,
-    current_page: usize,
-    max_page: usize,
-    page_start: usize,
-    page_end: usize,
     cx: &mut Context<ToolsWorkspace>,
 ) -> Div {
     h_flex()
@@ -959,60 +913,71 @@ fn render_audit_filter_bar(
                             cx,
                         )),
                 )
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            Button::new("tools-reach-audit-prev-page")
-                                .label("Prev")
-                                .outline()
-                                .xsmall()
-                                .disabled(current_page == 0)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    let current = this.reachability.audit_page;
-                                    if current > 0 && this.set_reachability_audit_page(current - 1) {
-                                        cx.notify();
-                                    }
-                                })),
-                        )
-                        .child(
-                            Button::new("tools-reach-audit-next-page")
-                                .label("Next")
-                                .outline()
-                                .xsmall()
-                                .disabled(current_page >= max_page || visible_rows == 0)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    let current = this.reachability.audit_page;
-                                    if this.set_reachability_audit_page(current + 1) {
-                                        cx.notify();
-                                    }
-                                })),
-                        ),
-                ),
         )
         .child(v_flex().gap_1().items_end().child(
             div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(format!("{visible_rows} visible rows")),
-        ).child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(if visible_rows == 0 {
-                    "Page 0 of 0".to_string()
-                } else {
-                    format!(
-                        "Showing {}-{} of {} | Page {} of {}",
-                        page_start + 1,
-                        page_end,
-                        visible_rows,
-                        current_page + 1,
-                        max_page + 1
-                    )
-                }),
         ))
+}
+
+fn render_audit_row(row: &ReachabilityBatchRow, cx: &mut App) -> Div {
+    div()
+        .rounded_lg()
+        .border_1()
+        .border_color(cx.theme().border.alpha(0.6))
+        .bg(cx.theme().group_box)
+        .px_3()
+        .py_2()
+        .h(px(82.0))
+        .child(
+            v_flex()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.0))
+                                        .text_sm()
+                                        .font_semibold()
+                                        .truncate()
+                                        .child(row.config_name.clone()),
+                                )
+                                .child(
+                                    Tag::secondary()
+                                        .small()
+                                        .rounded_full()
+                                        .child(row.peer_label.clone()),
+                                ),
+                        )
+                        .child(batch_status_tag(row.status)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .truncate()
+                        .child(row.target.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .truncate()
+                        .child(row.summary.clone()),
+                ),
+        )
 }
 
 fn render_socket_list(

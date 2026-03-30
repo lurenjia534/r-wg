@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::{Entity, SharedString, Subscription};
 use gpui_component::input::InputState;
 use r_wg::backend::wg::tools::{
@@ -151,7 +153,7 @@ pub(crate) struct ReachabilityBatchResult {
     pub(crate) partial_rows: usize,
     pub(crate) failed_rows: usize,
     pub(crate) issue_rows: usize,
-    pub(crate) rows: Vec<ReachabilityBatchRow>,
+    pub(crate) rows: Arc<[ReachabilityBatchRow]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,7 +192,6 @@ pub(crate) struct ReachabilityToolState {
     pub(crate) audit_notice: Option<SharedString>,
     pub(crate) audit_cancelling: bool,
     pub(crate) audit_filter: ReachabilityAuditFilter,
-    pub(crate) audit_page: usize,
     pub(crate) audit_progress: Option<ReachabilityAuditProgress>,
     pub(crate) single_generation: u64,
     pub(crate) single: AsyncJobState<ReachabilitySingleViewModel>,
@@ -217,7 +218,6 @@ impl Default for ReachabilityToolState {
             audit_notice: None,
             audit_cancelling: false,
             audit_filter: ReachabilityAuditFilter::All,
-            audit_page: 0,
             audit_progress: None,
             single_generation: 0,
             single: AsyncJobState::Idle,

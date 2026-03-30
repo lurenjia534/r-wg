@@ -10,7 +10,7 @@ use r_wg::backend::wg::tools::format_endpoint_display;
 use tokio::runtime::Builder;
 
 use super::active_config::resolve_active_config_text_request;
-use super::reachability::run_reachability_probe_with_cancel;
+use super::reachability::run_reachability_probe_with_cancel_async;
 use crate::ui::state::{
     AsyncJobState, JobCancelHandle, ReachabilityAuditPhase, ReachabilityAuditProgress,
     ReachabilityAuditRequest, ReachabilityAuditViewModel, ReachabilityBatchResult,
@@ -65,7 +65,6 @@ impl ToolsWorkspace {
         self.reachability.audit_error = None;
         self.reachability.audit_notice = None;
         self.reachability.audit_cancelling = false;
-        self.reachability.audit_page = 0;
         cx.notify();
 
         self.spawn_audit_progress_poller(generation, progress.clone(), cx);
@@ -263,7 +262,8 @@ async fn build_batch_reachability_result(
                 max_addresses: 8,
                 stop_on_first_success: request.stop_on_first_success,
             };
-            let probe_result = run_reachability_probe_with_cancel(probe_request, cancel.clone());
+            let probe_result =
+                run_reachability_probe_with_cancel_async(probe_request, cancel.clone()).await;
 
             let row = match probe_result {
                 Ok(result) => ReachabilityBatchRow {
@@ -346,7 +346,7 @@ async fn build_batch_reachability_result(
         partial_rows,
         failed_rows,
         issue_rows,
-        rows,
+        rows: rows.into(),
     })
 }
 

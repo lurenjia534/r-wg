@@ -1,7 +1,8 @@
 use gpui::{AppContext as _, Context, Window};
 use r_wg::backend::wg::tools::{
-    format_endpoint_display, probe_reachability_blocking_until_cancel, AddressFamilyPreference,
-    ReachabilityMode, ReachabilityRequest,
+    format_endpoint_display, probe_reachability_blocking_until_cancel,
+    probe_reachability_until_cancel, AddressFamilyPreference, ReachabilityMode,
+    ReachabilityRequest,
 };
 
 use crate::ui::state::{
@@ -131,15 +132,6 @@ impl ToolsWorkspace {
             return false;
         }
         self.reachability.audit_filter = value;
-        self.reachability.audit_page = 0;
-        true
-    }
-
-    pub(crate) fn set_reachability_audit_page(&mut self, value: usize) -> bool {
-        if self.reachability.audit_page == value {
-            return false;
-        }
-        self.reachability.audit_page = value;
         true
     }
 
@@ -256,6 +248,13 @@ pub(super) fn run_reachability_probe_with_cancel(
     cancel: JobCancelHandle,
 ) -> Result<r_wg::backend::wg::tools::ReachabilityResult, String> {
     probe_reachability_blocking_until_cancel(request, move || cancel.is_cancelled())
+}
+
+pub(super) async fn run_reachability_probe_with_cancel_async(
+    request: ReachabilityRequest,
+    cancel: JobCancelHandle,
+) -> Result<r_wg::backend::wg::tools::ReachabilityResult, String> {
+    probe_reachability_until_cancel(request, move || cancel.is_cancelled()).await
 }
 
 pub(super) fn parse_optional_u16(value: &str) -> Result<Option<u16>, String> {
