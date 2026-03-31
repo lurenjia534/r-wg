@@ -13,11 +13,12 @@ use gpui_component::{
 };
 
 use crate::ui::state::{RouteMapMode, WgApp};
-
-use super::data::{
+use crate::ui::view::route_map::data::{
     RouteMapData, RouteMapGraphStep, RouteMapGraphStepKind, RouteMapInventoryItem, RouteMapRouteRow,
 };
-use super::{empty_group, status_chip};
+use crate::ui::view::route_map::{empty_group, explain, status_chip};
+
+use super::events;
 
 const ROUTE_LIST_SCROLL_STATE_ID: &str = "route-map-routes-scroll";
 const ROUTE_ROW_HEIGHT: f32 = 48.0;
@@ -35,7 +36,7 @@ struct FlowStepPalette {
     connector_glow: Hsla,
 }
 
-pub(super) fn render_graph(
+pub(crate) fn render_graph(
     model: &RouteMapData,
     mode: RouteMapMode,
     window: &mut Window,
@@ -44,8 +45,8 @@ pub(super) fn render_graph(
     match mode {
         RouteMapMode::Flow => render_flow(model, window, cx),
         RouteMapMode::Routes => render_routes(model, window, cx),
-        RouteMapMode::Explain => super::explain::render_explain(model, cx),
-        RouteMapMode::Events => super::events::render_events(model, window, cx),
+        RouteMapMode::Explain => explain::render_explain(model, cx),
+        RouteMapMode::Events => events::render_events(model, window, cx),
     }
 }
 
@@ -617,168 +618,87 @@ fn render_route_row(row: &RouteMapRouteRow, cx: &mut App) -> Div {
         .px_3()
         .border_b_1()
         .border_color(cx.theme().border.alpha(0.42))
-        .text_xs()
-        .child(route_value_cell(
+        .child(route_cell(
             row.destination.clone(),
             Some(px(176.0)),
-            true,
+            Some(cx.theme().mono_font_family.clone()),
             cx,
         ))
-        .child(route_value_cell(
-            row.family.clone(),
-            Some(px(64.0)),
-            false,
-            cx,
-        ))
-        .child(route_value_cell(
-            row.kind.clone(),
-            Some(px(112.0)),
-            false,
-            cx,
-        ))
-        .child(route_value_cell(
-            row.peer.clone(),
-            Some(px(84.0)),
-            false,
-            cx,
-        ))
-        .child(route_value_cell(
+        .child(route_cell(row.family.clone(), Some(px(64.0)), None, cx))
+        .child(route_cell(row.kind.clone(), Some(px(112.0)), None, cx))
+        .child(route_cell(row.peer.clone(), Some(px(84.0)), None, cx))
+        .child(route_cell(
             row.endpoint.clone(),
             Some(px(168.0)),
-            true,
+            Some(cx.theme().mono_font_family.clone()),
             cx,
         ))
-        .child(route_value_cell(
-            row.table.clone(),
-            Some(px(104.0)),
-            true,
-            cx,
-        ))
-        .child(route_value_cell(
-            row.status.clone(),
-            Some(px(72.0)),
-            false,
-            cx,
-        ))
-        .child(route_value_cell(row.note.clone(), None, false, cx))
+        .child(route_cell(row.table.clone(), Some(px(104.0)), None, cx))
+        .child(route_cell(row.status.clone(), Some(px(72.0)), None, cx))
+        .child(route_cell(row.note.clone(), None, None, cx))
 }
 
-fn route_value_cell(value: SharedString, width: Option<Pixels>, mono: bool, cx: &mut App) -> Div {
-    let cell = div().text_xs().truncate().child(value);
-    let cell = if mono {
-        cell.font_family(cx.theme().mono_font_family.clone())
+fn route_cell(
+    value: SharedString,
+    width: Option<Pixels>,
+    font_family: Option<SharedString>,
+    cx: &mut App,
+) -> Div {
+    let base = div()
+        .text_sm()
+        .truncate()
+        .text_color(cx.theme().foreground)
+        .when_some(font_family, |this, family| this.font_family(family));
+    let base = if let Some(width) = width {
+        base.w(width)
     } else {
-        cell
+        base.flex_1().min_w(px(0.0))
     };
-    if let Some(width) = width {
-        cell.w(width)
-    } else {
-        cell.flex_1().min_w(px(0.0))
-    }
+    base.child(value)
 }
 
 fn selected_summary(selected: &RouteMapInventoryItem) -> SharedString {
-    let mut parts = selected
-        .chips
-        .iter()
-        .take(3)
-        .map(|chip| chip.label.to_string())
-        .collect::<Vec<_>>();
-
     if let Some(route_row) = selected.route_row.as_ref() {
-        parts.push(route_row.table.to_string());
-    }
-
-    let has_evidence = selected
-        .inspector
-        .runtime_evidence
-        .iter()
-        .all(|entry| entry.as_ref() != "No matching net event captured yet.");
-    parts.push(if has_evidence {
-        format!("evidence {}", selected.inspector.runtime_evidence.len())
+        format!(
+            "{} via {} ({})",
+            route_row.destination, route_row.peer, route_row.status
+        )
+        .into()
     } else {
-        "evidence missing".to_string()
-    });
-
-    parts.join(" · ").into()
+        selected.inspector.why_match.join(" · ").into()
+    }
 }
 
 fn step_kind_palette(kind: RouteMapGraphStepKind, cx: &mut Context<WgApp>) -> FlowStepPalette {
-    let is_light = cx.theme().mode == ThemeMode::Light;
+    let mode = cx.theme().mode;
+    let accent = match kind {
+        RouteMapGraphStepKind::Interface => cx.theme().accent,
+        RouteMapGraphStepKind::Dns => cx.theme().info,
+        RouteMapGraphStepKind::Policy => cx.theme().warning,
+        RouteMapGraphStepKind::Peer => cx.theme().success,
+        RouteMapGraphStepKind::Endpoint => cx.theme().warning,
+        RouteMapGraphStepKind::Guardrail => cx.theme().danger,
+        RouteMapGraphStepKind::Destination => cx.theme().accent,
+    };
+    let neutral = cx.theme().border;
 
-    let connector_strength = if is_light { 0.5 } else { 0.34 };
-    let connector_glow = if is_light { 0.82 } else { 0.62 };
-
-    match kind {
-        RouteMapGraphStepKind::Interface => FlowStepPalette {
-            icon_foreground: cx.theme().accent_foreground,
-            icon_background: cx.theme().accent,
-            icon_border: cx.theme().accent.alpha(if is_light { 0.92 } else { 0.72 }),
-            card_border: cx.theme().accent.alpha(if is_light { 0.56 } else { 0.38 }),
-            connector_base: cx.theme().accent.alpha(connector_strength),
-            connector_glow: cx.theme().accent.alpha(connector_glow),
-        },
-        RouteMapGraphStepKind::Dns => FlowStepPalette {
-            icon_foreground: cx.theme().info_foreground,
-            icon_background: cx.theme().info,
-            icon_border: cx.theme().info.alpha(if is_light { 0.94 } else { 0.74 }),
-            card_border: cx.theme().info.alpha(if is_light { 0.6 } else { 0.42 }),
-            connector_base: cx.theme().info.alpha(connector_strength),
-            connector_glow: cx.theme().info.alpha(connector_glow),
-        },
-        RouteMapGraphStepKind::Policy => FlowStepPalette {
-            icon_foreground: cx.theme().primary_foreground,
-            icon_background: cx.theme().blue,
-            icon_border: cx.theme().blue.alpha(if is_light { 0.9 } else { 0.7 }),
-            card_border: cx.theme().blue.alpha(if is_light { 0.58 } else { 0.4 }),
-            connector_base: cx.theme().blue.alpha(connector_strength),
-            connector_glow: cx.theme().blue.alpha(connector_glow),
-        },
-        RouteMapGraphStepKind::Peer | RouteMapGraphStepKind::Endpoint => FlowStepPalette {
-            icon_foreground: cx.theme().secondary_foreground,
-            icon_background: cx.theme().secondary,
-            icon_border: cx
-                .theme()
-                .secondary_foreground
-                .alpha(if is_light { 0.64 } else { 0.5 }),
-            card_border: cx
-                .theme()
-                .secondary_foreground
-                .alpha(if is_light { 0.44 } else { 0.32 }),
-            connector_base: cx.theme().secondary_foreground.alpha(if is_light {
-                0.34
-            } else {
-                0.24
-            }),
-            connector_glow: cx.theme().secondary_foreground.alpha(if is_light {
-                0.6
-            } else {
-                0.44
-            }),
-        },
-        RouteMapGraphStepKind::Guardrail => FlowStepPalette {
-            icon_foreground: cx.theme().warning_foreground,
-            icon_background: cx.theme().warning,
-            icon_border: cx.theme().warning.alpha(if is_light { 0.96 } else { 0.78 }),
-            card_border: cx.theme().warning.alpha(if is_light { 0.62 } else { 0.44 }),
-            connector_base: cx.theme().warning.alpha(connector_strength),
-            connector_glow: cx.theme().warning.alpha(connector_glow),
-        },
-        RouteMapGraphStepKind::Destination => FlowStepPalette {
-            icon_foreground: cx.theme().secondary_foreground,
-            icon_background: cx.theme().muted,
-            icon_border: cx.theme().border.alpha(if is_light { 0.98 } else { 0.82 }),
-            card_border: cx.theme().border.alpha(if is_light { 0.84 } else { 0.62 }),
-            connector_base: cx.theme().secondary_foreground.alpha(if is_light {
-                0.3
-            } else {
-                0.22
-            }),
-            connector_glow: cx.theme().secondary_foreground.alpha(if is_light {
-                0.52
-            } else {
-                0.38
-            }),
-        },
+    if mode == ThemeMode::Dark {
+        FlowStepPalette {
+            icon_foreground: accent.alpha(0.96),
+            icon_background: accent.alpha(0.16),
+            icon_border: accent.alpha(0.38),
+            card_border: neutral.alpha(0.72),
+            connector_base: neutral.alpha(0.42),
+            connector_glow: accent.alpha(0.62),
+        }
+    } else {
+        FlowStepPalette {
+            icon_foreground: accent.alpha(0.92),
+            icon_background: accent.alpha(0.12),
+            icon_border: accent.alpha(0.28),
+            card_border: neutral.alpha(0.92),
+            connector_base: neutral.alpha(0.34),
+            connector_glow: accent.alpha(0.48),
+        }
     }
 }

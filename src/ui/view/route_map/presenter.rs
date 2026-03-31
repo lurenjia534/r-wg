@@ -17,9 +17,9 @@ use super::data::{
 };
 
 #[derive(Clone)]
-pub(super) struct RouteMapMatchTarget {
-    pub(super) addr: IpAddr,
-    pub(super) cidr: u8,
+pub(crate) struct RouteMapMatchTarget {
+    pub(crate) addr: IpAddr,
+    pub(crate) cidr: u8,
 }
 
 pub(super) struct RouteMapPresentedPlan {

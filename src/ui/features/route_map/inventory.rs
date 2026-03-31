@@ -15,9 +15,11 @@ use gpui_component::{
 };
 
 use crate::ui::state::WgApp;
-
-use super::data::{RouteMapChip, RouteMapData, RouteMapInventoryGroup, RouteMapInventoryItem};
-use super::status_chip;
+use crate::ui::view::route_map::data::{
+    RouteMapChip, RouteMapData, RouteMapInventoryGroup, RouteMapInventoryItem, RouteMapItemStatus,
+    RouteMapTone,
+};
+use crate::ui::view::route_map::status_chip;
 
 struct RouteMapInventoryTreeCache {
     tree: Entity<TreeState>,
@@ -40,7 +42,7 @@ enum InventoryTreeRowKind {
     },
     Item {
         title: SharedString,
-        status: super::data::RouteMapItemStatus,
+        status: RouteMapItemStatus,
         chips: Vec<RouteMapChip>,
         monospace: bool,
         explain_matched: bool,
@@ -88,7 +90,7 @@ impl RouteMapInventoryTreeCache {
     }
 }
 
-pub(super) fn render_inventory(
+pub(crate) fn render_inventory(
     app: &mut WgApp,
     model: &RouteMapData,
     window: &mut Window,
@@ -298,15 +300,15 @@ fn sync_tree_selection(
 
 fn compact_chip(chip: &RouteMapChip) -> Tag {
     match chip.tone {
-        super::data::RouteMapTone::Secondary => Tag::secondary()
+        RouteMapTone::Secondary => Tag::secondary()
             .xsmall()
             .rounded_full()
             .child(chip.label.clone()),
-        super::data::RouteMapTone::Info => Tag::info()
+        RouteMapTone::Info => Tag::info()
             .xsmall()
             .rounded_full()
             .child(chip.label.clone()),
-        super::data::RouteMapTone::Warning => Tag::warning()
+        RouteMapTone::Warning => Tag::warning()
             .xsmall()
             .rounded_full()
             .child(chip.label.clone()),

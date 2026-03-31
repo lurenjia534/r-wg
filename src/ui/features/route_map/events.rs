@@ -7,14 +7,13 @@ use gpui_component::{
 };
 
 use crate::ui::state::WgApp;
-
-use super::data::RouteMapData;
-use super::{empty_group, summary_chip};
+use crate::ui::view::route_map::data::RouteMapData;
+use crate::ui::view::route_map::{empty_group, summary_chip};
 
 const EVENTS_LIST_SCROLL_STATE_ID: &str = "route-map-events-scroll";
 const EVENT_ROW_HEIGHT: f32 = 42.0;
 
-pub(super) fn render_events(
+pub(crate) fn render_events(
     model: &RouteMapData,
     window: &mut Window,
     cx: &mut Context<WgApp>,
@@ -61,7 +60,7 @@ pub(super) fn render_events(
     )
 }
 
-pub(super) fn render_events_workspace(
+pub(crate) fn render_events_workspace(
     model: &RouteMapData,
     window: &mut Window,
     cx: &mut Context<WgApp>,

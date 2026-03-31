@@ -11,7 +11,7 @@ use crate::ui::state::WgApp;
 use super::data::RouteMapData;
 use super::{empty_group, summary_chip};
 
-pub(super) fn render_explain(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
+pub(crate) fn render_explain(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
     let Some(explain) = model.explain.as_ref() else {
         return div().child(empty_group(
             "Explain",

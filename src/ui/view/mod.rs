@@ -6,7 +6,7 @@ mod dns;
 mod left_panel;
 mod logs;
 mod overview;
-mod route_map;
+pub(crate) mod route_map;
 mod shared;
 mod tools;
 mod top_bar;
@@ -20,8 +20,7 @@ use gpui_component::{
 
 use super::features::themes::AppearancePolicy;
 use super::state::{ConfigDraftState, SidebarItem, WgApp};
-use shared::ViewData;
-
+pub(crate) use shared::ViewData;
 pub(crate) use widgets::{PageShell, PageShellHeader};
 
 impl WgApp {
@@ -118,7 +117,8 @@ impl Render for WgApp {
                         let data = root_data
                             .as_ref()
                             .expect("root data should exist outside Configs");
-                        route_map::render_route_map(self, data, window, cx).into_any_element()
+                        super::features::render_route_map(self, data, window, cx)
+                            .into_any_element()
                     }
                     SidebarItem::Tools => {
                         let workspace = self.ensure_tools_workspace(window, cx);
