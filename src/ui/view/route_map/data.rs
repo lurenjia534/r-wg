@@ -3,15 +3,14 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use gpui::SharedString;
-use r_wg::backend::wg::config::RouteTable;
-use r_wg::backend::wg::route_plan::{
-    normalize_config_for_runtime, RouteApplyAttemptState as BackendRouteApplyAttemptState,
-    RouteApplyFailureKind as BackendRouteApplyFailureKind, RouteApplyKind as BackendRouteApplyKind,
-    RouteApplyPhase as BackendRouteApplyPhase, RouteApplyReport as BackendRouteApplyReport,
-    RouteApplyReportSource as BackendRouteApplyReportSource,
-    RouteApplyStatus as BackendRouteApplyStatus,
+use r_wg::core::config::RouteTable;
+use r_wg::core::route_plan::{
+    normalize_config_for_runtime, OperationalRoutePlan, RouteApplyAttemptState as BackendRouteApplyAttemptState,
+    RouteApplyEntry, RouteApplyFailureKind as BackendRouteApplyFailureKind,
+    RouteApplyKind as BackendRouteApplyKind, RouteApplyPhase as BackendRouteApplyPhase,
+    RouteApplyReport as BackendRouteApplyReport, RouteApplyReportSource as BackendRouteApplyReportSource,
+    RouteApplyStatus as BackendRouteApplyStatus, RoutePlanPlatform,
 };
-use r_wg::backend::wg::{OperationalRoutePlan, RoutePlanPlatform};
 use r_wg::dns::DnsSelection;
 use r_wg::log;
 
@@ -150,7 +149,7 @@ pub(crate) struct RouteMapEvidence {
     pub(crate) net_events_raw: Vec<String>,
     pub(crate) net_events: Vec<SharedString>,
     pub(crate) apply_report: Option<BackendRouteApplyReport>,
-    apply_report_index: Arc<HashMap<String, r_wg::backend::wg::route_plan::RouteApplyEntry>>,
+    apply_report_index: Arc<HashMap<String, RouteApplyEntry>>,
 }
 
 pub(crate) struct RouteMapData {
@@ -345,7 +344,7 @@ fn apply_event_overlay(
     groups: &mut [RouteMapInventoryGroup],
     net_events: &[String],
     apply_report: Option<&BackendRouteApplyReport>,
-    apply_report_index: &HashMap<String, r_wg::backend::wg::route_plan::RouteApplyEntry>,
+    apply_report_index: &HashMap<String, RouteApplyEntry>,
 ) {
     for group in groups {
         for item in &mut group.items {
@@ -595,7 +594,7 @@ fn map_apply_report_status(status: BackendRouteApplyStatus) -> RouteMapItemStatu
 
 fn build_report_runtime_evidence(
     apply_report: Option<&BackendRouteApplyReport>,
-    entry: &r_wg::backend::wg::route_plan::RouteApplyEntry,
+    entry: &RouteApplyEntry,
     net_events: &[String],
     patterns: &[String],
 ) -> Vec<SharedString> {
@@ -615,7 +614,7 @@ fn build_report_runtime_evidence(
 
 fn format_report_entry_summary(
     report: &BackendRouteApplyReport,
-    entry: &r_wg::backend::wg::route_plan::RouteApplyEntry,
+    entry: &RouteApplyEntry,
 ) -> Option<String> {
     let source = match report.source {
         BackendRouteApplyReportSource::Live => "Live backend report",

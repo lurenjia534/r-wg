@@ -5,8 +5,8 @@ use std::{
 
 use futures_util::stream::{self, StreamExt as _, TryStreamExt as _};
 use gpui::{AppContext as _, Context, Timer};
-use r_wg::backend::wg::config::{self, PeerConfig};
 use r_wg::backend::wg::tools::format_endpoint_display;
+use r_wg::core::config::{self, PeerConfig};
 use tokio::runtime::Builder;
 
 use super::active_config::resolve_active_config_text_request;

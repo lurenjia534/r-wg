@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::backend::wg::config::InterfaceAddress;
-use crate::backend::wg::route_plan::RouteApplyReport;
+use crate::core::config::InterfaceAddress;
+use crate::core::route_plan::RouteApplyReport;
 
 use super::adapter::{AdapterInfo, AdapterSnapshot};
 use super::addresses::delete_unicast_address;

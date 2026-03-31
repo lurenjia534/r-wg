@@ -3,9 +3,11 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use gpui::SharedString;
 use gpui_component::IconName;
-use r_wg::backend::wg::config::{AllowedIp, RouteTable, WireGuardConfig};
-use r_wg::backend::wg::route_plan::{RoutePlanBypassOp, RoutePlanFamily, RoutePlanRouteKind};
-use r_wg::backend::wg::{OperationalRoutePlan, RoutePlanPlatform};
+use r_wg::core::config::{AllowedIp, RouteTable, WireGuardConfig};
+use r_wg::core::route_plan::{
+    OperationalRoutePlan, RoutePlanBypassOp, RoutePlanFamily, RoutePlanPlatform,
+    RoutePlanRouteKind,
+};
 
 use crate::ui::state::RouteFamilyFilter;
 

@@ -2,8 +2,8 @@ use std::net::IpAddr;
 
 use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 
-use crate::backend::wg::config::{RouteTable, WireGuardConfig};
-use crate::backend::wg::route_plan::{
+use crate::core::config::{RouteTable, WireGuardConfig};
+use crate::core::route_plan::{
     RouteApplyFailureKind, RouteApplyKind, RouteApplyReport, RoutePlan, RoutePlanBypassOp,
     RoutePlanFamily, RoutePlanRouteKind,
 };

@@ -5,7 +5,7 @@ use std::process::Command;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use gpui::{AppContext, Context, PathPromptOptions, SharedString, Window};
-use r_wg::backend::wg::config;
+use r_wg::core::config;
 
 use super::super::format::{name_from_path, sanitize_file_stem};
 use super::super::persistence;

@@ -114,7 +114,7 @@ impl ToolsWorkspace {
 
     fn load_cidr_prefill_prefixes(
         &mut self,
-        prefixes: Vec<r_wg::backend::wg::config::AllowedIp>,
+        prefixes: Vec<r_wg::core::config::AllowedIp>,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
@@ -168,7 +168,7 @@ impl CidrViewModel {
     }
 
     pub(crate) fn normalize_only(
-        prefixes: Vec<r_wg::backend::wg::config::AllowedIp>,
+        prefixes: Vec<r_wg::core::config::AllowedIp>,
     ) -> Result<Self, String> {
         let result =
             normalize_cidr_set(&prefixes, CIDR_RESULT_LIMIT).map_err(|err| err.to_string())?;
@@ -227,7 +227,7 @@ impl CidrViewModel {
     }
 }
 
-fn format_prefix_list(prefixes: &[r_wg::backend::wg::config::AllowedIp]) -> String {
+fn format_prefix_list(prefixes: &[r_wg::core::config::AllowedIp]) -> String {
     prefixes
         .iter()
         .map(|prefix| format!("{}/{}", prefix.addr, prefix.cidr))
@@ -235,7 +235,7 @@ fn format_prefix_list(prefixes: &[r_wg::backend::wg::config::AllowedIp]) -> Stri
         .join("\n")
 }
 
-fn format_allowed_ips_assignment(prefixes: &[r_wg::backend::wg::config::AllowedIp]) -> String {
+fn format_allowed_ips_assignment(prefixes: &[r_wg::core::config::AllowedIp]) -> String {
     format!(
         "AllowedIPs = {}",
         prefixes

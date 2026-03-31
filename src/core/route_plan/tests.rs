@@ -1,6 +1,5 @@
-use crate::dns::{DnsMode, DnsPreset};
-
-use super::super::config::{
+use crate::core::dns::{DnsMode, DnsPreset};
+use crate::core::config::{
     AllowedIp, InterfaceConfig, Key, PeerConfig, RouteTable, WireGuardConfig,
 };
 use super::*;
@@ -83,7 +82,7 @@ fn normalize_config_for_runtime_applies_dns_selection_and_fwmark() {
 
     let normalized = normalize_config_for_runtime(
         cfg,
-        crate::dns::DnsSelection::new(DnsMode::UseSystemDns, DnsPreset::CloudflareStandard),
+        crate::core::dns::DnsSelection::new(DnsMode::UseSystemDns, DnsPreset::CloudflareStandard),
     );
 
     assert!(normalized.interface.dns_servers.is_empty());

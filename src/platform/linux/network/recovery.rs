@@ -43,7 +43,7 @@ use startup::{attempt_startup_repair_with_backend, StartupRepairBackend};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::wg::route_plan::RouteApplyReport;
+    use crate::core::route_plan::RouteApplyReport;
     use crate::platform::linux::network::dns::DnsState;
     use crate::platform::linux::network::NetworkError;
     use std::cell::RefCell;
@@ -409,21 +409,21 @@ mod tests {
             table_id: Some(51820),
         };
         let matching = build_route_message_without_oif(
-            &crate::backend::wg::config::AllowedIp {
+            &crate::core::config::AllowedIp {
                 addr: snapshot.addr,
                 cidr: snapshot.cidr,
             },
             snapshot.table_id,
         );
         let other_table = build_route_message_without_oif(
-            &crate::backend::wg::config::AllowedIp {
+            &crate::core::config::AllowedIp {
                 addr: snapshot.addr,
                 cidr: snapshot.cidr,
             },
             Some(123),
         );
         let other_destination = build_route_message_without_oif(
-            &crate::backend::wg::config::AllowedIp {
+            &crate::core::config::AllowedIp {
                 addr: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
                 cidr: snapshot.cidr,
             },
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn persisted_report_round_trips_separately_from_journal_contract() {
         let report =
-            RouteApplyReport::new(crate::backend::wg::route_plan::RoutePlanPlatform::Linux);
+            RouteApplyReport::new(crate::core::route_plan::RoutePlanPlatform::Linux);
         let _ = report;
     }
 }

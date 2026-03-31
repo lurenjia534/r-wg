@@ -6,6 +6,8 @@
 pub mod config;
 mod engine;
 mod ipc;
+mod ipc_client;
+mod ipc_server;
 #[cfg(target_os = "linux")]
 mod linux_service;
 pub mod route_plan;

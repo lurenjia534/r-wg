@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 
-use super::super::config::{AllowedIp, RouteTable};
+use crate::core::config::{AllowedIp, RouteTable};
+
 use super::{FullTunnelStatus, RoutePlanPlatform};
 
 pub(super) fn effective_route_table_label(

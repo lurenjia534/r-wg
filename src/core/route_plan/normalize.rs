@@ -1,9 +1,8 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 
-use crate::dns::{apply_dns_selection, DnsSelection};
-
-use super::super::config::{AllowedIp, PeerConfig, RouteTable, WireGuardConfig};
+use crate::core::config::{AllowedIp, PeerConfig, RouteTable, WireGuardConfig};
+use crate::core::dns::{apply_dns_selection, DnsSelection};
 use super::{
     FullTunnelStatus, RoutePlanPlatform, DEFAULT_FULL_TUNNEL_FWMARK, LINUX_DEFAULT_POLICY_TABLE_ID,
 };

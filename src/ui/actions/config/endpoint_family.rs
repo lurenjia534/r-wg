@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use r_wg::backend::wg::config::{self, WireGuardConfig};
+use r_wg::core::config::{self, WireGuardConfig};
 
 use super::*;
 use crate::ui::state::EndpointFamily;
@@ -162,7 +162,7 @@ impl WgApp {
 mod tests {
     use super::endpoint_family_hint_from_config;
     use crate::ui::state::EndpointFamily;
-    use r_wg::backend::wg::config;
+    use r_wg::core::config;
 
     #[test]
     fn sync_hint_uses_only_static_endpoint_shape() {

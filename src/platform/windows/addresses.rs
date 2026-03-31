@@ -14,7 +14,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
 };
 use windows::Win32::Networking::WinSock::AF_UNSPEC;
 
-use crate::backend::wg::config::InterfaceAddress;
+use crate::core::config::InterfaceAddress;
 
 use super::adapter::AdapterInfo;
 use super::sockaddr::{ip_from_socket_address, sockaddr_inet_from_ip};

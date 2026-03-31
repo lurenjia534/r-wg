@@ -161,7 +161,7 @@ impl Engine {
 
     pub fn apply_report(
         &self,
-    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+    ) -> Result<Option<crate::core::route_plan::RouteApplyReport>, EngineError> {
         match &*self.inner {
             EngineMode::Local(engine) => engine.apply_report(),
             EngineMode::Remote(engine) => engine.apply_report(),
@@ -258,7 +258,7 @@ impl RemoteEngine {
 
     fn apply_report(
         &self,
-    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+    ) -> Result<Option<crate::core::route_plan::RouteApplyReport>, EngineError> {
         let Some(session) = self.load_session() else {
             return Ok(None);
         };

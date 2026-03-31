@@ -5,7 +5,7 @@
 use std::fmt;
 use std::net::IpAddr;
 
-use crate::backend::wg::config::RouteTable;
+use crate::core::config::RouteTable;
 use crate::{log_debug, log_info};
 
 // ===== 应用阶段 =====

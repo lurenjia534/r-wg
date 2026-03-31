@@ -6,8 +6,9 @@ use std::io::{self, BufRead, Write};
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::route_plan::RouteApplyReport;
+
 use super::engine::{EngineError, EngineStats, EngineStatus, StartRequest};
-use super::route_plan::RouteApplyReport;
 
 /// 当前 IPC 协议版本。
 pub const IPC_PROTOCOL_VERSION: u32 = 3;
@@ -74,7 +75,7 @@ pub fn unit_reply(result: Result<(), EngineError>) -> BackendReply {
 
 /// `Result<Option<T>>` -> 通用 IPC 响应。
 pub fn option_reply(
-    result: Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError>,
+    result: Result<Option<RouteApplyReport>, EngineError>,
 ) -> BackendReply {
     match result {
         Ok(report) => BackendReply::ApplyReport { report },

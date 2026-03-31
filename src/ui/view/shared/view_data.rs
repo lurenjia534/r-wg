@@ -1,4 +1,4 @@
-use r_wg::backend::wg::config;
+use r_wg::core::config;
 
 use crate::ui::format::{format_duration, summarize_peers};
 use crate::ui::state::{ConfigDraftState, DraftValidationState, EditorOperation, WgApp};

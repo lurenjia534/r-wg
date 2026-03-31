@@ -6,7 +6,7 @@ use tokio::net::{lookup_host, TcpStream};
 use tokio::runtime::Builder;
 use tokio::time::{sleep, timeout, Duration};
 
-use crate::backend::wg::config::Endpoint;
+use crate::core::config::Endpoint;
 
 use super::ToolError;
 

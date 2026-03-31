@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 
-use super::super::config::{AllowedIp, PeerConfig, RouteTable, WireGuardConfig};
+use crate::core::config::{AllowedIp, PeerConfig, RouteTable, WireGuardConfig};
+
 use super::{
     collect_allowed_routes, detect_full_tunnel, linux_policy_table_id, linux_route_table_for,
     FullTunnelStatus, RoutePlan, RoutePlanBypassOp, RoutePlanFamily, RoutePlanMetricOp,

@@ -18,7 +18,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows::Win32::Networking::WinSock::{MIB_IPPROTO_NETMGMT, SOCKADDR_INET};
 
-use crate::backend::wg::route_plan::RoutePlanBypassOp;
+use crate::core::route_plan::RoutePlanBypassOp;
 
 use super::sockaddr::{ip_from_sockaddr_inet, sockaddr_inet_from_ip};
 use super::{is_already_exists, NetworkError, TUNNEL_METRIC};

@@ -11,7 +11,7 @@ use super::netlink_match::{
 };
 use super::snapshot::policy_snapshot;
 use super::{RecoveryPolicySnapshot, RecoveryRouteSnapshot};
-use crate::backend::wg::config::AllowedIp;
+use crate::core::config::AllowedIp;
 
 pub(crate) async fn cleanup_exact_snapshot(
     handle: &Handle,

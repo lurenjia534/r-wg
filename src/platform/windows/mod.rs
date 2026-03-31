@@ -21,8 +21,8 @@ mod sockaddr;
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_OBJECT_ALREADY_EXISTS, WIN32_ERROR};
 
-use crate::backend::wg::config::WireGuardConfig;
-use crate::backend::wg::route_plan::{RouteApplyReport, RoutePlan};
+use crate::core::config::WireGuardConfig;
+use crate::core::route_plan::{RouteApplyReport, RoutePlan};
 
 pub use error::NetworkError;
 pub use report::AppliedNetworkState;

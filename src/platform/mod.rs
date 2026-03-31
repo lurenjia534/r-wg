@@ -12,8 +12,8 @@ pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-use crate::backend::wg::config::WireGuardConfig;
-use crate::backend::wg::route_plan::{RouteApplyReport, RoutePlan};
+use crate::core::config::WireGuardConfig;
+use crate::core::route_plan::{RouteApplyReport, RoutePlan};
 
 /// Linux 平台：直接复用 linux 模块的状态与错误类型。
 #[cfg(target_os = "linux")]

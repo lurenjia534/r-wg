@@ -6,7 +6,7 @@ use netlink_packet_route::AddressFamily;
 use rtnetlink::RouteMessageBuilder;
 
 use super::{RecoveryPolicySnapshot, RecoveryRouteSnapshot};
-use crate::backend::wg::config::AllowedIp;
+use crate::core::config::AllowedIp;
 
 const RULE_PRIORITY_FWMARK: u32 = 10000;
 const RULE_PRIORITY_TUNNEL: u32 = 10001;

@@ -7,9 +7,9 @@ use std::time::Instant;
 
 use super::super::engine::Engine as LocalEngine;
 use super::super::ipc::{
-    option_reply, read_json_line, write_json_line, BackendCommand, BackendReply,
-    IPC_PROTOCOL_VERSION,
+    read_json_line, write_json_line, BackendCommand, BackendReply,
 };
+use super::super::ipc_server::dispatch_command;
 use super::super::EngineStatus;
 use super::auth::{is_peer_allowed, peer_credentials};
 use super::fs_ops::{configure_socket_permissions, lookup_group_gid, remove_stale_socket};
@@ -146,22 +146,5 @@ fn handle_service_client(
 fn handle_command(stream: &mut UnixStream, engine: &LocalEngine) -> io::Result<BackendReply> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let command: BackendCommand = read_json_line(&mut reader)?;
-
-    Ok(match command {
-        BackendCommand::Ping => BackendReply::Ok,
-        BackendCommand::Info => BackendReply::Info {
-            protocol_version: IPC_PROTOCOL_VERSION,
-        },
-        BackendCommand::Start { request } => super::super::ipc::unit_reply(engine.start(request)),
-        BackendCommand::Stop => super::super::ipc::unit_reply(engine.stop()),
-        BackendCommand::Status => match engine.status() {
-            Ok(status) => BackendReply::Status { status },
-            Err(err) => super::super::ipc::error_reply(err),
-        },
-        BackendCommand::Stats => match engine.stats() {
-            Ok(stats) => BackendReply::Stats { stats },
-            Err(err) => super::super::ipc::error_reply(err),
-        },
-        BackendCommand::ApplyReport => option_reply(engine.apply_report()),
-    })
+    Ok(dispatch_command(engine, command))
 }

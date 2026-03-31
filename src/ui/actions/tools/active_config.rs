@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Context, Entity, Window};
 use gpui_component::input::{InputEvent, InputState};
-use r_wg::backend::wg::config;
+use r_wg::core::config;
 
 use crate::ui::state::{
     ActiveConfigIdentity, ActiveConfigParseState, ActiveConfigSnapshot, ActiveConfigSource,

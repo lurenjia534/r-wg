@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use gpui::{Entity, SharedString, Subscription};
 use gpui_component::input::InputState;
-use r_wg::backend::wg::config;
+use r_wg::core::config;
 
 use crate::ui::actions::config::endpoint_family_hint_from_config;
 

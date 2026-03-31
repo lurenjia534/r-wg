@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use gpui::{Entity, SharedString};
 use gpui_component::input::InputState;
 use gpui_component::theme::ThemeMode;
-use r_wg::backend::wg::route_plan::RouteApplyReport;
 use r_wg::backend::wg::PeerStats;
+use r_wg::core::route_plan::RouteApplyReport;
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use crate::ui::features::themes::AppearancePolicy;

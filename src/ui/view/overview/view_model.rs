@@ -1,5 +1,5 @@
 use chrono::Local;
-use r_wg::backend::wg::config;
+use r_wg::core::config;
 
 use crate::ui::format::{format_bytes, format_duration, format_route_table, summarize_peers};
 use crate::ui::state::{

@@ -8,7 +8,7 @@ use super::super::dns::DnsState;
 use super::super::policy::PolicyRoutingState;
 use super::super::NetworkError;
 use super::snapshot::{policy_snapshot, route_snapshots, route_snapshots_from_ops};
-use crate::backend::wg::route_plan::{RoutePlan, RoutePlanRouteOp};
+use crate::core::route_plan::{RoutePlan, RoutePlanRouteOp};
 
 const RECOVERY_JOURNAL_FILE: &str = "recovery.json";
 

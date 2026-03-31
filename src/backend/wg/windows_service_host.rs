@@ -16,12 +16,11 @@ use windows::Win32::System::Services::{
 
 use super::engine::Engine as LocalEngine;
 use super::ipc::{
-    error_reply, option_reply, read_json_line, unit_reply, write_json_line, BackendCommand,
-    BackendReply,
+    read_json_line, write_json_line, BackendCommand,
 };
+use super::ipc_server::dispatch_command;
 use super::windows_service::SERVICE_NAME;
 use super::{EngineError, EngineStatus};
-use crate::backend::wg::ipc::IPC_PROTOCOL_VERSION;
 
 const START_WAIT_HINT_MS: u32 = 30_000;
 const STOP_WAIT_HINT_MS: u32 = 120_000;
@@ -153,23 +152,7 @@ fn handle_pipe_client(
         let mut reader = BufReader::new(&mut stream);
         read_json_line(&mut reader)?
     };
-    let reply = match command {
-        BackendCommand::Info => BackendReply::Info {
-            protocol_version: IPC_PROTOCOL_VERSION,
-        },
-        BackendCommand::Ping => BackendReply::Ok,
-        BackendCommand::Start { request } => unit_reply(engine.start(request)),
-        BackendCommand::Stop => unit_reply(engine.stop()),
-        BackendCommand::Status => match engine.status() {
-            Ok(status) => BackendReply::Status { status },
-            Err(err) => error_reply(err),
-        },
-        BackendCommand::Stats => match engine.stats() {
-            Ok(stats) => BackendReply::Stats { stats },
-            Err(err) => error_reply(err),
-        },
-        BackendCommand::ApplyReport => option_reply(engine.apply_report()),
-    };
+    let reply = dispatch_command(&engine, command);
     write_json_line(&mut stream, &reply)
 }
 

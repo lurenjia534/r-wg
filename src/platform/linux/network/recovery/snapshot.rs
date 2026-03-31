@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 
 use super::super::policy::PolicyRoutingState;
-use crate::backend::wg::route_plan::{RoutePlan, RoutePlanRouteKind, RoutePlanRouteOp};
+use crate::core::route_plan::{RoutePlan, RoutePlanRouteKind, RoutePlanRouteOp};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RecoveryRouteSnapshot {

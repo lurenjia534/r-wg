@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use crate::backend::wg::config::AllowedIp;
+use crate::core::config::AllowedIp;
 
 use super::ToolError;
 

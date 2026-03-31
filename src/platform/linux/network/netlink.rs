@@ -11,7 +11,7 @@ use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteHeader, Rou
 use rtnetlink::{new_connection, Handle, RouteMessageBuilder};
 use tokio::task::JoinHandle;
 
-use crate::backend::wg::config::{AllowedIp, InterfaceAddress};
+use crate::core::config::{AllowedIp, InterfaceAddress};
 
 use super::NetworkError;
 

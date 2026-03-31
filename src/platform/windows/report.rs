@@ -1,5 +1,5 @@
-use crate::backend::wg::config::InterfaceAddress;
-use crate::backend::wg::route_plan::{
+use crate::core::config::InterfaceAddress;
+use crate::core::route_plan::{
     RouteApplyFailureKind, RouteApplyKind, RouteApplyReport, RoutePlan,
 };
 use crate::platform::{NetworkApplyError, NetworkApplyResult};

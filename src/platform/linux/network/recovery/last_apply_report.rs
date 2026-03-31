@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::super::NetworkError;
-use crate::backend::wg::route_plan::RouteApplyReport;
+use crate::core::route_plan::RouteApplyReport;
 
 const LAST_APPLY_REPORT_FILE: &str = "last-apply-report.json";
 

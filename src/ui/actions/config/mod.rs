@@ -26,7 +26,7 @@ use gpui_component::{
     input::{InputEvent, InputState, TabSize},
     ActiveTheme as _, WindowExt,
 };
-use r_wg::backend::wg::config;
+use r_wg::core::config;
 
 use super::super::persistence;
 use super::super::state::{

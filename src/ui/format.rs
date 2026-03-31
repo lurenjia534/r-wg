@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::time::Duration;
 
-use r_wg::backend::wg::config::{self, RouteTable};
 use r_wg::backend::wg::PeerStats;
+use r_wg::core::config::{self, RouteTable};
 
 pub struct PeerSummary {
     pub peer_count: usize,

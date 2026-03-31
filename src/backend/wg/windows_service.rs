@@ -11,9 +11,9 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
 use super::ipc::{
-    map_backend_error, protocol_mismatch, read_json_line, unexpected_reply, write_json_line,
-    BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
+    read_json_line, write_json_line, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
 };
+use super::ipc_client::{self, BackendTransport};
 use super::windows_pipe::PipeStream;
 use super::windows_service_host;
 use super::windows_service_manager;
@@ -130,87 +130,36 @@ impl Engine {
 
     pub fn apply_report(
         &self,
-    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
+    ) -> Result<Option<crate::core::route_plan::RouteApplyReport>, EngineError> {
         self.inner.apply_report()
     }
 }
 
 impl RemoteEngine {
     fn info(&self) -> Result<u32, EngineError> {
-        match self.send_command_raw(BackendCommand::Info) {
-            Ok(BackendReply::Info { protocol_version }) => Ok(protocol_version),
-            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
-            Ok(other) => Err(unexpected_reply(other)),
-            Err(err) if is_missing_backend_error(&err) => Err(EngineError::ChannelClosed),
-            Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
-            Err(err) => Err(connect_error(err)),
-        }
+        ipc_client::info(self)
     }
 
     fn start(&self, request: StartRequest) -> Result<(), EngineError> {
-        self.check_protocol()?;
-        let reply = self
-            .send_command_raw(BackendCommand::Start { request })
-            .map_err(connect_error)?;
-        self.expect_unit(reply)
+        ipc_client::start(self, request)
     }
 
     fn stop(&self) -> Result<(), EngineError> {
-        match self.send_command_raw(BackendCommand::Stop) {
-            Ok(reply) => self.expect_unit(reply),
-            Err(err) if is_missing_backend_error(&err) => Err(EngineError::NotRunning),
-            Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
-            Err(err) => Err(connect_error(err)),
-        }
+        ipc_client::stop(self, EngineError::NotRunning)
     }
 
     fn status(&self) -> Result<EngineStatus, EngineError> {
-        match self.send_command_raw(BackendCommand::Status) {
-            Ok(BackendReply::Status { status }) => Ok(status),
-            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
-            Ok(other) => Err(unexpected_reply(other)),
-            Err(err) if is_missing_backend_error(&err) => Ok(EngineStatus::Stopped),
-            Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
-            Err(err) => Err(connect_error(err)),
-        }
+        ipc_client::status(self)
     }
 
     fn stats(&self) -> Result<EngineStats, EngineError> {
-        match self.send_command_raw(BackendCommand::Stats) {
-            Ok(BackendReply::Stats { stats }) => Ok(stats),
-            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
-            Ok(other) => Err(unexpected_reply(other)),
-            Err(err) if is_missing_backend_error(&err) => Err(EngineError::NotRunning),
-            Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
-            Err(err) => Err(connect_error(err)),
-        }
+        ipc_client::stats(self, EngineError::NotRunning)
     }
 
     fn apply_report(
         &self,
-    ) -> Result<Option<crate::backend::wg::route_plan::RouteApplyReport>, EngineError> {
-        self.check_protocol()?;
-        match self.send_command_raw(BackendCommand::ApplyReport) {
-            Ok(BackendReply::ApplyReport { report }) => Ok(report),
-            Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
-            Ok(other) => Err(unexpected_reply(other)),
-            Err(err) if is_missing_backend_error(&err) => Err(EngineError::ChannelClosed),
-            Err(err) if is_access_denied_error(&err) => Err(EngineError::AccessDenied),
-            Err(err) => Err(connect_error(err)),
-        }
-    }
-
-    fn check_protocol(&self) -> Result<(), EngineError> {
-        match self.info() {
-            Ok(protocol_version) => {
-                if protocol_version == IPC_PROTOCOL_VERSION {
-                    Ok(())
-                } else {
-                    Err(protocol_mismatch(IPC_PROTOCOL_VERSION, protocol_version))
-                }
-            }
-            Err(err) => Err(err),
-        }
+    ) -> Result<Option<crate::core::route_plan::RouteApplyReport>, EngineError> {
+        ipc_client::apply_report(self, EngineError::ChannelClosed)
     }
 
     fn send_command_raw(&self, command: BackendCommand) -> Result<BackendReply, io::Error> {
@@ -219,13 +168,23 @@ impl RemoteEngine {
         let mut reader = BufReader::new(stream);
         read_json_line(&mut reader)
     }
+}
 
-    fn expect_unit(&self, reply: BackendReply) -> Result<(), EngineError> {
-        match reply {
-            BackendReply::Ok => Ok(()),
-            BackendReply::Error { kind, message } => Err(map_backend_error(kind, message)),
-            other => Err(unexpected_reply(other)),
-        }
+impl BackendTransport for RemoteEngine {
+    fn send_command_raw(&self, command: BackendCommand) -> Result<BackendReply, io::Error> {
+        Self::send_command_raw(self, command)
+    }
+
+    fn connect_error(&self, err: io::Error) -> EngineError {
+        connect_error(err)
+    }
+
+    fn is_missing_backend_error(&self, err: &io::Error) -> bool {
+        is_missing_backend_error(err)
+    }
+
+    fn is_access_denied_error(&self, err: &io::Error) -> bool {
+        is_access_denied_error(err)
     }
 }
 

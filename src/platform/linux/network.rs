@@ -12,8 +12,8 @@ mod routes;
 
 use rtnetlink::{LinkMessageBuilder, LinkUnspec};
 
-use crate::backend::wg::config::{InterfaceAddress, RouteTable, WireGuardConfig};
-use crate::backend::wg::route_plan::{
+use crate::core::config::{InterfaceAddress, RouteTable, WireGuardConfig};
+use crate::core::route_plan::{
     RouteApplyFailureKind, RouteApplyKind, RouteApplyReport, RoutePlan, RoutePlanFamily,
     RoutePlanPlatform, RoutePlanRouteKind, RoutePlanRouteOp,
 };
