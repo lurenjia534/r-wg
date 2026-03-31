@@ -21,7 +21,7 @@ pub(crate) struct SampledRuntimeMetrics {
 pub(crate) fn start_stats_polling(app: &mut WgApp, cx: &mut Context<WgApp>) {
     app.stats.stats_generation = app.stats.stats_generation.wrapping_add(1);
     let generation = app.stats.stats_generation;
-    let engine = app.engine.clone();
+    let tunnel_session = app.tunnel_session.clone();
     let poll_interval = Duration::from_secs(2);
 
     cx.spawn(async move |view, cx| loop {
@@ -48,10 +48,10 @@ pub(crate) fn start_stats_polling(app: &mut WgApp, cx: &mut Context<WgApp>) {
             break;
         };
 
-        let engine = engine.clone();
+        let tunnel_session = tunnel_session.clone();
         let (result, sampled) = cx
             .background_spawn(async move {
-                let result = engine.stats();
+                let result = tunnel_session.stats();
                 let iface = running_name.as_deref().and_then(read_interface_stats);
                 let sampled = SampledRuntimeMetrics {
                     iface_rx: iface.map(|(rx, _)| rx),

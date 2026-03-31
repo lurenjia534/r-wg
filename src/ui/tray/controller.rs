@@ -1,5 +1,5 @@
 use gpui::{AnyWindowHandle, App, Global, UpdateGlobal};
-use r_wg::backend::wg::Engine;
+use r_wg::application::TunnelSessionService;
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::ui::features::session::lifecycle;
@@ -29,7 +29,7 @@ pub(super) fn init(
     primary: PrimaryInstance,
     window_handle: AnyWindowHandle,
     view: gpui::WeakEntity<WgApp>,
-    engine: Engine,
+    tunnel_session: TunnelSessionService,
     cx: &mut App,
 ) {
     let (tx, rx) = mpsc::channel();
@@ -42,7 +42,7 @@ pub(super) fn init(
     );
     attach_activation_bridge(&primary, tx);
 
-    start_command_loop(primary, rx, window_handle, view, engine, cx);
+    start_command_loop(primary, rx, window_handle, view, tunnel_session, cx);
 }
 
 /// 判断关闭窗口时是否应拦截为“最小化到托盘”。
@@ -63,12 +63,12 @@ fn start_command_loop(
     rx: mpsc::Receiver<TrayCommand>,
     window_handle: AnyWindowHandle,
     view: gpui::WeakEntity<WgApp>,
-    engine: Engine,
+    tunnel_session: TunnelSessionService,
     cx: &mut App,
 ) {
     let rx = Arc::new(Mutex::new(rx));
     let view_handle = view.clone();
-    let engine_handle = engine.clone();
+    let tunnel_session_handle = tunnel_session.clone();
 
     cx.spawn(async move |cx| {
         let _single_instance_guard = primary;
@@ -95,7 +95,7 @@ fn start_command_loop(
                     });
                 }
                 TrayCommand::QuitApp => {
-                    request_quit(view_handle.clone(), engine_handle.clone(), cx).await;
+                    request_quit(view_handle.clone(), tunnel_session_handle.clone(), cx).await;
                 }
             }
         }
@@ -127,11 +127,15 @@ fn attach_activation_bridge(primary: &PrimaryInstance, tx: mpsc::Sender<TrayComm
 /// - 先尝试停止隧道；
 /// - 对“已经停止/通道已关闭”视为可退出；
 /// - 停止失败时保留应用并在 UI 显示错误。
-async fn request_quit(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut gpui::AsyncApp) {
+async fn request_quit(
+    view: gpui::WeakEntity<WgApp>,
+    tunnel_session: TunnelSessionService,
+    cx: &mut gpui::AsyncApp,
+) {
     #[cfg(target_os = "windows")]
     {
         let _ = view;
-        let _ = engine;
+        let _ = tunnel_session;
         platform::shutdown_tray();
         let _ = cx.update(|app| app.quit());
         return;
@@ -139,7 +143,7 @@ async fn request_quit(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut gp
 
     #[cfg(not(target_os = "windows"))]
     {
-        let should_quit = lifecycle::request_shutdown_stop(view, engine, cx).await;
+        let should_quit = lifecycle::request_shutdown_stop(view, tunnel_session, cx).await;
         if should_quit {
             platform::shutdown_tray();
             let _ = cx.update(|app| app.quit());

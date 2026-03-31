@@ -3,7 +3,7 @@ mod platform;
 mod types;
 
 use gpui::{AnyWindowHandle, App, Window};
-use r_wg::backend::wg::Engine;
+use r_wg::application::TunnelSessionService;
 
 use super::single_instance::PrimaryInstance;
 use super::state::WgApp;
@@ -18,10 +18,10 @@ pub(crate) fn init(
     primary: PrimaryInstance,
     window_handle: AnyWindowHandle,
     view: gpui::WeakEntity<WgApp>,
-    engine: Engine,
+    tunnel_session: TunnelSessionService,
     cx: &mut App,
 ) {
-    controller::init(primary, window_handle, view, engine, cx);
+    controller::init(primary, window_handle, view, tunnel_session, cx);
 }
 
 /// 判断关闭窗口时是否应拦截为“最小化到托盘”。

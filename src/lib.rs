@@ -1,5 +1,6 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+pub mod application;
 pub mod backend;
 pub mod core;
 pub mod dns;

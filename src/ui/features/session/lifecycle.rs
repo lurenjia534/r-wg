@@ -1,5 +1,5 @@
 use gpui::{App, AppContext, AsyncApp, WeakEntity};
-use r_wg::backend::wg::Engine;
+use r_wg::application::TunnelSessionService;
 #[cfg(not(target_os = "windows"))]
 use r_wg::backend::wg::EngineError;
 #[cfg(target_os = "windows")]
@@ -10,22 +10,25 @@ use crate::ui::state::WgApp;
 use super::controller;
 
 #[cfg(target_os = "windows")]
-pub(crate) fn sync_engine_status(view: WeakEntity<WgApp>, engine: Engine, cx: &mut App) {
+pub(crate) fn sync_engine_status(
+    view: WeakEntity<WgApp>,
+    tunnel_session: TunnelSessionService,
+    cx: &mut App,
+) {
     cx.spawn(async move |cx| {
-        let (status_result, apply_report) = cx
-            .background_spawn(async move {
-                let status = engine.status();
-                let apply_report = engine.apply_report().ok().flatten();
-                (status, apply_report)
-            })
+        let snapshot_result = cx
+            .background_spawn(async move { tunnel_session.runtime_snapshot() })
             .await;
         let _ = view.update(cx, |this, cx| {
-            if !matches!(status_result, Ok(EngineStatus::Running)) {
+            let Ok(snapshot) = snapshot_result else {
+                return;
+            };
+            if !matches!(snapshot.status, EngineStatus::Running) {
                 return;
             }
             this.runtime.running = true;
             this.runtime.busy = false;
-            this.runtime.set_last_apply_report(apply_report);
+            this.runtime.set_last_apply_report(snapshot.apply_report);
             // helper 恢复场景下不一定拿得到原始配置名，先放通用占位避免 UI 空白。
             if this.runtime.running_name.is_none() {
                 this.runtime.running_name = Some("Tunnel".to_string());
@@ -40,10 +43,14 @@ pub(crate) fn sync_engine_status(view: WeakEntity<WgApp>, engine: Engine, cx: &m
     .detach();
 }
 
-pub(crate) fn sync_apply_report(view: WeakEntity<WgApp>, engine: Engine, cx: &mut App) {
+pub(crate) fn sync_apply_report(
+    view: WeakEntity<WgApp>,
+    tunnel_session: TunnelSessionService,
+    cx: &mut App,
+) {
     cx.spawn(async move |cx| {
         let result = cx
-            .background_spawn(async move { engine.apply_report() })
+            .background_spawn(async move { tunnel_session.apply_report() })
             .await;
         let _ = view.update(cx, |this, cx| {
             if let Ok(report) = result {
@@ -58,7 +65,7 @@ pub(crate) fn sync_apply_report(view: WeakEntity<WgApp>, engine: Engine, cx: &mu
 #[cfg(not(target_os = "windows"))]
 pub(crate) async fn request_shutdown_stop(
     view: WeakEntity<WgApp>,
-    engine: Engine,
+    tunnel_session: TunnelSessionService,
     cx: &mut AsyncApp,
 ) -> bool {
     let mut was_running = false;
@@ -73,7 +80,7 @@ pub(crate) async fn request_shutdown_stop(
 
     let result = cx
         .background_executor()
-        .spawn(async move { engine.stop() })
+        .spawn(async move { tunnel_session.stop() })
         .await;
     let should_finish = matches!(
         &result,

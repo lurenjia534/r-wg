@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Context, Entity, Window};
 use gpui_component::input::{InputEvent, InputState};
+use r_wg::application::ConfigLibraryService;
 use r_wg::core::config;
 
 use crate::ui::state::{
@@ -469,7 +470,7 @@ pub(crate) async fn resolve_active_config_text_request(
     let Some(path) = request.storage_path.clone() else {
         return Err("No active config text is available.".to_string());
     };
-    let text = std::fs::read_to_string(&path).map_err(|err| format!("Read failed: {err}"))?;
+    let text = ConfigLibraryService::new().read_config_text(&path)?;
 
     Ok(ResolvedActiveConfigText {
         identity: request.identity,

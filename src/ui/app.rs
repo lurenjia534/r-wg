@@ -3,6 +3,7 @@ use gpui::*;
 use gpui_component::Root;
 use gpui_component_assets::Assets;
 // Engine 负责隧道生命周期；EngineError 用于区分停止时的错误类型。
+use r_wg::application::TunnelSessionService;
 use r_wg::backend::wg::Engine;
 // 关闭流程需要跨异步任务共享状态，因此使用原子布尔标记。
 #[cfg(not(target_os = "windows"))]
@@ -31,7 +32,7 @@ struct StartupThemePrefs {
 
 pub fn run(primary: PrimaryInstance) {
     // 在 UI 启动前先创建后端引擎，供整个应用生命周期复用。
-    let engine = Engine::new();
+    let tunnel_session = TunnelSessionService::new(Engine::new());
 
     Application::new()
         .with_assets(Assets)
@@ -69,7 +70,7 @@ pub fn run(primary: PrimaryInstance) {
                 cx,
             );
 
-            let engine = engine.clone();
+            let tunnel_session = tunnel_session.clone();
             let primary = primary;
             cx.open_window(
                 WindowOptions {
@@ -79,10 +80,10 @@ pub fn run(primary: PrimaryInstance) {
                 move |window, cx| {
                     // 创建应用状态并挂到窗口根视图。
                     let startup_theme = startup_theme.clone();
-                    let view_engine = engine.clone();
+                    let view_tunnel_session = tunnel_session.clone();
                     let view = cx.new(move |_cx| {
                         WgApp::new(
-                            view_engine.clone(),
+                            view_tunnel_session.clone(),
                             startup_theme.appearance_policy,
                             startup_theme.resolved_mode,
                             startup_theme.light_key.clone(),
@@ -96,23 +97,31 @@ pub fn run(primary: PrimaryInstance) {
                     });
                     // 弱引用：窗口关闭后不会阻止资源释放。
                     let view_handle = view.downgrade();
-                    lifecycle::sync_apply_report(view_handle.clone(), engine.clone(), cx);
+                    lifecycle::sync_apply_report(
+                        view_handle.clone(),
+                        tunnel_session.clone(),
+                        cx,
+                    );
                     // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。
                     #[cfg(target_os = "windows")]
-                    lifecycle::sync_engine_status(view_handle.clone(), engine.clone(), cx);
+                    lifecycle::sync_engine_status(
+                        view_handle.clone(),
+                        tunnel_session.clone(),
+                        cx,
+                    );
                     // 初始化系统托盘并启动命令监听。
                     tray::init(
                         primary.clone(),
                         window.window_handle(),
                         view_handle.clone(),
-                        engine.clone(),
+                        tunnel_session.clone(),
                         cx,
                     );
                     // 防止重复触发关闭逻辑（多次点击关闭按钮）。
                     #[cfg(not(target_os = "windows"))]
                     let closing = Arc::new(AtomicBool::new(false));
                     #[cfg(not(target_os = "windows"))]
-                    let close_engine = engine.clone();
+                    let close_tunnel_session = tunnel_session.clone();
                     #[cfg(not(target_os = "windows"))]
                     let close_flag = Arc::clone(&closing);
 
@@ -140,12 +149,12 @@ pub fn run(primary: PrimaryInstance) {
                             // 克隆需要跨异步任务使用的引用/标记。
                             let view_handle = view_handle.clone();
                             let close_flag = Arc::clone(&close_flag);
-                            let engine = close_engine.clone();
+                            let tunnel_session = close_tunnel_session.clone();
                             // 在 UI 线程启动异步任务，后台线程执行 engine.stop()。
                             cx.spawn(async move |cx| {
                                 let should_close = lifecycle::request_shutdown_stop(
                                     view_handle.clone(),
-                                    engine,
+                                    tunnel_session,
                                     cx,
                                 )
                                 .await;

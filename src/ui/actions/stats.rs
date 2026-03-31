@@ -12,6 +12,7 @@ impl WgApp {
 #[cfg(test)]
 mod tests {
     use gpui_component::theme::ThemeMode;
+    use r_wg::application::TunnelSessionService;
 
     use crate::ui::features::session::polling::{
         read_process_rss_bytes, record_traffic, SampledRuntimeMetrics,
@@ -21,7 +22,7 @@ mod tests {
 
     fn make_app() -> WgApp {
         WgApp::new(
-            r_wg::backend::wg::Engine::new(),
+            TunnelSessionService::new(r_wg::backend::wg::Engine::new()),
             AppearancePolicy::Dark,
             ThemeMode::Dark,
             None,

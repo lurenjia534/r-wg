@@ -4,7 +4,7 @@ use gpui::{SharedString, Timer, Window};
 use gpui_component::notification::Notification;
 use gpui_component::theme::ThemeMode;
 use gpui_component::WindowExt;
-use r_wg::backend::wg::Engine;
+use r_wg::application::{BackendAdminService, ConfigLibraryService, TunnelSessionService};
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use crate::ui::features::themes::{self, AppearancePolicy};
@@ -18,7 +18,9 @@ use super::{
 // WgApp facade and UI preference/session mutation helpers.
 
 pub(crate) struct WgApp {
-    pub(crate) engine: Engine,
+    pub(crate) tunnel_session: TunnelSessionService,
+    pub(crate) backend_admin: BackendAdminService,
+    pub(crate) config_library: ConfigLibraryService,
     pub(crate) configs: ConfigsState,
     pub(crate) selection: SelectionState,
     pub(crate) runtime: RuntimeState,
@@ -31,7 +33,7 @@ pub(crate) struct WgApp {
 
 impl WgApp {
     pub(crate) fn new(
-        engine: Engine,
+        tunnel_session: TunnelSessionService,
         appearance_policy: AppearancePolicy,
         resolved_theme_mode: ThemeMode,
         theme_light_key: Option<SharedString>,
@@ -48,7 +50,9 @@ impl WgApp {
             theme_dark_name,
         );
         Self {
-            engine,
+            tunnel_session,
+            backend_admin: BackendAdminService::new(),
+            config_library: ConfigLibraryService::new(),
             configs: ConfigsState::new(),
             selection: SelectionState::new(),
             runtime: RuntimeState::new(),

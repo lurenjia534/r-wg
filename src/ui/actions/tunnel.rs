@@ -28,6 +28,7 @@ mod tests {
     use std::time::Instant;
 
     use gpui_component::theme::ThemeMode;
+    use r_wg::application::TunnelSessionService;
 
     use super::*;
     use crate::ui::features::themes::AppearancePolicy;
@@ -35,7 +36,7 @@ mod tests {
 
     fn make_app() -> WgApp {
         WgApp::new(
-            r_wg::backend::wg::Engine::new(),
+            TunnelSessionService::new(r_wg::backend::wg::Engine::new()),
             AppearancePolicy::Dark,
             ThemeMode::Dark,
             None,
