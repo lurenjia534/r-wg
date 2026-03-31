@@ -143,17 +143,17 @@ pub fn run(primary: PrimaryInstance) {
                             let engine = close_engine.clone();
                             // 在 UI 线程启动异步任务，后台线程执行 engine.stop()。
                             cx.spawn(async move |cx| {
-                                let should_close =
-                                    lifecycle::request_shutdown_stop(
-                                        view_handle.clone(),
-                                        engine,
-                                        cx,
-                                    )
-                                    .await;
+                                let should_close = lifecycle::request_shutdown_stop(
+                                    view_handle.clone(),
+                                    engine,
+                                    cx,
+                                )
+                                .await;
                                 if should_close {
                                     // 停止成功（或已停止/通道关闭）：更新 UI 并关闭窗口。
-                                        // 实际移除窗口，触发关闭。
-                                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                                    // 实际移除窗口，触发关闭。
+                                    let _ =
+                                        handle.update(cx, |_, window, _| window.remove_window());
                                 } else {
                                     // 停止失败：保留窗口，允许再次尝试关闭。
                                     close_flag.store(false, Ordering::SeqCst);

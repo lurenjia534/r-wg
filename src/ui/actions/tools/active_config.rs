@@ -337,7 +337,8 @@ impl ToolsWorkspace {
         } else {
             ActiveConfigParseState::None
         };
-        let refresh_pending = bridge.request.is_some() && !can_keep_parse_state && !should_spawn_parse;
+        let refresh_pending =
+            bridge.request.is_some() && !can_keep_parse_state && !should_spawn_parse;
 
         if self.active_config.identity == bridge.snapshot.identity
             && self.active_config.source == bridge.snapshot.source
@@ -446,7 +447,9 @@ fn active_config_parse_state_matches(
         (ActiveConfigParseState::None, ActiveConfigParseState::None)
         | (ActiveConfigParseState::Loading, ActiveConfigParseState::Loading)
         | (ActiveConfigParseState::Ready(_), ActiveConfigParseState::Ready(_)) => true,
-        (ActiveConfigParseState::Invalid(left), ActiveConfigParseState::Invalid(right)) => left == right,
+        (ActiveConfigParseState::Invalid(left), ActiveConfigParseState::Invalid(right)) => {
+            left == right
+        }
         _ => false,
     }
 }

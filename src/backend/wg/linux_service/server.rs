@@ -6,9 +6,7 @@ use std::thread;
 use std::time::Instant;
 
 use super::super::engine::Engine as LocalEngine;
-use super::super::ipc::{
-    read_json_line, write_json_line, BackendCommand, BackendReply,
-};
+use super::super::ipc::{read_json_line, write_json_line, BackendCommand, BackendReply};
 use super::super::ipc_server::dispatch_command;
 use super::super::EngineStatus;
 use super::auth::{is_peer_allowed, peer_credentials};

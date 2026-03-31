@@ -14,8 +14,7 @@ use super::reachability::run_reachability_probe_with_cancel_async;
 use crate::ui::state::{
     AsyncJobState, JobCancelHandle, ReachabilityAuditPhase, ReachabilityAuditProgress,
     ReachabilityAuditRequest, ReachabilityAuditViewModel, ReachabilityBatchResult,
-    ReachabilityBatchRow,
-    ReachabilityBatchStatus, ToolsWorkspace,
+    ReachabilityBatchRow, ReachabilityBatchStatus, ToolsWorkspace,
 };
 
 const REACHABILITY_BATCH_CONCURRENCY: usize = 24;
@@ -152,13 +151,7 @@ fn build_batch_reachability_result_blocking(
         .build()
         .map_err(|err| format!("Failed to initialize batch reachability runtime: {err}"))?;
     runtime.block_on(async move {
-        let result = build_batch_reachability_result(
-            requests,
-            request,
-            cancel,
-            progress,
-        )
-        .await?;
+        let result = build_batch_reachability_result(requests, request, cancel, progress).await?;
         Ok(ReachabilityAuditViewModel { request, result })
     })
 }
@@ -324,14 +317,14 @@ async fn build_batch_reachability_result(
     let issue_rows = rows
         .iter()
         .filter(|row| {
-                matches!(
-                    row.status,
-                    ReachabilityBatchStatus::ParseError
-                        | ReachabilityBatchStatus::ReadError
-                        | ReachabilityBatchStatus::NoEndpoint
-                )
-            })
-            .count();
+            matches!(
+                row.status,
+                ReachabilityBatchStatus::ParseError
+                    | ReachabilityBatchStatus::ReadError
+                    | ReachabilityBatchStatus::NoEndpoint
+            )
+        })
+        .count();
 
     update_progress(&progress, |state| {
         state.phase = ReachabilityAuditPhase::Completed;

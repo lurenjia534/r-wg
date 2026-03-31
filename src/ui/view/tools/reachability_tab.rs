@@ -58,10 +58,17 @@ pub(super) fn render_reachability_tab(
         .child(Tab::new().label(ReachabilityTab::Single.label()).small())
         .child(Tab::new().label(ReachabilityTab::Audit.label()).small());
 
-    let form = v_flex().gap_3().child(sub_tabs).child(match workspace.reachability.active_tab {
-        ReachabilityTab::Single => render_single_form(workspace, window, inputs_disabled, cx).into_any_element(),
-        ReachabilityTab::Audit => render_audit_form(workspace, inputs_disabled, cx).into_any_element(),
-    });
+    let form = v_flex()
+        .gap_3()
+        .child(sub_tabs)
+        .child(match workspace.reachability.active_tab {
+            ReachabilityTab::Single => {
+                render_single_form(workspace, window, inputs_disabled, cx).into_any_element()
+            }
+            ReachabilityTab::Audit => {
+                render_audit_form(workspace, inputs_disabled, cx).into_any_element()
+            }
+        });
 
     let result = render_reachability_result_panel(workspace, window, cx);
 
@@ -81,7 +88,13 @@ pub(super) fn render_reachability_tab(
             .flex_1()
             .min_h(px(0.0))
             .items_start()
-            .child(div().w(px(460.0)).min_w(px(360.0)).max_w(px(520.0)).child(form))
+            .child(
+                div()
+                    .w(px(460.0))
+                    .min_w(px(360.0))
+                    .max_w(px(520.0))
+                    .child(form),
+            )
             .child(div().flex_1().min_w(px(0.0)).child(result))
     }
 }
@@ -309,27 +322,34 @@ fn render_reachability_toggles(
     set_stop_mode: impl Fn(&mut ToolsWorkspace, bool) -> bool + 'static + Copy,
     cx: &mut Context<ToolsWorkspace>,
 ) -> GroupBox {
-    let (mode_group_id, mode_resolve_id, mode_tcp_id, family_group_id, stop_group_id, stop_first_id, stop_all_id) =
-        match tab {
-            ReachabilityTab::Single => (
-                "tools-single-mode",
-                "tools-single-mode-resolve",
-                "tools-single-mode-tcp",
-                "tools-single-family",
-                "tools-single-stop",
-                "tools-single-stop-first",
-                "tools-single-stop-all",
-            ),
-            ReachabilityTab::Audit => (
-                "tools-audit-mode",
-                "tools-audit-mode-resolve",
-                "tools-audit-mode-tcp",
-                "tools-audit-family",
-                "tools-audit-stop",
-                "tools-audit-stop-first",
-                "tools-audit-stop-all",
-            ),
-        };
+    let (
+        mode_group_id,
+        mode_resolve_id,
+        mode_tcp_id,
+        family_group_id,
+        stop_group_id,
+        stop_first_id,
+        stop_all_id,
+    ) = match tab {
+        ReachabilityTab::Single => (
+            "tools-single-mode",
+            "tools-single-mode-resolve",
+            "tools-single-mode-tcp",
+            "tools-single-family",
+            "tools-single-stop",
+            "tools-single-stop-first",
+            "tools-single-stop-all",
+        ),
+        ReachabilityTab::Audit => (
+            "tools-audit-mode",
+            "tools-audit-mode-resolve",
+            "tools-audit-mode-tcp",
+            "tools-audit-family",
+            "tools-audit-stop",
+            "tools-audit-stop-first",
+            "tools-audit-stop-all",
+        ),
+    };
     let mode_group = ButtonGroup::new(mode_group_id)
         .outline()
         .compact()
@@ -545,7 +565,9 @@ fn render_reachability_result_panel(
             .when_some(active_notice, |this, message| {
                 this.child(warning_banner(message, cx))
             })
-            .when_some(active_error, |this, message| this.child(error_banner(message, cx)))
+            .when_some(active_error, |this, message| {
+                this.child(error_banner(message, cx))
+            })
             .child(match workspace.reachability.active_tab {
                 ReachabilityTab::Single => render_single_result(workspace, cx).into_any_element(),
                 ReachabilityTab::Audit => {
@@ -615,12 +637,9 @@ fn render_reachability_result(
         .when(
             result.mode != ReachabilityMode::ResolveOnly && !result.attempts.is_empty(),
             |this| {
-            this.child(
-                GroupBox::new().fill().title("Attempts".to_string()).child(
-                    div()
-                        .max_h(px(280.0))
-                        .overflow_y_scrollbar()
-                        .child(
+                this.child(
+                    GroupBox::new().fill().title("Attempts".to_string()).child(
+                        div().max_h(px(280.0)).overflow_y_scrollbar().child(
                             v_flex()
                                 .gap_2()
                                 .children(result.attempts.iter().map(|attempt| {
@@ -665,10 +684,11 @@ fn render_reachability_result(
                                                 ),
                                         )
                                 })),
+                        ),
                     ),
-                ),
-            )
-        })
+                )
+            },
+        )
 }
 
 fn render_audit_result(
@@ -744,19 +764,17 @@ fn render_audit_result(
                                             .rounded_full()
                                             .child(format!("{} endpoints", result.endpoint_rows)),
                                     )
-                                    .child(
-                                        if audit_mode == ReachabilityMode::ResolveOnly {
-                                            Tag::info()
-                                                .small()
-                                                .rounded_full()
-                                                .child(format!("{} resolved", result.resolved_rows))
-                                        } else {
-                                            Tag::success()
-                                                .small()
-                                                .rounded_full()
-                                                .child(format!("{} reachable", result.reachable_rows))
-                                        },
-                                    )
+                                    .child(if audit_mode == ReachabilityMode::ResolveOnly {
+                                        Tag::info()
+                                            .small()
+                                            .rounded_full()
+                                            .child(format!("{} resolved", result.resolved_rows))
+                                    } else {
+                                        Tag::success()
+                                            .small()
+                                            .rounded_full()
+                                            .child(format!("{} reachable", result.reachable_rows))
+                                    })
                                     .when(result.partial_rows > 0, |this| {
                                         this.child(
                                             Tag::warning()
@@ -790,18 +808,18 @@ fn render_audit_result(
                                     .min_h(px(220.0))
                                     .overflow_hidden()
                                     .child(if filtered_indices.is_empty() {
-                                    empty_result_state("No rows match the current filter.", cx)
-                                        .into_any_element()
-                                } else {
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .min_h(px(0.0))
-                                        .child(list)
-                                        .child(Scrollbar::vertical(&scroll_handle))
-                                        .into_any_element()
-                                }),
+                                        empty_result_state("No rows match the current filter.", cx)
+                                            .into_any_element()
+                                    } else {
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .flex_1()
+                                            .min_h(px(0.0))
+                                            .child(list)
+                                            .child(Scrollbar::vertical(&scroll_handle))
+                                            .into_any_element()
+                                    }),
                             ),
                     ),
             )
@@ -888,38 +906,36 @@ fn render_audit_filter_bar(
         .gap_3()
         .flex_wrap()
         .child(
-            h_flex()
-                .items_center()
-                .gap_2()
-                .flex_wrap()
-                .child(
-                    ButtonGroup::new("tools-reach-audit-filter")
-                        .outline()
-                        .compact()
-                        .small()
-                        .child(audit_filter_button(
-                            ReachabilityAuditFilter::All,
-                            workspace.reachability.audit_filter,
-                            cx,
-                        ))
-                        .child(audit_filter_button(
-                            ReachabilityAuditFilter::Failures,
-                            workspace.reachability.audit_filter,
-                            cx,
-                        ))
-                        .child(audit_filter_button(
-                            ReachabilityAuditFilter::Issues,
-                            workspace.reachability.audit_filter,
-                            cx,
-                        )),
-                )
+            h_flex().items_center().gap_2().flex_wrap().child(
+                ButtonGroup::new("tools-reach-audit-filter")
+                    .outline()
+                    .compact()
+                    .small()
+                    .child(audit_filter_button(
+                        ReachabilityAuditFilter::All,
+                        workspace.reachability.audit_filter,
+                        cx,
+                    ))
+                    .child(audit_filter_button(
+                        ReachabilityAuditFilter::Failures,
+                        workspace.reachability.audit_filter,
+                        cx,
+                    ))
+                    .child(audit_filter_button(
+                        ReachabilityAuditFilter::Issues,
+                        workspace.reachability.audit_filter,
+                        cx,
+                    )),
+            ),
         )
-        .child(v_flex().gap_1().items_end().child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(format!("{visible_rows} visible rows")),
-        ))
+        .child(
+            v_flex().gap_1().items_end().child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("{visible_rows} visible rows")),
+            ),
+        )
 }
 
 fn render_audit_row(row: &ReachabilityBatchRow, cx: &mut App) -> Div {

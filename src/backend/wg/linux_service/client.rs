@@ -144,7 +144,6 @@ impl RemoteEngine {
         let mut reader = BufReader::new(stream);
         read_json_line(&mut reader)
     }
-
 }
 
 impl BackendTransport for RemoteEngine {

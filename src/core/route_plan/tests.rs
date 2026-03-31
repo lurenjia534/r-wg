@@ -1,8 +1,8 @@
-use crate::core::dns::{DnsMode, DnsPreset};
+use super::*;
 use crate::core::config::{
     AllowedIp, InterfaceConfig, Key, PeerConfig, RouteTable, WireGuardConfig,
 };
-use super::*;
+use crate::core::dns::{DnsMode, DnsPreset};
 
 fn key(value: &str) -> Key {
     value.parse().unwrap()

@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 
-use crate::core::config::{AllowedIp, PeerConfig, RouteTable, WireGuardConfig};
-use crate::core::dns::{apply_dns_selection, DnsSelection};
 use super::{
     FullTunnelStatus, RoutePlanPlatform, DEFAULT_FULL_TUNNEL_FWMARK, LINUX_DEFAULT_POLICY_TABLE_ID,
 };
+use crate::core::config::{AllowedIp, PeerConfig, RouteTable, WireGuardConfig};
+use crate::core::dns::{apply_dns_selection, DnsSelection};
 
 pub fn normalize_config_for_runtime(
     mut config: WireGuardConfig,

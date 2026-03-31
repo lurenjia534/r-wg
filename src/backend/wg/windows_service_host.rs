@@ -15,9 +15,7 @@ use windows::Win32::System::Services::{
 };
 
 use super::engine::Engine as LocalEngine;
-use super::ipc::{
-    read_json_line, write_json_line, BackendCommand,
-};
+use super::ipc::{read_json_line, write_json_line, BackendCommand};
 use super::ipc_server::dispatch_command;
 use super::windows_service::SERVICE_NAME;
 use super::{EngineError, EngineStatus};

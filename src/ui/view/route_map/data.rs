@@ -5,10 +5,11 @@ use std::sync::Arc;
 use gpui::SharedString;
 use r_wg::core::config::RouteTable;
 use r_wg::core::route_plan::{
-    normalize_config_for_runtime, OperationalRoutePlan, RouteApplyAttemptState as BackendRouteApplyAttemptState,
-    RouteApplyEntry, RouteApplyFailureKind as BackendRouteApplyFailureKind,
-    RouteApplyKind as BackendRouteApplyKind, RouteApplyPhase as BackendRouteApplyPhase,
-    RouteApplyReport as BackendRouteApplyReport, RouteApplyReportSource as BackendRouteApplyReportSource,
+    normalize_config_for_runtime, OperationalRoutePlan,
+    RouteApplyAttemptState as BackendRouteApplyAttemptState, RouteApplyEntry,
+    RouteApplyFailureKind as BackendRouteApplyFailureKind, RouteApplyKind as BackendRouteApplyKind,
+    RouteApplyPhase as BackendRouteApplyPhase, RouteApplyReport as BackendRouteApplyReport,
+    RouteApplyReportSource as BackendRouteApplyReportSource,
     RouteApplyStatus as BackendRouteApplyStatus, RoutePlanPlatform,
 };
 use r_wg::dns::DnsSelection;

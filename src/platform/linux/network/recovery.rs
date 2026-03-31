@@ -440,8 +440,7 @@ mod tests {
 
     #[test]
     fn persisted_report_round_trips_separately_from_journal_contract() {
-        let report =
-            RouteApplyReport::new(crate::core::route_plan::RoutePlanPlatform::Linux);
+        let report = RouteApplyReport::new(crate::core::route_plan::RoutePlanPlatform::Linux);
         let _ = report;
     }
 }

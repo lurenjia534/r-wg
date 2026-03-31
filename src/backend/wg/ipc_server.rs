@@ -1,5 +1,7 @@
 use super::engine::Engine as LocalEngine;
-use super::ipc::{error_reply, option_reply, unit_reply, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION};
+use super::ipc::{
+    error_reply, option_reply, unit_reply, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
+};
 
 pub(crate) fn dispatch_command(engine: &LocalEngine, command: BackendCommand) -> BackendReply {
     match command {

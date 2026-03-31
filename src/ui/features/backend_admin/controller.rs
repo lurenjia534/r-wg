@@ -39,9 +39,8 @@ pub(crate) fn run_privileged_backend_action(
     };
     let last_checked = app.ui.backend.checked_at;
     app.set_status(format!("{verb} privileged backend..."));
-    app.ui.set_backend_diagnostic(
-        BackendDiagnostic::working(action).with_checked_at(last_checked),
-    );
+    app.ui
+        .set_backend_diagnostic(BackendDiagnostic::working(action).with_checked_at(last_checked));
     cx.notify();
 
     cx.spawn(async move |view, cx| {

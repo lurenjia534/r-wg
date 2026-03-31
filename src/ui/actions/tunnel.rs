@@ -31,7 +31,7 @@ mod tests {
 
     use super::*;
     use crate::ui::features::themes::AppearancePolicy;
-    use crate::ui::state::{ConfigSource, EndpointFamily, RESTART_COOLDOWN, TunnelConfig};
+    use crate::ui::state::{ConfigSource, EndpointFamily, TunnelConfig, RESTART_COOLDOWN};
 
     fn make_app() -> WgApp {
         WgApp::new(

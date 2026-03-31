@@ -10,11 +10,7 @@ use crate::ui::permissions::start_permission_message;
 use crate::ui::state::{TunnelConfig, WgApp};
 use crate::ui::tray;
 
-pub(crate) fn handle_start_stop(
-    app: &mut WgApp,
-    _window: &mut Window,
-    cx: &mut Context<WgApp>,
-) {
+pub(crate) fn handle_start_stop(app: &mut WgApp, _window: &mut Window, cx: &mut Context<WgApp>) {
     handle_start_stop_core(app, cx);
 }
 
@@ -22,10 +18,10 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
     let draft = app.configs_draft_snapshot(cx);
     if app.runtime.busy {
         if app.runtime.running
-            && app.runtime.queue_pending_start(app.selection.build_pending_start(
-                &app.configs,
-                &app.runtime,
-            ))
+            && app.runtime.queue_pending_start(
+                app.selection
+                    .build_pending_start(&app.configs, &app.runtime),
+            )
         {
             app.set_status("Stopping... (queued start)");
             cx.notify();

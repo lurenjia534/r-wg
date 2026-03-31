@@ -11,12 +11,12 @@ use gotatun::device::{self, DefaultDeviceTransports, Device};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::core::config::{self, ConfigError};
+use crate::core::dns::DnsSelection;
 use crate::core::route_plan::{
     normalize_config_for_runtime, RouteApplyReport, RoutePlan, RoutePlanPlatform,
     DEFAULT_FULL_TUNNEL_FWMARK,
 };
-use crate::core::config::{self, ConfigError};
-use crate::core::dns::DnsSelection;
 use crate::log::events::engine as log_engine;
 use crate::platform;
 

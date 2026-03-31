@@ -5,8 +5,7 @@ use gpui::SharedString;
 use gpui_component::IconName;
 use r_wg::core::config::{AllowedIp, RouteTable, WireGuardConfig};
 use r_wg::core::route_plan::{
-    OperationalRoutePlan, RoutePlanBypassOp, RoutePlanFamily, RoutePlanPlatform,
-    RoutePlanRouteKind,
+    OperationalRoutePlan, RoutePlanBypassOp, RoutePlanFamily, RoutePlanPlatform, RoutePlanRouteKind,
 };
 
 use crate::ui::state::RouteFamilyFilter;

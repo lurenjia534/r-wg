@@ -1,7 +1,5 @@
 use crate::core::config::InterfaceAddress;
-use crate::core::route_plan::{
-    RouteApplyFailureKind, RouteApplyKind, RouteApplyReport, RoutePlan,
-};
+use crate::core::route_plan::{RouteApplyFailureKind, RouteApplyKind, RouteApplyReport, RoutePlan};
 use crate::platform::{NetworkApplyError, NetworkApplyResult};
 
 use super::adapter::AdapterInfo;

@@ -24,90 +24,86 @@ pub(crate) fn start_stats_polling(app: &mut WgApp, cx: &mut Context<WgApp>) {
     let engine = app.engine.clone();
     let poll_interval = Duration::from_secs(2);
 
-    cx.spawn(async move |view, cx| {
-        loop {
-            let should_continue = view
-                .update(cx, |this, _| {
-                    this.runtime.running && this.stats.stats_generation == generation
-                })
-                .unwrap_or(false);
-            if !should_continue {
-                break;
-            }
+    cx.spawn(async move |view, cx| loop {
+        let should_continue = view
+            .update(cx, |this, _| {
+                this.runtime.running && this.stats.stats_generation == generation
+            })
+            .unwrap_or(false);
+        if !should_continue {
+            break;
+        }
 
-            cx.background_executor().timer(poll_interval).await;
+        cx.background_executor().timer(poll_interval).await;
 
-            let poll_context = view
-                .update(cx, |this, _| {
-                    if !this.runtime.running || this.stats.stats_generation != generation {
-                        return None;
+        let poll_context = view
+            .update(cx, |this, _| {
+                if !this.runtime.running || this.stats.stats_generation != generation {
+                    return None;
+                }
+                Some(this.runtime.running_name.clone())
+            })
+            .unwrap_or(None);
+        let Some(running_name) = poll_context else {
+            break;
+        };
+
+        let engine = engine.clone();
+        let (result, sampled) = cx
+            .background_spawn(async move {
+                let result = engine.stats();
+                let iface = running_name.as_deref().and_then(read_interface_stats);
+                let sampled = SampledRuntimeMetrics {
+                    iface_rx: iface.map(|(rx, _)| rx),
+                    iface_tx: iface.map(|(_, tx)| tx),
+                    process_rss_bytes: read_process_rss_bytes(),
+                };
+                (result, sampled)
+            })
+            .await;
+
+        let continue_polling = view
+            .update(cx, |this, cx| {
+                if !this.runtime.running || this.stats.stats_generation != generation {
+                    return false;
+                }
+
+                let mut persist_due = false;
+                let mut status_changed = false;
+                match result {
+                    Ok(stats) => {
+                        persist_due = apply_stats(this, stats, sampled);
                     }
-                    Some(this.runtime.running_name.clone())
-                })
-                .unwrap_or(None);
-            let Some(running_name) = poll_context else {
-                break;
-            };
-
-            let engine = engine.clone();
-            let (result, sampled) = cx
-                .background_spawn(async move {
-                    let result = engine.stats();
-                    let iface = running_name.as_deref().and_then(read_interface_stats);
-                    let sampled = SampledRuntimeMetrics {
-                        iface_rx: iface.map(|(rx, _)| rx),
-                        iface_tx: iface.map(|(_, tx)| tx),
-                        process_rss_bytes: read_process_rss_bytes(),
-                    };
-                    (result, sampled)
-                })
-                .await;
-
-            let continue_polling = view
-                .update(cx, |this, cx| {
-                    if !this.runtime.running || this.stats.stats_generation != generation {
-                        return false;
-                    }
-
-                    let mut persist_due = false;
-                    let mut status_changed = false;
-                    match result {
-                        Ok(stats) => {
-                            persist_due = apply_stats(this, stats, sampled);
+                    Err(err) => {
+                        #[cfg(target_os = "windows")]
+                        if matches!(err, EngineError::NotRunning | EngineError::ChannelClosed) {
+                            super::controller::complete_stop_success(this, cx);
+                            cx.notify();
+                            return false;
                         }
-                        Err(err) => {
-                            #[cfg(target_os = "windows")]
-                            if matches!(err, EngineError::NotRunning | EngineError::ChannelClosed) {
-                                super::controller::complete_stop_success(this, cx);
-                                cx.notify();
-                                return false;
-                            }
-                            status_changed =
-                                this.stats.set_stats_error(format!("Stats failed: {err}"));
-                        }
+                        status_changed = this.stats.set_stats_error(format!("Stats failed: {err}"));
                     }
-                    if persist_due {
-                        this.persist_state_async(cx);
-                        this.stats.traffic.mark_persisted(Instant::now());
+                }
+                if persist_due {
+                    this.persist_state_async(cx);
+                    this.stats.traffic.mark_persisted(Instant::now());
+                }
+                let should_notify = match this.ui_session.sidebar_active {
+                    SidebarItem::Configs => {
+                        this.current_configs_inspector_tab(cx) == ConfigInspectorTab::Activity
                     }
-                    let should_notify = match this.ui_session.sidebar_active {
-                        SidebarItem::Configs => {
-                            this.current_configs_inspector_tab(cx)
-                                == ConfigInspectorTab::Activity
-                        }
-                        SidebarItem::Proxies => false,
-                        _ => true,
-                    };
-                    if should_notify || status_changed || persist_due {
-                        cx.notify();
-                    }
-                    true
-                })
-                .unwrap_or(false);
+                    SidebarItem::Proxies => false,
+                    _ => true,
+                };
+                if should_notify || status_changed || persist_due {
+                    cx.notify();
+                }
+                true
+            })
+            .unwrap_or(false);
 
-            if !continue_polling {
-                break;
-            }
+        if !continue_polling {
+            break;
         }
     })
     .detach();

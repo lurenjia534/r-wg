@@ -74,9 +74,7 @@ pub fn unit_reply(result: Result<(), EngineError>) -> BackendReply {
 }
 
 /// `Result<Option<T>>` -> 通用 IPC 响应。
-pub fn option_reply(
-    result: Result<Option<RouteApplyReport>, EngineError>,
-) -> BackendReply {
+pub fn option_reply(result: Result<Option<RouteApplyReport>, EngineError>) -> BackendReply {
     match result {
         Ok(report) => BackendReply::ApplyReport { report },
         Err(err) => error_reply(err),

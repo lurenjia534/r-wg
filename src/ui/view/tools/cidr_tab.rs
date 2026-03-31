@@ -97,7 +97,13 @@ pub(super) fn render_cidr_tab(
             .flex_1()
             .min_h(px(0.0))
             .items_start()
-            .child(div().w(px(460.0)).min_w(px(360.0)).max_w(px(520.0)).child(form))
+            .child(
+                div()
+                    .w(px(460.0))
+                    .min_w(px(360.0))
+                    .max_w(px(520.0))
+                    .child(form),
+            )
             .child(div().flex_1().min_w(px(0.0)).child(result))
     }
 }

@@ -134,7 +134,11 @@ impl ToolsWorkspace {
                 self.cidr.job = AsyncJobState::Ready(view_model.with_request(request));
                 self.active_tab = ToolsTab::Cidr;
                 let _ = self.app.update(cx, |app, cx| {
-                    app.push_success_toast("Loaded AllowedIPs into Include; Exclude cleared", window, cx);
+                    app.push_success_toast(
+                        "Loaded AllowedIPs into Include; Exclude cleared",
+                        window,
+                        cx,
+                    );
                 });
                 cx.notify();
             }
