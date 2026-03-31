@@ -167,10 +167,6 @@ pub(crate) fn save_state(paths: &StoragePaths, state: &PersistedState) -> Result
     write_atomic(&paths.state_path, &data)
 }
 
-pub(crate) fn write_config_text(path: &Path, text: &str) -> Result<(), String> {
-    write_atomic(path, text.as_bytes())
-}
-
 fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
     let tmp_path = path.with_extension("tmp");
     // 清理逻辑说明：
@@ -326,17 +322,4 @@ mod tests {
         fs::remove_dir_all(&paths.root).expect("temp storage should be cleaned up");
     }
 
-    #[test]
-    fn write_config_text_replaces_existing_contents() {
-        let paths = temp_storage_paths("write-config");
-        let path = config_path(&paths, 9);
-
-        write_config_text(&path, "first").expect("initial write should succeed");
-        write_config_text(&path, "second").expect("rewrite should succeed");
-
-        let text = fs::read_to_string(&path).expect("config file should be readable");
-        assert_eq!(text, "second");
-
-        fs::remove_dir_all(&paths.root).expect("temp storage should be cleaned up");
-    }
 }

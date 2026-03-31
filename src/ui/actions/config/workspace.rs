@@ -1,4 +1,5 @@
 use super::*;
+use gpui_component::input::InputState;
 
 impl WgApp {
     pub(crate) fn upsert_configs_workspace_library_row(

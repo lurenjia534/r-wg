@@ -1,27 +1,15 @@
 use std::collections::HashSet;
+use r_wg::application::ConfigLibraryService;
 
 pub(crate) fn next_available_name<'a>(
     names: impl IntoIterator<Item = &'a str>,
     base: &str,
 ) -> String {
-    let names: HashSet<&str> = names.into_iter().collect();
-
-    if !names.contains(base) {
-        return base.to_string();
-    }
-    for idx in 2..1000 {
-        let candidate = format!("{base}-{idx}");
-        if !names.contains(candidate.as_str()) {
-            return candidate;
-        }
-    }
-    format!("{base}-{}", names.len() + 1)
+    ConfigLibraryService::new().next_available_name(names, base)
 }
 
 pub(crate) fn reserve_unique_name(names_in_use: &mut HashSet<String>, base: &str) -> String {
-    let candidate = next_available_name(names_in_use.iter().map(String::as_str), base);
-    names_in_use.insert(candidate.clone());
-    candidate
+    ConfigLibraryService::new().reserve_unique_name(names_in_use, base)
 }
 
 #[cfg(test)]

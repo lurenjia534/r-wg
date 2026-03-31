@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::time::Duration;
 
 use r_wg::backend::wg::PeerStats;
@@ -126,13 +125,4 @@ pub fn sanitize_file_stem(name: &str) -> String {
     } else {
         out
     }
-}
-
-pub fn name_from_path(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|name| name.to_str())
-        .map(|name| name.trim())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("tunnel")
-        .to_string()
 }

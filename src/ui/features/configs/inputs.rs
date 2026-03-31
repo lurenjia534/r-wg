@@ -1,14 +1,19 @@
-use super::*;
+use gpui::{AppContext, Context, Entity, SharedString, Window};
+use gpui_component::input::{InputEvent, InputState, TabSize};
+
+use crate::ui::state::{ConfigsWorkspace, WgApp};
+
+const DRAFT_VALIDATION_DEBOUNCE_MS: u64 = 180;
 
 impl WgApp {
-    pub(super) fn configs_name_input(&self, cx: &mut Context<Self>) -> Option<Entity<InputState>> {
+    pub(crate) fn configs_name_input(&self, cx: &mut Context<Self>) -> Option<Entity<InputState>> {
         self.ui
             .configs_workspace
             .as_ref()
             .and_then(|workspace| workspace.read(cx).name_input.clone())
     }
 
-    pub(super) fn configs_config_input(
+    pub(crate) fn configs_config_input(
         &self,
         cx: &mut Context<Self>,
     ) -> Option<Entity<InputState>> {
@@ -18,7 +23,7 @@ impl WgApp {
             .and_then(|workspace| workspace.read(cx).config_input.clone())
     }
 
-    pub(super) fn configs_inputs(
+    pub(crate) fn configs_inputs(
         &self,
         cx: &mut Context<Self>,
     ) -> Option<(Entity<InputState>, Entity<InputState>)> {
@@ -36,7 +41,7 @@ impl WgApp {
         });
     }
 
-    pub(super) fn sync_draft_from_values(
+    pub(crate) fn sync_draft_from_values(
         &mut self,
         name: SharedString,
         text: SharedString,
@@ -63,7 +68,7 @@ impl ConfigsWorkspace {
         let generation = self.validation_generation;
         cx.spawn(async move |view, cx| {
             cx.background_executor()
-                .timer(DRAFT_VALIDATION_DEBOUNCE)
+                .timer(std::time::Duration::from_millis(DRAFT_VALIDATION_DEBOUNCE_MS))
                 .await;
             let _ = view.update(cx, |this, cx| {
                 if this.validation_generation != generation || this.operation.is_some() {
