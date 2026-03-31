@@ -4,15 +4,16 @@ use gpui_component::Root;
 use gpui_component_assets::Assets;
 // Engine 负责隧道生命周期；EngineError 用于区分停止时的错误类型。
 use r_wg::backend::wg::Engine;
-#[cfg(not(target_os = "windows"))]
-use r_wg::backend::wg::EngineError;
 // 关闭流程需要跨异步任务共享状态，因此使用原子布尔标记。
 #[cfg(not(target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_os = "windows"))]
 use std::sync::Arc;
 
-use super::features::themes::{self, AppearancePolicy};
+use super::features::{
+    session::lifecycle,
+    themes::{self, AppearancePolicy},
+};
 use super::persistence;
 use super::single_instance::PrimaryInstance;
 use super::state::WgApp;
@@ -95,10 +96,10 @@ pub fn run(primary: PrimaryInstance) {
                     });
                     // 弱引用：窗口关闭后不会阻止资源释放。
                     let view_handle = view.downgrade();
-                    sync_apply_report(view_handle.clone(), engine.clone(), cx);
+                    lifecycle::sync_apply_report(view_handle.clone(), engine.clone(), cx);
                     // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。
                     #[cfg(target_os = "windows")]
-                    sync_engine_status(view_handle.clone(), engine.clone(), cx);
+                    lifecycle::sync_engine_status(view_handle.clone(), engine.clone(), cx);
                     // 初始化系统托盘并启动命令监听。
                     tray::init(
                         primary.clone(),
@@ -134,19 +135,6 @@ pub fn run(primary: PrimaryInstance) {
                                 return false;
                             }
 
-                            // 记录是否正在运行，并同步 UI 提示为“正在停止”。
-                            let mut was_running = false;
-                            if let Some(view) = view_handle.upgrade() {
-                                view.update(cx, |this, cx| {
-                                    was_running = this.runtime.running;
-                                    if this.runtime.running {
-                                        this.runtime.busy = true;
-                                        this.set_status("Stopping...");
-                                        cx.notify();
-                                    }
-                                });
-                            }
-
                             // 保存窗口句柄，供异步停止完成后关闭窗口。
                             let handle = window.window_handle();
                             // 克隆需要跨异步任务使用的引用/标记。
@@ -155,40 +143,20 @@ pub fn run(primary: PrimaryInstance) {
                             let engine = close_engine.clone();
                             // 在 UI 线程启动异步任务，后台线程执行 engine.stop()。
                             cx.spawn(async move |cx| {
-                                let result =
-                                    cx.background_spawn(async move { engine.stop() }).await;
-                                match result {
-                                    Ok(())
-                                    | Err(EngineError::NotRunning)
-                                    | Err(EngineError::ChannelClosed) => {
-                                        // 停止成功（或已停止/通道关闭）：更新 UI 并关闭窗口。
-                                        if was_running {
-                                            if let Some(view) = view_handle.upgrade() {
-                                                let _ = view.update(cx, |this, cx| {
-                                                    this.runtime.finish_stop_success();
-                                                    this.stats.clear_runtime_metrics();
-                                                    this.set_status("Stopped");
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }
+                                let should_close =
+                                    lifecycle::request_shutdown_stop(
+                                        view_handle.clone(),
+                                        engine,
+                                        cx,
+                                    )
+                                    .await;
+                                if should_close {
+                                    // 停止成功（或已停止/通道关闭）：更新 UI 并关闭窗口。
                                         // 实际移除窗口，触发关闭。
-                                        let _ = handle
-                                            .update(cx, |_, window, _| window.remove_window());
-                                    }
-                                    Err(err) => {
-                                        // 停止失败：保留窗口，提示错误，允许再次尝试关闭。
-                                        if let Some(view) = view_handle.upgrade() {
-                                            let _ = view.update(cx, |this, cx| {
-                                                if was_running {
-                                                    this.runtime.busy = false;
-                                                }
-                                                this.set_error(format!("Stop failed: {err}"));
-                                                cx.notify();
-                                            });
-                                        }
-                                        close_flag.store(false, Ordering::SeqCst);
-                                    }
+                                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                                } else {
+                                    // 停止失败：保留窗口，允许再次尝试关闭。
+                                    close_flag.store(false, Ordering::SeqCst);
                                 }
                             })
                             .detach();
@@ -203,57 +171,6 @@ pub fn run(primary: PrimaryInstance) {
             )
             .unwrap();
         });
-}
-
-/// 启动窗口后同步一次后端状态。
-///
-/// 这里主要处理 Windows helper 已经在运行、但 UI 是后打开的情况。
-/// 此时我们只能确认“当前确实有隧道在跑”，未必能拿到精确配置项，
-/// 所以先恢复为通用运行态，再启动统计轮询。
-#[cfg(target_os = "windows")]
-fn sync_engine_status(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let (status_result, apply_report) = cx
-            .background_spawn(async move {
-                let status = engine.status();
-                let apply_report = engine.apply_report().ok().flatten();
-                (status, apply_report)
-            })
-            .await;
-        let _ = view.update(cx, |this, cx| {
-            if !matches!(status_result, Ok(r_wg::backend::wg::EngineStatus::Running)) {
-                return;
-            }
-            this.runtime.running = true;
-            this.runtime.busy = false;
-            this.runtime.set_last_apply_report(apply_report);
-            // helper 恢复场景下不一定拿得到原始配置名，先放通用占位避免 UI 空白。
-            if this.runtime.running_name.is_none() {
-                this.runtime.running_name = Some("Tunnel".to_string());
-            }
-            // 这里只恢复运行态与统计轮询，不推断具体配置来源。
-            this.set_status("Tunnel running");
-            this.stats.reset_for_start();
-            this.start_stats_polling(cx);
-            cx.notify();
-        });
-    })
-    .detach();
-}
-
-fn sync_apply_report(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let result = cx
-            .background_spawn(async move { engine.apply_report() })
-            .await;
-        let _ = view.update(cx, |this, cx| {
-            if let Ok(report) = result {
-                this.runtime.set_last_apply_report(report);
-                cx.notify();
-            }
-        });
-    })
-    .detach();
 }
 
 fn load_startup_theme_prefs(_cx: &App) -> StartupThemePrefs {

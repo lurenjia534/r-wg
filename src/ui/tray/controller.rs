@@ -1,9 +1,8 @@
 use gpui::{AnyWindowHandle, App, Global, UpdateGlobal};
 use r_wg::backend::wg::Engine;
-#[cfg(not(target_os = "windows"))]
-use r_wg::backend::wg::EngineError;
 use std::sync::{mpsc, Arc, Mutex};
 
+use crate::ui::features::session::lifecycle;
 use crate::ui::single_instance::PrimaryInstance;
 use crate::ui::state::WgApp;
 
@@ -140,41 +139,7 @@ async fn request_quit(view: gpui::WeakEntity<WgApp>, engine: Engine, cx: &mut gp
 
     #[cfg(not(target_os = "windows"))]
     {
-        let mut was_running = false;
-        let _ = view.update(cx, |this, cx| {
-            was_running = this.runtime.running;
-            if this.runtime.running {
-                this.runtime.busy = true;
-                this.set_status("Stopping...");
-                cx.notify();
-            }
-        });
-
-        let result = cx
-            .background_executor()
-            .spawn(async move { engine.stop() })
-            .await;
-        let should_quit = matches!(
-            &result,
-            Ok(()) | Err(EngineError::NotRunning) | Err(EngineError::ChannelClosed)
-        );
-
-        let _ = view.update(cx, |this, cx| {
-            if should_quit {
-                if was_running {
-                    this.runtime.finish_stop_success();
-                    this.stats.clear_runtime_metrics();
-                    this.set_status("Stopped");
-                }
-            } else if let Err(err) = result {
-                if was_running {
-                    this.runtime.busy = false;
-                }
-                this.set_error(format!("Stop failed: {err}"));
-            }
-            cx.notify();
-        });
-
+        let should_quit = lifecycle::request_shutdown_stop(view, engine, cx).await;
         if should_quit {
             platform::shutdown_tray();
             let _ = cx.update(|app| app.quit());
