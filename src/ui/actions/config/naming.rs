@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use r_wg::application::ConfigLibraryService;
 
 pub(crate) fn next_available_name<'a>(
@@ -8,15 +7,11 @@ pub(crate) fn next_available_name<'a>(
     ConfigLibraryService::new().next_available_name(names, base)
 }
 
-pub(crate) fn reserve_unique_name(names_in_use: &mut HashSet<String>, base: &str) -> String {
-    ConfigLibraryService::new().reserve_unique_name(names_in_use, base)
-}
-
 #[cfg(test)]
 mod tests {
+    use super::next_available_name;
+    use r_wg::application::ConfigLibraryService;
     use std::collections::HashSet;
-
-    use super::{next_available_name, reserve_unique_name};
 
     #[test]
     fn next_available_name_preserves_base_when_unused() {
@@ -32,8 +27,9 @@ mod tests {
 
     #[test]
     fn reserve_unique_name_updates_set() {
+        let service = ConfigLibraryService::new();
         let mut names = HashSet::from(["alpha".to_string()]);
-        let reserved = reserve_unique_name(&mut names, "alpha");
+        let reserved = service.reserve_unique_name(&mut names, "alpha");
         assert_eq!(reserved, "alpha-2");
         assert!(names.contains("alpha-2"));
     }

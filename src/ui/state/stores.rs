@@ -57,6 +57,10 @@ impl ConfigsState {
         id
     }
 
+    pub(crate) fn next_config_id(&self) -> u64 {
+        self.next_config_id.max(1)
+    }
+
     pub(crate) fn find_by_id(&self, config_id: u64) -> Option<TunnelConfig> {
         self.get_by_id(config_id).cloned()
     }

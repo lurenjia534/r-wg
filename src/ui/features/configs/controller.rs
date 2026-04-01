@@ -5,11 +5,15 @@ use std::process::Command;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use gpui::{AppContext, ClipboardItem, Context, PathPromptOptions, SharedString, Window};
-use r_wg::application::{ConfigLibraryService, ExistingConfigName, SaveConfigRequest};
+use r_wg::application::{
+    ConfigLibraryService, ConfigSourceKind, DeleteConfigsDecision, DeleteConfigsRequest,
+    DeletePolicy, ExistingStoredConfig, ImportConfigJob, ImportedConfigArtifact,
+    ImportedConfigRecord, PostDeleteSelection, PostDeleteSelectionRequest, RenameConfigDecision,
+    RenameConfigRequest, SaveTargetRequest,
+};
 use r_wg::core::config;
 
-use crate::ui::actions::config::{format_delete_status, reserve_unique_name, text_hash};
-use crate::ui::format::sanitize_file_stem;
+use crate::ui::actions::config::text_hash;
 use crate::ui::persistence;
 use crate::ui::state::{
     ConfigSource, DraftValidationState, EditorOperation, EndpointFamily, LoadedConfigState,
@@ -18,18 +22,9 @@ use crate::ui::state::{
 
 use super::{dialogs, draft, endpoint_family};
 
-struct ImportJob {
-    id: u64,
-    origin_path: PathBuf,
-    storage_path: PathBuf,
-}
-
 enum ImportOutcome {
     Ok {
-        id: u64,
-        name: String,
-        origin_path: PathBuf,
-        storage_path: PathBuf,
+        imported: ImportedConfigRecord,
         endpoint_family: EndpointFamily,
     },
     Err {
@@ -40,12 +35,6 @@ enum ImportOutcome {
 
 const IMPORT_CONCURRENCY: usize = 8;
 const IMPORT_BATCH_SIZE: usize = 200;
-
-#[derive(Clone, Copy)]
-enum DeletePolicy {
-    BlockRunning,
-    SkipRunning,
-}
 
 pub(crate) fn handle_import_click(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     if app.configs_is_busy(cx) {
@@ -187,7 +176,7 @@ pub(crate) fn start_import_from_paths(
     for path in paths {
         let id = app.configs.alloc_config_id();
         let storage_path = persistence::config_path(&storage, id);
-        jobs.push(ImportJob {
+        jobs.push(ImportConfigJob {
             id,
             origin_path: path,
             storage_path,
@@ -209,20 +198,16 @@ pub(crate) fn start_import_from_paths(
     let config_library = app.config_library.clone();
     window
         .spawn(cx, async move |cx| {
-            let mut names_in_use = match view.update(cx, |this, _| {
+            let mut batch = match view.update(cx, |this, _| {
                 this.configs
                     .iter()
                     .map(|cfg| cfg.name.clone())
                     .collect::<HashSet<_>>()
             }) {
-                Ok(names) => names,
+                Ok(names) => config_library.begin_import_batch(names, total),
                 Err(_) => return,
             };
 
-            let mut processed = 0usize;
-            let mut imported = 0usize;
-            let mut failed = 0usize;
-            let mut last_error = None;
             let mut outcomes_batch = Vec::new();
 
             let concurrency = IMPORT_CONCURRENCY.min(total.max(1));
@@ -232,69 +217,67 @@ pub(crate) fn start_import_from_paths(
                 if let Some(job) = pending.next() {
                     let config_library = config_library.clone();
                     tasks.push(
-                        cx.background_spawn(async move { read_config(job, config_library).await }),
+                        cx.background_spawn(
+                            async move { import_config(job, config_library).await },
+                        ),
                     );
                 }
             }
 
             while let Some(outcome) = tasks.next().await {
-                let outcome = match outcome {
+                let (outcome, progress) = match outcome {
                     ImportOutcome::Ok {
-                        id,
-                        name,
-                        origin_path,
-                        storage_path,
+                        imported,
                         endpoint_family,
                     } => {
-                        let name = reserve_unique_name(&mut names_in_use, &name);
-                        imported += 1;
-                        ImportOutcome::Ok {
-                            id,
-                            name,
-                            origin_path,
-                            storage_path,
-                            endpoint_family,
-                        }
+                        let recorded = config_library.record_import_success(&mut batch, imported);
+                        (
+                            ImportOutcome::Ok {
+                                imported: recorded.config,
+                                endpoint_family,
+                            },
+                            recorded.progress,
+                        )
                     }
                     ImportOutcome::Err { path, message } => {
-                        failed += 1;
-                        last_error = Some(format!("{message} ({})", path.display()));
-                        ImportOutcome::Err { path, message }
+                        let progress =
+                            config_library.record_import_failure(&mut batch, &path, &message);
+                        (ImportOutcome::Err { path, message }, progress)
                     }
                 };
 
-                processed += 1;
                 outcomes_batch.push(outcome);
 
                 if let Some(job) = pending.next() {
                     let config_library = config_library.clone();
                     tasks.push(
-                        cx.background_spawn(async move { read_config(job, config_library).await }),
+                        cx.background_spawn(
+                            async move { import_config(job, config_library).await },
+                        ),
                     );
                 }
 
-                if outcomes_batch.len() >= IMPORT_BATCH_SIZE || processed == total {
+                if outcomes_batch.len() >= IMPORT_BATCH_SIZE || progress.processed == progress.total
+                {
                     let outcomes = std::mem::take(&mut outcomes_batch);
                     view.update_in(cx, |this, _window, cx| {
                         let mut imported_configs = Vec::new();
                         for outcome in outcomes {
                             if let ImportOutcome::Ok {
-                                id,
-                                name,
-                                origin_path,
-                                storage_path,
+                                imported,
                                 endpoint_family,
                             } = outcome
                             {
                                 imported_configs.push(TunnelConfig {
-                                    id,
-                                    name_lower: name.to_lowercase(),
-                                    name,
+                                    id: imported.id,
+                                    name_lower: imported.name.to_lowercase(),
+                                    name: imported.name,
                                     text: None,
-                                    source: ConfigSource::File {
-                                        origin_path: Some(origin_path),
-                                    },
-                                    storage_path,
+                                    source: imported_config_source(
+                                        imported.source,
+                                        imported.origin_path,
+                                    ),
+                                    storage_path: imported.storage_path,
                                     endpoint_family,
                                 });
                             }
@@ -304,33 +287,32 @@ pub(crate) fn start_import_from_paths(
                             this.append_configs_workspace_library_rows(&imported_configs, cx);
                         }
                         this.set_editor_operation(
-                            Some(EditorOperation::Importing { processed, total }),
+                            Some(EditorOperation::Importing {
+                                processed: progress.processed,
+                                total: progress.total,
+                            }),
                             cx,
                         );
-                        this.set_status(format!("Importing {processed}/{total}..."));
+                        this.set_status(progress.status_message.clone());
                         cx.notify();
                     })
                     .ok();
                 }
             }
 
+            let summary = config_library.finish_import_batch(batch);
             view.update_in(cx, |this, window, cx| {
                 this.set_editor_operation(None, cx);
-                if imported > 0 {
-                    let selected_id = this.configs.last().map(|config| config.id);
-                    this.set_selected_config_id(selected_id, cx);
-                    if let Some(config_id) = selected_id {
-                        this.load_config_into_inputs(config_id, window, cx);
-                    }
+                if let Some(config_id) = summary.selected_import_id {
+                    this.set_selected_config_id(Some(config_id), cx);
+                    this.load_config_into_inputs(config_id, window, cx);
                 }
-                if imported == 0 && failed > 0 {
-                    this.set_error(last_error.unwrap_or_else(|| "Import failed".to_string()));
-                } else if failed > 0 {
-                    this.set_status(format!("Imported {imported} configs, {failed} failed"));
-                } else {
-                    this.set_status(format!("Imported {imported} configs"));
+                if let Some(error_message) = summary.error_message.as_ref() {
+                    this.set_error(error_message.clone());
+                } else if let Some(status_message) = summary.status_message.as_ref() {
+                    this.set_status(status_message.clone());
                 }
-                if imported > 0 {
+                if summary.should_persist {
                     this.persist_state_async(cx);
                 }
                 cx.notify();
@@ -407,29 +389,14 @@ pub(crate) fn handle_export_click(app: &mut WgApp, cx: &mut Context<WgApp>) {
             return;
         };
 
-        let filename = format!("{}.conf", sanitize_file_stem(&selected.name));
-        let export_path = dir.join(filename);
-        let text_result = match initial_text {
-            Some(text) => Ok(text.to_string()),
-            None => {
-                let path_for_cache = selected.storage_path.clone();
-                let storage_path = selected.storage_path.clone();
-                let config_library = config_library.clone();
-                let read_task =
-                    cx.background_spawn(async move { config_library.read_config_text(&storage_path) });
-                match read_task.await {
-                    Ok(text) => {
-                        let shared: SharedString = text.clone().into();
-                        view.update(cx, |this, _| {
-                            this.cache_config_text(path_for_cache, shared);
-                        })
-                        .ok();
-                        Ok(text)
-                    }
-                    Err(err) => Err(err),
-                }
-            }
-        };
+        let export_path = config_library.plan_export_path(&dir, &selected.name);
+        let loaded_from_storage = initial_text.is_none();
+        let initial_text = initial_text.map(|text| text.to_string());
+        let storage_path = selected.storage_path.clone();
+        let text_task = cx.background_spawn(async move {
+            config_library.resolve_export_text(initial_text, &storage_path)
+        });
+        let text_result = text_task.await;
 
         let text = match text_result {
             Ok(text) => text,
@@ -443,9 +410,18 @@ pub(crate) fn handle_export_click(app: &mut WgApp, cx: &mut Context<WgApp>) {
                 return;
             }
         };
+        if loaded_from_storage {
+            let path_for_cache = selected.storage_path.clone();
+            let shared: SharedString = text.clone().into();
+            view.update(cx, |this, _| {
+                this.cache_config_text(path_for_cache, shared);
+            })
+            .ok();
+        }
 
+        let export_service = ConfigLibraryService::new();
         let write_task =
-            cx.background_spawn(async move { config_library.export_config(&export_path, &text) });
+            cx.background_spawn(async move { export_service.export_config(&export_path, &text) });
 
         let result = write_task.await;
         view.update(cx, |this, cx| {
@@ -544,7 +520,9 @@ pub(crate) fn handle_copy_click(app: &mut WgApp, cx: &mut Context<WgApp>) {
     cx.spawn(async move |view, cx| {
         let path_for_cache = selected.storage_path.clone();
         let read_task =
-            cx.background_spawn(async move { config_library.read_config_text(&selected.storage_path) });
+            cx.background_spawn(
+                async move { config_library.read_config_text(&selected.storage_path) },
+            );
         let result = read_task.await;
         view.update(cx, |this, cx| {
             if this.selection.selected_id != Some(selected.id) {
@@ -590,7 +568,13 @@ pub(crate) fn insert_or_update_config(
     let updated_config = app.configs[idx].clone();
     app.upsert_configs_workspace_library_row(&updated_config, cx);
     if let Some(text) = app.configs[idx].text.clone() {
-        draft::set_saved_draft(app, config_id, app.configs[idx].name.clone().into(), text, cx);
+        draft::set_saved_draft(
+            app,
+            config_id,
+            app.configs[idx].name.clone().into(),
+            text,
+            cx,
+        );
     }
     load_config_into_inputs(app, config_id, window, cx);
     if app.configs[idx].endpoint_family == EndpointFamily::Unknown {
@@ -818,23 +802,28 @@ pub(crate) fn save_draft(
     draft::apply_draft_validation(app, cx);
     let draft = app.configs_draft_snapshot(cx);
 
-    let name = draft.name.to_string();
     let text = draft.text.clone();
-    let existing_names = app
-        .configs
-        .iter()
-        .map(|entry| ExistingConfigName {
-            id: entry.id,
-            name: entry.name.as_str(),
-        })
-        .collect::<Vec<_>>();
-    let validated = match app.config_library.validate_save_request(SaveConfigRequest {
-        requested_name: &name,
+    let storage = match app.configs.ensure_storage() {
+        Ok(storage) => storage,
+        Err(err) => {
+            app.set_error(err);
+            cx.notify();
+            return;
+        }
+    };
+    let existing_configs = existing_stored_configs(app);
+    let next_id = app.configs.next_config_id();
+    let next_storage_path = persistence::config_path(&storage, next_id);
+    let target_plan = match app.config_library.plan_save_target(SaveTargetRequest {
+        requested_name: draft.name.as_ref(),
         text: text.as_ref(),
-        source_id: if force_new { None } else { draft.source_id },
-        existing_configs: &existing_names,
+        source_id: draft.source_id,
+        force_new,
+        existing_configs: &existing_configs,
+        next_id,
+        next_storage_path,
     }) {
-        Ok(validated) => validated,
+        Ok(plan) => plan,
         Err(err) => {
             app.set_error(err.message());
             cx.notify();
@@ -867,26 +856,17 @@ pub(crate) fn save_draft(
         }
     };
 
-    let source_id = if force_new { None } else { draft.source_id };
-    let name = validated.name;
-    let storage = match app.configs.ensure_storage() {
-        Ok(storage) => storage,
-        Err(err) => {
-            app.set_error(err);
-            cx.notify();
-            return;
-        }
+    let id = target_plan.id;
+    let name = target_plan.name;
+    let storage_path = target_plan.storage_path;
+    let source = if target_plan.is_new {
+        config_source_from_kind(target_plan.source)
+    } else {
+        app.configs
+            .find_by_id(id)
+            .map(|config| config.source)
+            .unwrap_or_else(|| config_source_from_kind(target_plan.source))
     };
-
-    let (id, storage_path, source) = match source_id.and_then(|id| app.configs.find_by_id(id)) {
-        Some(cfg) => (cfg.id, cfg.storage_path, cfg.source),
-        None => {
-            let id = app.configs.alloc_config_id();
-            let storage_path = persistence::config_path(&storage, id);
-            (id, storage_path, ConfigSource::Paste)
-        }
-    };
-
     let name_lower = name.to_lowercase();
     let text_for_write = text.to_string();
     let text_for_state = text.clone();
@@ -956,54 +936,46 @@ pub(crate) fn handle_save_and_restart_click(
     save_draft(app, false, window, cx);
 }
 
-pub(crate) fn handle_save_as_click(
-    app: &mut WgApp,
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-) {
+pub(crate) fn handle_save_as_click(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     save_draft(app, true, window, cx);
 }
 
-pub(crate) fn handle_rename_click(
-    app: &mut WgApp,
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-) {
+pub(crate) fn handle_rename_click(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     app.ensure_inputs(window, cx);
     draft::sync_draft_from_inputs(app, cx);
     draft::apply_draft_validation(app, cx);
     let draft = app.configs_draft_snapshot(cx);
-    let new_name = draft.name.to_string();
-    let new_name = new_name.trim();
-    if new_name.is_empty() {
-        app.set_error("Tunnel name is required");
-        cx.notify();
-        return;
-    }
-
-    let Some(config_id) = draft.source_id.or(app.selection.selected_id) else {
-        app.set_error("Select a tunnel first");
-        cx.notify();
-        return;
+    let existing_configs = existing_stored_configs(app);
+    let rename = match app.config_library.plan_rename(RenameConfigRequest {
+        requested_name: draft.name.as_ref(),
+        source_id: draft.source_id,
+        selected_id: app.selection.selected_id,
+        existing_configs: &existing_configs,
+    }) {
+        Ok(RenameConfigDecision::Unchanged) => {
+            app.set_status("Name unchanged");
+            cx.notify();
+            return;
+        }
+        Ok(RenameConfigDecision::Rename {
+            config_id,
+            previous_name,
+            name,
+        }) => (config_id, previous_name, name),
+        Err(err) => {
+            app.set_error(err.message());
+            cx.notify();
+            return;
+        }
     };
+    let (config_id, old_name, new_name) = rename;
     let Some(idx) = app.configs.find_index_by_id(config_id) else {
         app.set_error("Selected tunnel no longer exists");
         cx.notify();
         return;
     };
-    let old_name = app.configs[idx].name.clone();
-    if old_name == new_name {
-        app.set_status("Name unchanged");
-        cx.notify();
-        return;
-    }
-    if app.configs.iter().any(|cfg| cfg.name == new_name) {
-        app.set_error("Tunnel name already exists");
-        cx.notify();
-        return;
-    }
 
-    app.configs[idx].name = new_name.to_string();
+    app.configs[idx].name = new_name.clone();
     app.configs[idx].name_lower = new_name.to_lowercase();
     let updated_config = app.configs[idx].clone();
     app.upsert_configs_workspace_library_row(&updated_config, cx);
@@ -1014,7 +986,7 @@ pub(crate) fn handle_rename_click(
     }
     if draft.source_id == Some(config_id) {
         let workspace = app.ensure_configs_workspace(cx);
-        let base_name: SharedString = new_name.to_string().into();
+        let base_name: SharedString = new_name.clone().into();
         workspace.update(cx, |workspace, cx| {
             workspace.draft.base_name = base_name;
             cx.notify();
@@ -1022,7 +994,7 @@ pub(crate) fn handle_rename_click(
         draft::apply_draft_validation(app, cx);
     }
     if app.runtime.running_name.as_deref() == Some(old_name.as_str()) {
-        app.runtime.running_name = Some(new_name.to_string());
+        app.runtime.running_name = Some(new_name.clone());
         app.runtime.runtime_revision = app.runtime.runtime_revision.wrapping_add(1);
     }
     app.set_status(format!("Renamed to {new_name}"));
@@ -1030,11 +1002,7 @@ pub(crate) fn handle_rename_click(
     cx.notify();
 }
 
-pub(crate) fn handle_delete_click(
-    app: &mut WgApp,
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-) {
+pub(crate) fn handle_delete_click(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     let Some(_config_id) = app.selection.selected_id else {
         app.set_error("Select a tunnel first");
         cx.notify();
@@ -1079,55 +1047,38 @@ fn delete_configs_internal(
     window: &mut Window,
     cx: &mut Context<WgApp>,
 ) {
-    if ids.is_empty() {
-        app.set_error("Select a tunnel first");
-        cx.notify();
-        return;
-    }
-
-    let ids: HashSet<u64> = ids.iter().copied().collect();
-    let running_id = app.runtime.running_id;
-    let running_name = app.runtime.running_name.clone();
-
-    let mut to_delete_ids = HashSet::new();
-    let mut deleted_names = Vec::new();
-    let mut deleted_paths = Vec::new();
-    let mut skipped_running = Vec::new();
-
-    for cfg in &app.configs {
-        if !ids.contains(&cfg.id) {
-            continue;
-        }
-        let is_running =
-            running_id == Some(cfg.id) || running_name.as_deref() == Some(cfg.name.as_str());
-        if is_running {
-            match policy {
-                DeletePolicy::BlockRunning => {
-                    app.set_error("Stop the tunnel before deleting");
-                    cx.notify();
-                    return;
-                }
-                DeletePolicy::SkipRunning => {
-                    skipped_running.push(cfg.name.clone());
-                    continue;
-                }
-            }
-        }
-
-        to_delete_ids.insert(cfg.id);
-        deleted_names.push(cfg.name.clone());
-        deleted_paths.push(cfg.storage_path.clone());
-    }
-
-    if to_delete_ids.is_empty() {
-        if !skipped_running.is_empty() {
-            app.set_status(format_delete_status(&[], skipped_running.len()));
-        } else {
+    let existing_configs = existing_stored_configs(app);
+    let plan = match app.config_library.plan_delete(DeleteConfigsRequest {
+        requested_ids: ids,
+        existing_configs: &existing_configs,
+        running_id: app.runtime.running_id,
+        running_name: app.runtime.running_name.as_deref(),
+        policy,
+    }) {
+        DeleteConfigsDecision::NoSelection => {
             app.set_error("No configs selected");
+            cx.notify();
+            return;
         }
-        cx.notify();
-        return;
-    }
+        DeleteConfigsDecision::BlockedRunning => {
+            app.set_error("Stop the tunnel before deleting");
+            cx.notify();
+            return;
+        }
+        DeleteConfigsDecision::OnlySkippedRunning { skipped_running } => {
+            app.set_status(
+                app.config_library
+                    .delete_status_message(&[], skipped_running.len()),
+            );
+            cx.notify();
+            return;
+        }
+        DeleteConfigsDecision::Delete(plan) => plan,
+    };
+    let to_delete_ids: HashSet<u64> = plan.deleted_ids.iter().copied().collect();
+    let deleted_names = plan.deleted_names;
+    let deleted_paths = plan.deleted_paths;
+    let skipped_running = plan.skipped_running;
 
     app.set_editor_operation(Some(EditorOperation::Deleting), cx);
     let prev_selected_id = app.selection.selected_id;
@@ -1156,27 +1107,35 @@ fn delete_configs_internal(
     app.selection.loading_config_id = None;
     app.selection.loading_config_path = None;
 
-    if app.configs.is_empty() {
-        app.set_selected_config_id(None, cx);
-        app.clear_inputs(window, cx);
-    } else if let Some(prev_id) = prev_selected_id {
-        if app.configs.get_by_id(prev_id).is_some() {
-            app.set_selected_config_id(Some(prev_id), cx);
-        } else if let Some(prev_idx) = prev_selected_idx {
-            let idx = prev_idx.min(app.configs.len() - 1);
-            let fallback_id = app.configs[idx].id;
-            app.set_selected_config_id(Some(fallback_id), cx);
-            load_config_into_inputs(app, fallback_id, window, cx);
-        } else {
+    let remaining_ids = app
+        .configs
+        .iter()
+        .map(|config| config.id)
+        .collect::<Vec<_>>();
+    match app
+        .config_library
+        .plan_post_delete_selection(PostDeleteSelectionRequest {
+            remaining_ids: &remaining_ids,
+            previous_selected_id: prev_selected_id,
+            previous_selected_index: prev_selected_idx,
+        }) {
+        PostDeleteSelection::Clear => {
             app.set_selected_config_id(None, cx);
             app.clear_inputs(window, cx);
         }
-    } else {
-        app.set_selected_config_id(None, cx);
-        app.clear_inputs(window, cx);
+        PostDeleteSelection::Keep(selected_id) => {
+            app.set_selected_config_id(Some(selected_id), cx);
+        }
+        PostDeleteSelection::SelectFallback(selected_id) => {
+            app.set_selected_config_id(Some(selected_id), cx);
+            load_config_into_inputs(app, selected_id, window, cx);
+        }
     }
 
-    app.set_status(format_delete_status(&deleted_names, skipped_running.len()));
+    app.set_status(
+        app.config_library
+            .delete_status_message(&deleted_names, skipped_running.len()),
+    );
     app.persist_state_async(cx);
     app.set_editor_operation(None, cx);
     cx.notify();
@@ -1196,30 +1155,32 @@ fn delete_configs_internal(
     .detach();
 }
 
-async fn read_config(job: ImportJob, config_library: ConfigLibraryService) -> ImportOutcome {
-    match config_library.read_import_source(&job.origin_path) {
-        Ok(import_source) => {
-            let endpoint_family =
-                endpoint_family::resolve_endpoint_family_from_text(import_source.text.clone())
-                    .await;
-            match config_library.write_config_text(&job.storage_path, &import_source.text) {
-                Ok(()) => ImportOutcome::Ok {
-                    id: job.id,
-                    name: import_source.suggested_name,
-                    origin_path: job.origin_path,
-                    storage_path: job.storage_path,
-                    endpoint_family,
-                },
-                Err(message) => ImportOutcome::Err {
-                    path: job.origin_path,
-                    message,
-                },
-            }
-        }
+async fn import_config(
+    job: ImportConfigJob,
+    config_library: ConfigLibraryService,
+) -> ImportOutcome {
+    let origin_path = job.origin_path.clone();
+    match config_library.import_config_job(job) {
+        Ok(imported) => build_import_outcome(imported).await,
         Err(err) => ImportOutcome::Err {
-            path: job.origin_path,
+            path: origin_path,
             message: err,
         },
+    }
+}
+
+async fn build_import_outcome(imported: ImportedConfigArtifact) -> ImportOutcome {
+    let endpoint_family =
+        endpoint_family::resolve_endpoint_family_from_text(imported.text.clone()).await;
+    ImportOutcome::Ok {
+        imported: ImportedConfigRecord {
+            id: imported.id,
+            name: imported.suggested_name,
+            origin_path: imported.origin_path,
+            storage_path: imported.storage_path,
+            source: ConfigSourceKind::File,
+        },
+        endpoint_family,
     }
 }
 
@@ -1293,5 +1254,40 @@ fn pick_with_command(command: &str, args: &[&str]) -> Result<Option<Vec<PathBuf>
         Ok(None)
     } else {
         Ok(Some(entries))
+    }
+}
+
+fn existing_stored_configs(app: &WgApp) -> Vec<ExistingStoredConfig<'_>> {
+    app.configs
+        .iter()
+        .map(|config| ExistingStoredConfig {
+            id: config.id,
+            name: config.name.as_str(),
+            storage_path: &config.storage_path,
+            source: config_source_kind(&config.source),
+        })
+        .collect()
+}
+
+fn config_source_kind(source: &ConfigSource) -> ConfigSourceKind {
+    match source {
+        ConfigSource::File { .. } => ConfigSourceKind::File,
+        ConfigSource::Paste => ConfigSourceKind::Paste,
+    }
+}
+
+fn config_source_from_kind(source: ConfigSourceKind) -> ConfigSource {
+    match source {
+        ConfigSourceKind::File => ConfigSource::File { origin_path: None },
+        ConfigSourceKind::Paste => ConfigSource::Paste,
+    }
+}
+
+fn imported_config_source(source: ConfigSourceKind, origin_path: PathBuf) -> ConfigSource {
+    match source {
+        ConfigSourceKind::File => ConfigSource::File {
+            origin_path: Some(origin_path),
+        },
+        ConfigSourceKind::Paste => ConfigSource::Paste,
     }
 }

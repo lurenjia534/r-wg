@@ -5,8 +5,12 @@ pub mod tunnel_session;
 
 pub use backend_admin::BackendAdminService;
 pub use config_library::{
-    ConfigLibraryService, ExistingConfigName, ImportSource, SaveConfigError, SaveConfigRequest,
-    ValidatedSaveRequest,
+    ConfigLibraryService, ConfigSourceKind, DeleteConfigsDecision, DeleteConfigsPlan,
+    DeleteConfigsRequest, DeletePolicy, ExistingConfigName, ExistingStoredConfig,
+    FinalizedImportBatch, ImportBatchState, ImportConfigJob, ImportProgress, ImportSource,
+    ImportedConfigArtifact, ImportedConfigRecord, PostDeleteSelection, PostDeleteSelectionRequest,
+    RecordedImportSuccess, RenameConfigDecision, RenameConfigError, RenameConfigRequest,
+    SaveConfigError, SaveConfigRequest, SaveTargetPlan, SaveTargetRequest, ValidatedSaveRequest,
 };
 pub use diagnostics::{start_permission_message_for_status, DiagnosticsService};
 pub use tunnel_session::{
