@@ -6,17 +6,14 @@ use std::process::Command;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use gpui::{AppContext, ClipboardItem, Context, PathPromptOptions, SharedString, Window};
 use r_wg::application::{
-    ConfigLibraryService, ConfigSourceKind, DeleteConfigsDecision, DeleteConfigsRequest,
-    DeletePolicy, ExistingStoredConfig, ImportConfigJob, ImportedConfigArtifact,
-    ImportedConfigRecord, PostDeleteSelection, PostDeleteSelectionRequest, RenameConfigDecision,
-    RenameConfigRequest, SaveTargetRequest,
+    ConfigLibraryService, ConfigSourceKind, ImportConfigJob, ImportedConfigArtifact,
+    ImportedConfigRecord,
 };
 use r_wg::core::config;
 
 use crate::ui::persistence;
 use crate::ui::state::{
-    ConfigSource, DraftValidationState, EditorOperation, EndpointFamily, LoadedConfigState,
-    PendingDraftAction, TunnelConfig, WgApp,
+    ConfigSource, EditorOperation, EndpointFamily, PendingDraftAction, TunnelConfig, WgApp,
 };
 
 use super::{dialogs, draft, endpoint_family};
