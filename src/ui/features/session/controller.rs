@@ -45,7 +45,7 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
     match decision {
         // 无操作：当前状态不支持任何操作
         ToggleTunnelDecision::Noop => {}
-        
+
         // 排队等待启动：忙碌中但有新启动请求
         ToggleTunnelDecision::QueuePendingStart { config_id } => {
             if app
@@ -56,7 +56,7 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
                 cx.notify();
             }
         }
-        
+
         // 停止运行中的隧道
         ToggleTunnelDecision::StopRunning => {
             app.runtime.begin_stop();
@@ -94,7 +94,7 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
             })
             .detach();
         }
-        
+
         // 启动选中的配置
         ToggleTunnelDecision::StartSelected {
             config_id,
@@ -102,7 +102,7 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
         } => {
             start_config_by_id(app, config_id, restart_delay, cx, "Select a tunnel first");
         }
-        
+
         // 启动被阻止（显示错误消息）
         ToggleTunnelDecision::Blocked(reason) => {
             app.set_error(reason.message());
@@ -155,7 +155,7 @@ fn start_with_config(
     let tunnel_session = app.tunnel_session.clone();
     let config_library = app.config_library.clone();
     let dns_selection = DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset);
-    
+
     cx.spawn(async move |view, cx| {
         // 如果指定了延迟，先等待
         if let Some(delay) = delay {
@@ -205,7 +205,7 @@ fn start_with_config(
             (outcome.result, outcome.apply_report)
         });
         let (result, apply_report) = start_task.await;
-        
+
         // 处理结果
         view.update(cx, |this, cx| {
             this.runtime.finish_start_attempt();

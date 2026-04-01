@@ -3,15 +3,14 @@ use std::sync::Arc;
 use gpui::{Context, Render, Window, *};
 use gpui_component::{input::InputState, ActiveTheme as _};
 
-use crate::ui::state::{
-    ConfigInspectorTab, ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, WgApp,
-};
-use crate::ui::view::configs::ConfigsViewData;
+use crate::ui::features::configs::state::{ConfigsLibraryRow, ConfigsWorkspace};
+use crate::ui::state::{ConfigInspectorTab, ConfigsPrimaryPane, WgApp};
 
 use super::layout::{
     render_configs_compact_layout, render_configs_desktop_layout, render_configs_medium_layout,
     render_configs_shell_header,
 };
+use super::ConfigsViewData;
 
 // Configs workspace bootstrap, snapshots, and responsive page selection.
 

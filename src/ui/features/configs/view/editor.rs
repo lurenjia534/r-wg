@@ -6,11 +6,11 @@ use gpui_component::{
     v_flex, ActiveTheme as _, StyledExt as _,
 };
 
-use crate::ui::state::{ConfigsWorkspace, WgApp};
-use crate::ui::view::configs::ConfigsViewData;
+use crate::ui::features::configs::state::ConfigsWorkspace;
+use crate::ui::state::WgApp;
 
 use super::inspector::{editor_action_bar, render_diagnostics_strip};
-use super::ConfigsLayoutMode;
+use super::{ConfigsLayoutMode, ConfigsViewData};
 
 // Draft editor rendering and editor-side actions.
 

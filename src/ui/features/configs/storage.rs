@@ -8,14 +8,14 @@ use r_wg::application::{
     RenameConfigDecision, RenameConfigRequest, SaveTargetRequest,
 };
 
-use crate::ui::actions::config::text_hash;
 use crate::ui::persistence;
-use crate::ui::state::{
-    ConfigSource, DraftValidationState, EditorOperation, EndpointFamily, LoadedConfigState,
-    PendingDraftAction, TunnelConfig, WgApp,
-};
+use crate::ui::state::{ConfigSource, EndpointFamily, PendingDraftAction, TunnelConfig, WgApp};
 
-use super::{dialogs, draft, endpoint_family};
+use super::{
+    app::text_hash,
+    dialogs, draft, endpoint_family,
+    state::{DraftValidationState, EditorOperation, LoadedConfigState},
+};
 
 pub(crate) fn insert_or_update_config(
     app: &mut WgApp,
@@ -630,5 +630,54 @@ fn config_source_from_kind(source: ConfigSourceKind) -> ConfigSource {
     match source {
         ConfigSourceKind::File => ConfigSource::File { origin_path: None },
         ConfigSourceKind::Paste => ConfigSource::Paste,
+    }
+}
+
+impl WgApp {
+    pub(crate) fn handle_save_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        handle_save_click(self, window, cx);
+    }
+
+    pub(crate) fn handle_save_and_restart_click(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        handle_save_and_restart_click(self, window, cx);
+    }
+
+    pub(crate) fn handle_save_as_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        handle_save_as_click(self, window, cx);
+    }
+
+    pub(crate) fn handle_rename_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        handle_rename_click(self, window, cx);
+    }
+
+    pub(crate) fn handle_delete_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        handle_delete_click(self, window, cx);
+    }
+
+    pub(crate) fn delete_configs_blocking_running(
+        &mut self,
+        ids: &[u64],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        delete_configs_blocking_running(self, ids, window, cx);
+    }
+
+    pub(crate) fn delete_configs_skip_running(
+        &mut self,
+        ids: &[u64],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        delete_configs_skip_running(self, ids, window, cx);
+    }
+
+    pub(crate) fn next_config_name(&self, base: &str) -> String {
+        ConfigLibraryService::new()
+            .next_available_name(self.configs.iter().map(|cfg| cfg.name.as_str()), base)
     }
 }

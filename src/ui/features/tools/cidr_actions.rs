@@ -4,7 +4,7 @@ use r_wg::backend::wg::tools::{
     CidrNormalizationResult,
 };
 
-use crate::ui::state::{
+use super::state::{
     ActiveConfigParseState, AsyncJobState, CidrRequestSnapshot, CidrViewModel, ToolsTab,
     ToolsWorkspace,
 };

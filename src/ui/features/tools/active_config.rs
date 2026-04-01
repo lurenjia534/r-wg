@@ -5,10 +5,11 @@ use gpui_component::input::{InputEvent, InputState};
 use r_wg::application::ConfigLibraryService;
 use r_wg::core::config;
 
-use crate::ui::state::{
+use crate::ui::state::{ConfigDraftState, DraftValidationState, WgApp};
+
+use super::state::{
     ActiveConfigIdentity, ActiveConfigParseState, ActiveConfigSnapshot, ActiveConfigSource,
-    ActiveConfigTextRequest, ConfigDraftState, DraftValidationState, ResolvedActiveConfigText,
-    ToolsWorkspace, WgApp,
+    ActiveConfigTextRequest, JobCancelHandle, ResolvedActiveConfigText, ToolsWorkspace,
 };
 
 struct ActiveConfigBridge {
@@ -207,9 +208,9 @@ impl ToolsWorkspace {
                 &input,
                 |this, _, event: &InputEvent, cx: &mut gpui::Context<Self>| {
                     if matches!(event, InputEvent::Change)
-                        && matches!(this.cidr.job, crate::ui::state::AsyncJobState::Failed(_))
+                        && matches!(this.cidr.job, super::state::AsyncJobState::Failed(_))
                     {
-                        this.cidr.job = crate::ui::state::AsyncJobState::Idle;
+                        this.cidr.job = super::state::AsyncJobState::Idle;
                         cx.notify();
                     }
                 },
@@ -231,9 +232,9 @@ impl ToolsWorkspace {
                 &input,
                 |this, _, event: &InputEvent, cx: &mut gpui::Context<Self>| {
                     if matches!(event, InputEvent::Change)
-                        && matches!(this.cidr.job, crate::ui::state::AsyncJobState::Failed(_))
+                        && matches!(this.cidr.job, super::state::AsyncJobState::Failed(_))
                     {
-                        this.cidr.job = crate::ui::state::AsyncJobState::Idle;
+                        this.cidr.job = super::state::AsyncJobState::Idle;
                         cx.notify();
                     }
                 },
@@ -374,7 +375,7 @@ impl ToolsWorkspace {
         let request = bridge.request.expect("request should exist");
         self.active_config_generation = self.active_config_generation.wrapping_add(1);
         let generation = self.active_config_generation;
-        let cancel = crate::ui::state::JobCancelHandle::new();
+        let cancel = JobCancelHandle::new();
         self.active_config_cancel
             .take()
             .map(|existing| existing.cancel());

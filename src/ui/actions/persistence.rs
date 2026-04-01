@@ -13,10 +13,11 @@ use super::super::persistence::{
     StoragePaths, STATE_VERSION,
 };
 use super::super::state::{
-    build_configs_library_rows, ConfigSource, ConfigsState, EndpointFamily, SelectionState,
-    StatsState, TrafficDayBucket, TrafficHourBucket, TrafficStore, TunnelConfig, UiPrefsState,
-    WgApp, TRAFFIC_HOURLY_HISTORY, TRAFFIC_ROLLING_DAYS,
+    ConfigSource, ConfigsState, EndpointFamily, SelectionState, StatsState, TrafficDayBucket,
+    TrafficHourBucket, TrafficStore, TunnelConfig, UiPrefsState, WgApp, TRAFFIC_HOURLY_HISTORY,
+    TRAFFIC_ROLLING_DAYS,
 };
+use crate::ui::features::configs::state::build_configs_library_rows;
 
 impl WgApp {
     pub(crate) fn start_load_persisted_state(

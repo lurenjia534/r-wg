@@ -29,11 +29,9 @@
 
 mod about;
 mod advanced;
-mod configs;
 mod dns;
 mod left_panel;
 mod logs;
-pub(crate) mod route_map;
 pub(crate) mod shared;
 mod top_bar;
 mod widgets;
@@ -44,8 +42,9 @@ use gpui_component::{
     Sizable as _,
 };
 
+use super::features::configs::state::ConfigDraftState;
 use super::features::themes::AppearancePolicy;
-use super::state::{ConfigDraftState, SidebarItem, WgApp};
+use super::state::{SidebarItem, WgApp};
 pub(crate) use shared::ViewData;
 pub(crate) use widgets::{PageShell, PageShellHeader};
 
@@ -100,7 +99,7 @@ impl Render for WgApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 加载持久化状态
         self.start_load_persisted_state(window, cx);
-        
+
         // 确保主题观察者已注册
         self.ensure_theme_appearance_observer(window, cx);
 
@@ -113,7 +112,7 @@ impl Render for WgApp {
             let left_panel = left_panel::ensure_left_panel(cx.entity(), window, cx);
             left_panel::sync_left_panel(&left_panel, self, cx);
             left_panel::sync_left_panel_overlay(self, window, cx);
-            
+
             // 判断是否使用浮动覆盖层侧边栏
             let use_sidebar_overlay = left_panel::sidebar_uses_overlay(window);
             let show_sidebar_overlay_trigger =
@@ -147,14 +146,8 @@ impl Render for WgApp {
                         overview_page.into_any_element()
                     }
                     SidebarItem::Configs => {
-                        // 配置库页面（使用完整工作区）
-                        let workspace = self.ensure_configs_workspace(cx);
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .child(workspace)
-                            .into_any_element()
+                        // 配置库页面（由 configs feature 承载）
+                        super::features::render_configs(self, cx).into_any_element()
                     }
                     SidebarItem::Proxies => {
                         // 代理页面
@@ -254,31 +247,48 @@ impl Render for WgApp {
 
             // 叠加层渲染
             let mut overlays = div().absolute().top_0().left_0().size_full();
-            
+
             // 左侧面板覆盖层
             if let Some(left_panel_overlay) =
                 left_panel::render_left_panel_overlay(&left_panel, self, window, cx)
             {
                 overlays = overlays.child(left_panel_overlay);
             }
-            
+
             // 底部表单层
             if let Some(sheet_layer) = Root::render_sheet_layer(window, cx) {
                 overlays = overlays.child(sheet_layer);
             }
-            
+
             // 对话框层
             if let Some(dialog_layer) = Root::render_dialog_layer(window, cx) {
                 overlays = overlays.child(dialog_layer);
             }
-            
+
             // 通知层
             if let Some(notification_layer) = Root::render_notification_layer(window, cx) {
                 overlays = overlays.child(notification_layer);
             }
 
             // 最终布局
-            div().relative().size_full().child(main).child(overlays)
+            div()
+                .relative()
+                .size_full()
+                .key_context("App")
+                .on_action(cx.listener(WgApp::open_overview_action))
+                .on_action(cx.listener(WgApp::open_configs_action))
+                .on_action(cx.listener(WgApp::open_proxies_action))
+                .on_action(cx.listener(WgApp::open_dns_action))
+                .on_action(cx.listener(WgApp::open_logs_action))
+                .on_action(cx.listener(WgApp::open_route_map_action))
+                .on_action(cx.listener(WgApp::open_tools_action))
+                .on_action(cx.listener(WgApp::open_advanced_action))
+                .on_action(cx.listener(WgApp::open_about_action))
+                .on_action(cx.listener(WgApp::toggle_tunnel_action))
+                .on_action(cx.listener(WgApp::import_config_action))
+                .on_action(cx.listener(WgApp::save_config_action))
+                .child(main)
+                .child(overlays)
         }
     }
 }

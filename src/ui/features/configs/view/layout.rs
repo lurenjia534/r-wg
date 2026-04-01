@@ -10,15 +10,15 @@ use gpui_component::{
     v_flex, ActiveTheme as _, PixelsExt, Sizable as _, StyledExt as _,
 };
 
-use crate::ui::state::{
-    ConfigInspectorTab, ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, WgApp,
-};
-use crate::ui::view::configs::ConfigsViewData;
+use crate::ui::features::configs::state::{ConfigsLibraryRow, ConfigsWorkspace};
+use crate::ui::state::{ConfigInspectorTab, ConfigsPrimaryPane, WgApp};
 
 use super::editor::render_editor_panel;
 use super::inspector::{render_configs_primary_pane_tabs, render_inspector_panel};
 use super::library::render_library_panel;
-use super::{ConfigsLayoutMode, ConfigsRuntimeView, CONFIGS_MEDIUM_INSPECTOR_HEIGHT};
+use super::{
+    ConfigsLayoutMode, ConfigsRuntimeView, ConfigsViewData, CONFIGS_MEDIUM_INSPECTOR_HEIGHT,
+};
 
 // Desktop, medium, and compact layouts plus the shared shell header.
 

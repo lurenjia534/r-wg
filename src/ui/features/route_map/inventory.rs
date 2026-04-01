@@ -15,11 +15,12 @@ use gpui_component::{
 };
 
 use crate::ui::state::WgApp;
-use crate::ui::view::route_map::data::{
+
+use super::data::{
     RouteMapChip, RouteMapData, RouteMapInventoryGroup, RouteMapInventoryItem, RouteMapItemStatus,
     RouteMapTone,
 };
-use crate::ui::view::route_map::status_chip;
+use super::status_chip;
 
 struct RouteMapInventoryTreeCache {
     tree: Entity<TreeState>,

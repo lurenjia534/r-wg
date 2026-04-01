@@ -41,6 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_os = "windows"))]
 use std::sync::Arc;
 
+use super::actions::app as app_actions;
 use super::features::{
     session::lifecycle,
     themes::{self, AppearancePolicy},
@@ -85,14 +86,15 @@ pub fn run(primary: PrimaryInstance) {
         .run(move |cx: &mut App| {
             // 初始化 GPUI 组件库
             gpui_component::init(cx);
-            
+            app_actions::install_keybindings(cx);
+
             // 打开窗口前加载主题选择，确保首帧尽量贴近用户偏好。
             let mut startup_theme = load_startup_theme_prefs(cx);
             let storage = persistence::ensure_storage_dirs().ok();
             if let Some(storage) = storage.as_ref() {
                 let _ = themes::ensure_theme_registry(storage, cx);
             }
-            
+
             // 解析亮色主题
             let light_theme = themes::resolve_theme_preference(
                 gpui_component::theme::ThemeMode::Light,
@@ -101,7 +103,7 @@ pub fn run(primary: PrimaryInstance) {
                 storage.as_ref(),
                 cx,
             );
-            
+
             // 解析暗色主题
             let dark_theme = themes::resolve_theme_preference(
                 gpui_component::theme::ThemeMode::Dark,
@@ -110,7 +112,7 @@ pub fn run(primary: PrimaryInstance) {
                 storage.as_ref(),
                 cx,
             );
-            
+
             // 更新主题偏好
             startup_theme.light_key = Some(light_theme.entry.key.clone());
             startup_theme.dark_key = Some(dark_theme.entry.key.clone());
@@ -126,7 +128,7 @@ pub fn run(primary: PrimaryInstance) {
 
             let tunnel_session = tunnel_session.clone();
             let primary = primary;
-            
+
             // 创建主窗口
             cx.open_window(
                 WindowOptions {
@@ -148,23 +150,23 @@ pub fn run(primary: PrimaryInstance) {
                             startup_theme.dark_name.clone(),
                         )
                     });
-                    
+
                     // 刷新特权后端状态
                     view.update(cx, |this, cx| {
                         this.refresh_privileged_backend_status(cx);
                     });
-                    
+
                     // 弱引用：窗口关闭后不会阻止资源释放
                     let view_handle = view.downgrade();
-                    
+
                     // 同步路由应用报告
                     lifecycle::sync_apply_report(view_handle.clone(), tunnel_session.clone(), cx);
-                    
+
                     // Windows 专用：启动期向引擎反查状态
                     // 兼容 helper 已在运行而 UI 后打开的场景
                     #[cfg(target_os = "windows")]
                     lifecycle::sync_engine_status(view_handle.clone(), tunnel_session.clone(), cx);
-                    
+
                     // 初始化系统托盘并启动命令监听
                     tray::init(
                         primary.clone(),
@@ -173,7 +175,7 @@ pub fn run(primary: PrimaryInstance) {
                         tunnel_session.clone(),
                         cx,
                     );
-                    
+
                     // Linux 专用：防止重复触发关闭逻辑
                     #[cfg(not(target_os = "windows"))]
                     let closing = Arc::new(AtomicBool::new(false));
@@ -208,7 +210,7 @@ pub fn run(primary: PrimaryInstance) {
                             let view_handle = view_handle.clone();
                             let close_flag = Arc::clone(&close_flag);
                             let tunnel_session = close_tunnel_session.clone();
-                            
+
                             // 在 UI 线程启动异步任务，后台线程执行 engine.stop()
                             cx.spawn(async move |cx| {
                                 let should_close = lifecycle::request_shutdown_stop(
@@ -264,10 +266,10 @@ fn load_startup_theme_prefs(_cx: &App) -> StartupThemePrefs {
             };
         }
     };
-    
+
     // 尝试加载之前保存的状态
     let state = persistence::load_state(&storage).ok().flatten();
-    
+
     // 确定外观策略：优先使用 theme_policy，否则尝试 theme_mode，最后默认 System
     let appearance_policy = state
         .as_ref()
@@ -278,7 +280,7 @@ fn load_startup_theme_prefs(_cx: &App) -> StartupThemePrefs {
                 .and_then(|state| state.theme_mode.map(Into::into))
         })
         .unwrap_or(AppearancePolicy::System);
-        
+
     // 构建完整的主题偏好
     StartupThemePrefs {
         appearance_policy,

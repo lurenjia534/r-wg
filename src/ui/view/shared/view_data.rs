@@ -1,7 +1,10 @@
 use r_wg::core::config;
 
+use crate::ui::features::configs::state::{
+    ConfigDraftState, DraftValidationState, EditorOperation,
+};
 use crate::ui::format::{format_duration, summarize_peers};
-use crate::ui::state::{ConfigDraftState, DraftValidationState, EditorOperation, WgApp};
+use crate::ui::state::WgApp;
 
 /// `ViewData` 是“跨页面复用”的基础派生数据。
 ///

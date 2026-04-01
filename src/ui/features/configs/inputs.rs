@@ -1,7 +1,8 @@
 use gpui::{AppContext, Context, Entity, SharedString, Window};
 use gpui_component::input::{InputEvent, InputState, TabSize};
 
-use crate::ui::state::{ConfigsWorkspace, WgApp};
+use crate::ui::features::configs::state::ConfigsWorkspace;
+use crate::ui::state::WgApp;
 
 const DRAFT_VALIDATION_DEBOUNCE_MS: u64 = 180;
 

@@ -9,7 +9,6 @@
 // Windows 下把入口切到 GUI 子系统，避免额外弹出控制台黑窗。
 // 这对于 GUI 应用是必须的，否则会在运行时创建一个难看的控制台窗口。
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
-
 // 禁止使用 print!/println!，强制使用 tracing 进行日志输出，
 // 确保所有输出都经过日志系统的过滤和格式化。
 #![deny(clippy::print_stdout, clippy::print_stderr)]
@@ -72,9 +71,7 @@ fn main() {
     // 如果已有实例在运行，新实例会向现有实例发送信号后退出。
     match ui::single_instance::startup() {
         // 主实例：成功获取锁，可以创建 UI 窗口
-        Ok(ui::single_instance::StartupDecision::Primary(primary)) => {
-            ui::run(primary)
-        }
+        Ok(ui::single_instance::StartupDecision::Primary(primary)) => ui::run(primary),
         // 次实例：已有实例在运行，新实例直接退出
         // 这是正常行为，不需要显示错误
         Ok(ui::single_instance::StartupDecision::Secondary) => return,

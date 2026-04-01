@@ -9,6 +9,7 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Collapsible, Icon, IconName, StyledExt as _,
 };
 
+use super::super::actions::app as app_actions;
 use super::super::state::{SidebarItem, WgApp};
 
 const SIDEBAR_EXPANDED_WIDTH: f32 = 256.0;
@@ -730,7 +731,18 @@ fn activate_sidebar_item(
         return;
     }
 
-    app.request_sidebar_active(item, window, cx);
+    match item {
+        SidebarItem::Overview => window.dispatch_action(Box::new(app_actions::OpenOverview), cx),
+        SidebarItem::Configs => window.dispatch_action(Box::new(app_actions::OpenConfigs), cx),
+        SidebarItem::Proxies => window.dispatch_action(Box::new(app_actions::OpenProxies), cx),
+        SidebarItem::Dns => window.dispatch_action(Box::new(app_actions::OpenDns), cx),
+        SidebarItem::Logs => window.dispatch_action(Box::new(app_actions::OpenLogs), cx),
+        SidebarItem::RouteMap => window.dispatch_action(Box::new(app_actions::OpenRouteMap), cx),
+        SidebarItem::Tools => window.dispatch_action(Box::new(app_actions::OpenTools), cx),
+        SidebarItem::Advanced => window.dispatch_action(Box::new(app_actions::OpenAdvanced), cx),
+        SidebarItem::About => window.dispatch_action(Box::new(app_actions::OpenAbout), cx),
+        _ => app.request_sidebar_active(item, window, cx),
+    }
 
     if app.ui_session.sidebar_overlay_open && app.ui_session.sidebar_active == item {
         app.close_sidebar_overlay(cx);

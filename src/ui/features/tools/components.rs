@@ -8,6 +8,8 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Sizable as _, StyledExt as _,
 };
 
+use super::state::ActiveConfigSource;
+
 pub(crate) fn empty_result_state<T>(message: &str, cx: &mut Context<T>) -> Div {
     div()
         .rounded_lg()
@@ -98,17 +100,13 @@ pub(crate) fn summary_block<T>(
         })))
 }
 
-pub(crate) fn active_config_source_tag(source: crate::ui::state::ActiveConfigSource) -> Tag {
+pub(crate) fn active_config_source_tag(source: ActiveConfigSource) -> Tag {
     match source {
-        crate::ui::state::ActiveConfigSource::Draft => {
-            Tag::info().small().rounded_full().child("Draft")
-        }
-        crate::ui::state::ActiveConfigSource::SavedSelection => Tag::secondary()
+        ActiveConfigSource::Draft => Tag::info().small().rounded_full().child("Draft"),
+        ActiveConfigSource::SavedSelection => Tag::secondary()
             .small()
             .rounded_full()
             .child("Saved Config"),
-        crate::ui::state::ActiveConfigSource::None => {
-            Tag::secondary().small().rounded_full().child("No Config")
-        }
+        ActiveConfigSource::None => Tag::secondary().small().rounded_full().child("No Config"),
     }
 }

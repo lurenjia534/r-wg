@@ -11,13 +11,14 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
-use crate::ui::state::{
-    ConfigsLibraryRow, ConfigsPrimaryPane, ConfigsWorkspace, EndpointFamily, WgApp,
-};
-use crate::ui::view::configs::ConfigsViewData;
+use crate::ui::actions::app as app_actions;
+use crate::ui::features::configs::state::{ConfigsLibraryRow, ConfigsWorkspace};
+use crate::ui::state::{ConfigsPrimaryPane, EndpointFamily, WgApp};
 
 use super::inspector::{endpoint_family_tag, source_tag};
-use super::{ConfigsLayoutMode, CONFIGS_LIBRARY_ROW_HEIGHT, CONFIGS_LIBRARY_SCROLL_STATE_ID};
+use super::{
+    ConfigsLayoutMode, ConfigsViewData, CONFIGS_LIBRARY_ROW_HEIGHT, CONFIGS_LIBRARY_SCROLL_STATE_ID,
+};
 
 // Library search, list, and row rendering.
 
@@ -178,13 +179,11 @@ pub(super) fn render_library_panel(
                                         .small()
                                         .compact()
                                         .disabled(data.is_busy)
-                                        .on_click({
-                                            let app = app_handle.clone();
-                                            move |_, window, cx| {
-                                                app.update(cx, |this, cx| {
-                                                    this.handle_import_click(window, cx);
-                                                });
-                                            }
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                Box::new(app_actions::ImportConfig),
+                                                cx,
+                                            );
                                         }),
                                 )
                                 .child(

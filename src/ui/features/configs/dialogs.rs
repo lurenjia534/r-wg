@@ -7,11 +7,24 @@ use gpui_component::{
 
 use crate::ui::state::{ConfigsPrimaryPane, PendingDraftAction, SidebarItem, WgApp};
 
-use super::controller::{
-    delete_configs_blocking_running, handle_import_click, handle_paste_click,
-    load_config_into_inputs, save_draft,
-};
 use super::draft;
+use super::import_export::{handle_import_click, handle_paste_click};
+use super::storage::{delete_configs_blocking_running, load_config_into_inputs, save_draft};
+
+impl WgApp {
+    pub(crate) fn request_sidebar_active(
+        &mut self,
+        item: SidebarItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        request_sidebar_active(self, item, window, cx);
+    }
+
+    pub(crate) fn handle_new_draft_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        handle_new_draft_click(self, window, cx);
+    }
+}
 
 pub(crate) fn run_pending_draft_action(
     app: &mut WgApp,

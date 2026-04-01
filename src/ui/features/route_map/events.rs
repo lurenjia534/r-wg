@@ -6,9 +6,9 @@ use gpui_component::{
     ActiveTheme as _, StyledExt as _,
 };
 
+use super::data::RouteMapData;
+use super::{empty_group, summary_chip};
 use crate::ui::state::WgApp;
-use crate::ui::view::route_map::data::RouteMapData;
-use crate::ui::view::route_map::{empty_group, summary_chip};
 
 const EVENTS_LIST_SCROLL_STATE_ID: &str = "route-map-events-scroll";
 const EVENT_ROW_HEIGHT: f32 = 42.0;

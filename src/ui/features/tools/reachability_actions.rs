@@ -5,7 +5,7 @@ use r_wg::backend::wg::tools::{
     ReachabilityRequest,
 };
 
-use crate::ui::state::{
+use super::state::{
     AsyncJobState, JobCancelHandle, ReachabilityAuditFilter, ReachabilityAuditRequest,
     ReachabilitySingleViewModel, ReachabilityTab, ToolsTab, ToolsWorkspace,
 };

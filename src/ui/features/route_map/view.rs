@@ -11,11 +11,9 @@ use gpui_component::{
 };
 
 use crate::ui::state::{RouteFamilyFilter, RouteMapMode, WgApp};
-use crate::ui::view::route_map::data::{
-    EffectiveRoutePlan, RouteMapChip, RouteMapData, RouteMapEvidence, RouteMapTone,
-};
 use crate::ui::view::{PageShell, ViewData};
 
+use super::data::{EffectiveRoutePlan, RouteMapChip, RouteMapData, RouteMapEvidence, RouteMapTone};
 use super::{controller, events, graph, inspector, inventory};
 
 const ROUTE_MAP_STACK_BREAKPOINT: f32 = 1360.0;

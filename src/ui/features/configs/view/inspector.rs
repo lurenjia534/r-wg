@@ -10,14 +10,14 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
+use crate::ui::actions::app as app_actions;
+use crate::ui::features::configs::state::{ConfigsWorkspace, DraftValidationState};
 use crate::ui::format::{format_addresses, format_allowed_ips, format_dns, format_route_table};
 use crate::ui::state::{
-    ConfigInspectorTab, ConfigSource, ConfigsPrimaryPane, ConfigsWorkspace, DraftValidationState,
-    EndpointFamily, WgApp,
+    ConfigInspectorTab, ConfigSource, ConfigsPrimaryPane, EndpointFamily, WgApp,
 };
-use crate::ui::view::configs::ConfigsViewData;
 
-use super::{ConfigsLayoutMode, ConfigsRuntimeView};
+use super::{ConfigsLayoutMode, ConfigsRuntimeView, ConfigsViewData};
 
 // Inspector panes, diagnostics, activity cards, and helper tags.
 
@@ -630,13 +630,8 @@ pub(super) fn editor_action_bar(
                 .small()
                 .compact()
                 .disabled(!data.can_save)
-                .on_click({
-                    let app = app_handle.clone();
-                    move |_, window, cx| {
-                        app.update(cx, |this, cx| {
-                            this.handle_save_click(window, cx);
-                        });
-                    }
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(app_actions::SaveConfig), cx);
                 }),
         )
         .child(

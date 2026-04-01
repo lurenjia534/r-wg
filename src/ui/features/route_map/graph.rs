@@ -13,12 +13,11 @@ use gpui_component::{
 };
 
 use crate::ui::state::{RouteMapMode, WgApp};
-use crate::ui::view::route_map::data::{
+
+use super::data::{
     RouteMapData, RouteMapGraphStep, RouteMapGraphStepKind, RouteMapInventoryItem, RouteMapRouteRow,
 };
-use crate::ui::view::route_map::{empty_group, explain, status_chip};
-
-use super::events;
+use super::{empty_group, events, explain, status_chip};
 
 const ROUTE_LIST_SCROLL_STATE_ID: &str = "route-map-routes-scroll";
 const ROUTE_ROW_HEIGHT: f32 = 48.0;

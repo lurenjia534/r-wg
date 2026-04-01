@@ -7,6 +7,7 @@ pub(crate) mod session;
 pub(crate) mod themes;
 pub(crate) mod tools;
 
+pub(crate) use configs::render_configs;
 pub(crate) use overview::{ensure_overview_page, render_placeholder};
 pub(crate) use proxies::render_proxies;
 pub(crate) use route_map::render_route_map;

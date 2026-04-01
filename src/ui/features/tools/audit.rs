@@ -10,13 +10,13 @@ use r_wg::core::config::{self, PeerConfig};
 use tokio::runtime::Builder;
 
 use crate::ui::features::tools::active_config::resolve_active_config_text_request;
-use crate::ui::state::{
-    AsyncJobState, JobCancelHandle, ReachabilityAuditPhase, ReachabilityAuditProgress,
-    ReachabilityAuditRequest, ReachabilityAuditViewModel, ReachabilityBatchResult,
-    ReachabilityBatchRow, ReachabilityBatchStatus, ToolsWorkspace,
-};
 
 use super::reachability_actions::run_reachability_probe_with_cancel_async;
+use super::state::{
+    ActiveConfigTextRequest, AsyncJobState, JobCancelHandle, ReachabilityAuditPhase,
+    ReachabilityAuditProgress, ReachabilityAuditRequest, ReachabilityAuditViewModel,
+    ReachabilityBatchResult, ReachabilityBatchRow, ReachabilityBatchStatus, ToolsWorkspace,
+};
 
 const REACHABILITY_BATCH_CONCURRENCY: usize = 24;
 const AUDIT_PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -141,7 +141,7 @@ impl ToolsWorkspace {
 }
 
 fn build_batch_reachability_result_blocking(
-    requests: Vec<crate::ui::state::ActiveConfigTextRequest>,
+    requests: Vec<ActiveConfigTextRequest>,
     request: ReachabilityAuditRequest,
     cancel: JobCancelHandle,
     progress: SharedAuditProgress,
@@ -158,7 +158,7 @@ fn build_batch_reachability_result_blocking(
 }
 
 async fn build_batch_reachability_result(
-    requests: Vec<crate::ui::state::ActiveConfigTextRequest>,
+    requests: Vec<ActiveConfigTextRequest>,
     request: ReachabilityAuditRequest,
     cancel: JobCancelHandle,
     progress: SharedAuditProgress,
@@ -340,7 +340,10 @@ async fn build_batch_reachability_result(
 }
 
 fn progress_snapshot(progress: &SharedAuditProgress) -> ReachabilityAuditProgress {
-    progress.lock().expect("audit progress lock poisoned").clone()
+    progress
+        .lock()
+        .expect("audit progress lock poisoned")
+        .clone()
 }
 
 fn update_progress(

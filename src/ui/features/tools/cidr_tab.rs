@@ -9,11 +9,10 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Disableable as _, Sizable as _,
 };
 
-use crate::ui::state::{AsyncJobState, CidrViewModel, ToolsWorkspace};
-
 use super::components::{
     empty_result_state, error_banner, readonly_text_block, summary_block, warning_banner,
 };
+use super::state::{AsyncJobState, CidrViewModel, ToolsWorkspace};
 
 pub(crate) fn render_cidr_tab(
     workspace: &ToolsWorkspace,

@@ -11,15 +11,16 @@ use r_wg::backend::wg::PeerStats;
 use r_wg::core::route_plan::RouteApplyReport;
 use r_wg::dns::{DnsMode, DnsPreset};
 
+use crate::ui::features::configs::state::{ConfigsWorkspace, LoadedConfigState};
 use crate::ui::features::themes::AppearancePolicy;
 use crate::ui::persistence::{self, StoragePaths};
 
 use super::{
-    BackendDiagnostic, BackendHealth, ConfigInspectorTab, ConfigsWorkspace, LoadedConfigState,
-    PendingStart, ProxiesViewMode, ProxyRunningFilter, RouteFamilyFilter, RouteMapMode,
-    SidebarItem, ToolsWorkspace, TrafficPeriod, TrafficStore, TunnelConfig,
-    DEFAULT_CONFIGS_INSPECTOR_WIDTH, DEFAULT_CONFIGS_LIBRARY_WIDTH,
-    DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH, DEFAULT_ROUTE_MAP_INVENTORY_WIDTH, RESTART_COOLDOWN,
+    BackendDiagnostic, BackendHealth, ConfigInspectorTab, PendingStart, ProxiesViewMode,
+    ProxyRunningFilter, RouteFamilyFilter, RouteMapMode, SidebarItem, ToolsWorkspace,
+    TrafficPeriod, TrafficStore, TunnelConfig, DEFAULT_CONFIGS_INSPECTOR_WIDTH,
+    DEFAULT_CONFIGS_LIBRARY_WIDTH, DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH,
+    DEFAULT_ROUTE_MAP_INVENTORY_WIDTH, RESTART_COOLDOWN,
 };
 
 // App state containers excluding the WgApp facade.

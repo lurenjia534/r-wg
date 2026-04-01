@@ -12,11 +12,9 @@ use r_wg::application::{
 use r_wg::core::config;
 
 use crate::ui::persistence;
-use crate::ui::state::{
-    ConfigSource, EditorOperation, EndpointFamily, PendingDraftAction, TunnelConfig, WgApp,
-};
+use crate::ui::state::{ConfigSource, EndpointFamily, PendingDraftAction, TunnelConfig, WgApp};
 
-use super::{dialogs, draft, endpoint_family};
+use super::{dialogs, draft, endpoint_family, state::EditorOperation};
 
 pub(crate) enum ImportOutcome {
     Ok {
@@ -31,6 +29,24 @@ pub(crate) enum ImportOutcome {
 
 const IMPORT_CONCURRENCY: usize = 8;
 const IMPORT_BATCH_SIZE: usize = 200;
+
+impl WgApp {
+    pub(crate) fn handle_import_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        handle_import_click(self, window, cx);
+    }
+
+    pub(crate) fn handle_export_click(&mut self, cx: &mut Context<Self>) {
+        handle_export_click(self, cx);
+    }
+
+    pub(crate) fn handle_paste_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        handle_paste_click(self, window, cx);
+    }
+
+    pub(crate) fn handle_copy_click(&mut self, cx: &mut Context<Self>) {
+        handle_copy_click(self, cx);
+    }
+}
 
 pub(crate) fn handle_import_click(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     if app.configs_is_busy(cx) {
@@ -515,9 +531,10 @@ pub(crate) fn handle_copy_click(app: &mut WgApp, cx: &mut Context<WgApp>) {
     let config_library = app.config_library.clone();
     cx.spawn(async move |view, cx| {
         let path_for_cache = selected.storage_path.clone();
-        let read_task = cx.background_spawn(async move {
-            config_library.read_config_text(&selected.storage_path)
-        });
+        let read_task =
+            cx.background_spawn(
+                async move { config_library.read_config_text(&selected.storage_path) },
+            );
         let result = read_task.await;
         view.update(cx, |this, cx| {
             if this.selection.selected_id != Some(selected.id) {

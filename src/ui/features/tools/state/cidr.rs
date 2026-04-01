@@ -1,6 +1,7 @@
-use super::AsyncJobState;
 use gpui::{Entity, SharedString, Subscription};
 use gpui_component::input::InputState;
+
+use super::AsyncJobState;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CidrRequestSnapshot {

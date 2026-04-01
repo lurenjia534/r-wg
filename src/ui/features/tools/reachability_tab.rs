@@ -16,13 +16,12 @@ use r_wg::backend::wg::tools::{
     AddressFamilyPreference, ReachabilityAttemptResult, ReachabilityMode, ReachabilityVerdict,
 };
 
-use crate::ui::state::{
+use super::components::{empty_result_state, error_banner, warning_banner};
+use super::state::{
     AsyncJobState, ReachabilityAuditFilter, ReachabilityAuditPhase, ReachabilityAuditProgress,
     ReachabilityBatchRow, ReachabilityBatchStatus, ReachabilityFormState,
     ReachabilitySingleViewModel, ReachabilityTab, ToolsWorkspace,
 };
-
-use super::components::{empty_result_state, error_banner, warning_banner};
 
 const AUDIT_LIST_SCROLL_STATE_ID: &str = "tools-reach-audit-scroll";
 

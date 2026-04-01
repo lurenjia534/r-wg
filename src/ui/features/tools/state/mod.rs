@@ -9,7 +9,7 @@ use std::sync::{
 
 use gpui::{Entity, SharedString};
 
-use super::WgApp;
+use crate::ui::state::WgApp;
 
 pub(crate) use active_config::*;
 pub(crate) use cidr::*;

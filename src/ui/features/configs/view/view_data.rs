@@ -1,6 +1,7 @@
-use crate::ui::state::{
-    ConfigDraftState, ConfigSource, DraftValidationState, EditorOperation, TunnelConfig, WgApp,
+use crate::ui::features::configs::state::{
+    ConfigDraftState, DraftValidationState, EditorOperation,
 };
+use crate::ui::state::{ConfigSource, TunnelConfig, WgApp};
 use crate::ui::view::shared::ViewData;
 
 /// Configs 页的局部渲染快照。
