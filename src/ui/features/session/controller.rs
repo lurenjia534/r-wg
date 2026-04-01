@@ -1,3 +1,10 @@
+//! 隧道会话控制器模块
+//!
+//! 本模块处理 UI 与隧道之间的交互逻辑，包括：
+//! - 启动/停止隧道的决策
+//! - 异步操作的结果处理
+//! - 托盘操作的转发
+
 use std::time::Duration;
 
 use gpui::{AppContext, Context, SharedString, Window};
@@ -13,10 +20,16 @@ use crate::ui::permissions::start_permission_message;
 use crate::ui::state::{PendingStart, TunnelConfig, WgApp};
 use crate::ui::tray;
 
+/// 处理启动/停止按钮点击
+///
+/// 这是主 UI 入口点，会根据当前状态决定执行什么操作。
 pub(crate) fn handle_start_stop(app: &mut WgApp, _window: &mut Window, cx: &mut Context<WgApp>) {
     handle_start_stop_core(app, cx);
 }
 
+/// 核心启动/停止逻辑
+///
+/// 根据当前状态（busy、running、选中的配置等）决定操作。
 pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
     let draft = app.configs_draft_snapshot(cx);
     let decision = decide_toggle(ToggleTunnelInput {
@@ -30,7 +43,10 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
     });
 
     match decision {
+        // 无操作：当前状态不支持任何操作
         ToggleTunnelDecision::Noop => {}
+        
+        // 排队等待启动：忙碌中但有新启动请求
         ToggleTunnelDecision::QueuePendingStart { config_id } => {
             if app
                 .runtime
@@ -40,6 +56,8 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
                 cx.notify();
             }
         }
+        
+        // 停止运行中的隧道
         ToggleTunnelDecision::StopRunning => {
             app.runtime.begin_stop();
             app.stats.stats_generation = app.stats.stats_generation.wrapping_add(1);
@@ -76,12 +94,16 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
             })
             .detach();
         }
+        
+        // 启动选中的配置
         ToggleTunnelDecision::StartSelected {
             config_id,
             restart_delay,
         } => {
             start_config_by_id(app, config_id, restart_delay, cx, "Select a tunnel first");
         }
+        
+        // 启动被阻止（显示错误消息）
         ToggleTunnelDecision::Blocked(reason) => {
             app.set_error(reason.message());
             cx.notify();
@@ -89,6 +111,7 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
     };
 }
 
+/// 处理从托盘启动隧道
 pub(crate) fn handle_start_from_tray(app: &mut WgApp, cx: &mut Context<WgApp>) {
     if app.runtime.running || app.runtime.busy {
         return;
@@ -96,6 +119,7 @@ pub(crate) fn handle_start_from_tray(app: &mut WgApp, cx: &mut Context<WgApp>) {
     handle_start_stop_core(app, cx);
 }
 
+/// 处理从托盘停止隧道
 pub(crate) fn handle_stop_from_tray(app: &mut WgApp, cx: &mut Context<WgApp>) {
     if !app.runtime.running || app.runtime.busy {
         return;
@@ -103,6 +127,13 @@ pub(crate) fn handle_stop_from_tray(app: &mut WgApp, cx: &mut Context<WgApp>) {
     handle_start_stop_core(app, cx);
 }
 
+/// 启动指定配置
+///
+/// 这是启动操作的核心实现，处理：
+/// 1. 权限检查
+/// 2. 读取配置文本（如果未缓存）
+/// 3. 调用 tunnel_session.start()
+/// 4. 处理结果并更新 UI
 fn start_with_config(
     app: &mut WgApp,
     selected: TunnelConfig,
@@ -110,6 +141,7 @@ fn start_with_config(
     delay: Option<Duration>,
     cx: &mut Context<WgApp>,
 ) {
+    // 权限检查
     if let Some(message) = start_permission_message() {
         app.set_error(message);
         cx.notify();
@@ -123,11 +155,14 @@ fn start_with_config(
     let tunnel_session = app.tunnel_session.clone();
     let config_library = app.config_library.clone();
     let dns_selection = DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset);
+    
     cx.spawn(async move |view, cx| {
+        // 如果指定了延迟，先等待
         if let Some(delay) = delay {
             cx.background_executor().timer(delay).await;
         }
 
+        // 获取配置文本
         let text_result = match initial_text {
             Some(text) => Ok(text),
             None => {
@@ -154,6 +189,7 @@ fn start_with_config(
             }
         };
 
+        // 缓存配置文本
         let text_for_cache = text.clone();
         let path_for_cache = selected.storage_path.clone();
         view.update(cx, |this, _| {
@@ -161,6 +197,7 @@ fn start_with_config(
         })
         .ok();
 
+        // 发起启动请求
         let request =
             StartTunnelRequest::new(selected.name.clone(), text.to_string(), dns_selection);
         let start_task = cx.background_spawn(async move {
@@ -168,6 +205,8 @@ fn start_with_config(
             (outcome.result, outcome.apply_report)
         });
         let (result, apply_report) = start_task.await;
+        
+        // 处理结果
         view.update(cx, |this, cx| {
             this.runtime.finish_start_attempt();
             match result {
@@ -198,6 +237,9 @@ fn start_with_config(
     .detach();
 }
 
+/// 根据配置 ID 启动
+///
+/// 查找配置并调用 start_with_config。
 fn start_config_by_id(
     app: &mut WgApp,
     config_id: u64,
@@ -215,6 +257,9 @@ fn start_config_by_id(
     start_with_config(app, selected, initial_text, delay, cx);
 }
 
+/// 重启待处理的启动
+///
+/// 停止成功后检查是否有排队的启动请求。
 fn restart_pending_start(app: &mut WgApp, cx: &mut Context<WgApp>) {
     let pending_config_id = app
         .runtime
@@ -230,6 +275,9 @@ fn restart_pending_start(app: &mut WgApp, cx: &mut Context<WgApp>) {
     }
 }
 
+/// 完成停止成功
+///
+/// 更新 UI 状态为"已停止"。
 pub(crate) fn complete_stop_success(app: &mut WgApp, cx: &mut Context<WgApp>) {
     app.runtime.finish_stop_success();
     app.refresh_configs_workspace_row_flags(cx);
@@ -237,6 +285,9 @@ pub(crate) fn complete_stop_success(app: &mut WgApp, cx: &mut Context<WgApp>) {
     app.set_status("Stopped");
 }
 
+/// 完成停止失败
+///
+/// 显示错误消息。
 pub(crate) fn complete_stop_failure(app: &mut WgApp, message: impl Into<SharedString>) {
     app.runtime.finish_stop_failure();
     app.set_error(message);
