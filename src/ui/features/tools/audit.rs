@@ -4,18 +4,19 @@ use std::{
 };
 
 use futures_util::stream::{self, StreamExt as _, TryStreamExt as _};
-use gpui::{AppContext as _, Context, Timer};
+use gpui::{AppContext as _, Context, SharedString, Timer};
 use r_wg::backend::wg::tools::format_endpoint_display;
 use r_wg::core::config::{self, PeerConfig};
 use tokio::runtime::Builder;
 
-use super::active_config::resolve_active_config_text_request;
-use super::reachability::run_reachability_probe_with_cancel_async;
+use crate::ui::features::tools::active_config::resolve_active_config_text_request;
 use crate::ui::state::{
     AsyncJobState, JobCancelHandle, ReachabilityAuditPhase, ReachabilityAuditProgress,
     ReachabilityAuditRequest, ReachabilityAuditViewModel, ReachabilityBatchResult,
     ReachabilityBatchRow, ReachabilityBatchStatus, ToolsWorkspace,
 };
+
+use super::reachability_actions::run_reachability_probe_with_cancel_async;
 
 const REACHABILITY_BATCH_CONCURRENCY: usize = 24;
 const AUDIT_PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -180,7 +181,7 @@ async fn build_batch_reachability_result(
                     peer_label: "-".into(),
                     target: "-".into(),
                     status: ReachabilityBatchStatus::ReadError,
-                    summary: message.into(),
+                    summary: SharedString::from(message),
                 });
                 increment_processed_configs(&progress);
                 continue;
@@ -326,11 +327,6 @@ async fn build_batch_reachability_result(
         })
         .count();
 
-    update_progress(&progress, |state| {
-        state.phase = ReachabilityAuditPhase::Completed;
-        state.completed_endpoints = state.total_endpoints;
-    });
-
     Ok(ReachabilityBatchResult {
         total_configs,
         endpoint_rows,
@@ -343,6 +339,10 @@ async fn build_batch_reachability_result(
     })
 }
 
+fn progress_snapshot(progress: &SharedAuditProgress) -> ReachabilityAuditProgress {
+    progress.lock().expect("audit progress lock poisoned").clone()
+}
+
 fn update_progress(
     progress: &SharedAuditProgress,
     update: impl FnOnce(&mut ReachabilityAuditProgress),
@@ -353,32 +353,27 @@ fn update_progress(
 
 fn increment_processed_configs(progress: &SharedAuditProgress) {
     update_progress(progress, |state| {
-        state.processed_configs += 1;
+        state.processed_configs = state.processed_configs.saturating_add(1);
     });
 }
 
 fn increment_total_endpoints(progress: &SharedAuditProgress, count: usize) {
     update_progress(progress, |state| {
-        state.total_endpoints += count;
+        state.total_endpoints = state.total_endpoints.saturating_add(count);
     });
 }
 
 fn increment_completed_endpoints(progress: &SharedAuditProgress) {
     update_progress(progress, |state| {
-        state.completed_endpoints += 1;
+        state.completed_endpoints = state.completed_endpoints.saturating_add(1);
     });
 }
 
-fn progress_snapshot(progress: &SharedAuditProgress) -> ReachabilityAuditProgress {
-    progress
-        .lock()
-        .expect("audit progress lock poisoned")
-        .clone()
-}
-
 fn peer_label(index: usize, peer: &PeerConfig) -> String {
-    match peer.endpoint.as_ref() {
-        Some(endpoint) => format!("Peer {} ({})", index + 1, endpoint.host),
-        None => format!("Peer {}", index + 1),
-    }
+    let label = peer
+        .endpoint
+        .as_ref()
+        .map(format_endpoint_display)
+        .unwrap_or_else(|| "-".to_string());
+    format!("Peer {} • {}", index + 1, label)
 }

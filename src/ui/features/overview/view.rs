@@ -21,12 +21,13 @@ use gpui_component::{
 };
 
 use crate::ui::state::WgApp;
-use crate::ui::view::overview::{
+use crate::ui::view::{PageShell, PageShellHeader};
+
+use super::{
     cards::{network_status_card, running_status_card, traffic_stats_card},
     traffic::{traffic_summary_card, traffic_trend_card},
     view_model::OverviewData,
 };
-use crate::ui::view::{PageShell, PageShellHeader};
 
 /// 紧凑布局断点（宽度小于此值时使用紧凑布局）
 const OVERVIEW_COMPACT_BREAKPOINT: f32 = 1180.0;

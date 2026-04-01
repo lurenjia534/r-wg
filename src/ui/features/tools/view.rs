@@ -9,11 +9,12 @@ use gpui_component::{
 };
 
 use crate::ui::state::{ActiveConfigParseState, ToolsTab, ToolsWorkspace, WgApp};
-use crate::ui::view::tools::{
+use crate::ui::view::{PageShell, PageShellHeader};
+
+use super::{
     cidr_tab::render_cidr_tab, components::active_config_source_tag,
     reachability_tab::render_reachability_tab,
 };
-use crate::ui::view::{PageShell, PageShellHeader};
 
 const TOOLS_STACK_BREAKPOINT: f32 = 1240.0;
 

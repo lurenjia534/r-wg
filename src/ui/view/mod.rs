@@ -33,10 +33,8 @@ mod configs;
 mod dns;
 mod left_panel;
 mod logs;
-pub(crate) mod overview;
 pub(crate) mod route_map;
-mod shared;
-pub(crate) mod tools;
+pub(crate) mod shared;
 mod top_bar;
 mod widgets;
 

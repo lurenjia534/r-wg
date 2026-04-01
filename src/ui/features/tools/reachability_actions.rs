@@ -6,9 +6,8 @@ use r_wg::backend::wg::tools::{
 };
 
 use crate::ui::state::{
-    ActiveConfigParseState, AsyncJobState, JobCancelHandle, ReachabilityAuditFilter,
-    ReachabilityAuditRequest, ReachabilitySingleViewModel, ReachabilityTab, ToolsTab,
-    ToolsWorkspace,
+    AsyncJobState, JobCancelHandle, ReachabilityAuditFilter, ReachabilityAuditRequest,
+    ReachabilitySingleViewModel, ReachabilityTab, ToolsTab, ToolsWorkspace,
 };
 
 const REACHABILITY_DEFAULT_TIMEOUT_MS: &str = "1500";
@@ -243,14 +242,14 @@ impl ToolsWorkspace {
     }
 }
 
-pub(super) fn run_reachability_probe_with_cancel(
+pub(crate) fn run_reachability_probe_with_cancel(
     request: ReachabilityRequest,
     cancel: JobCancelHandle,
 ) -> Result<r_wg::backend::wg::tools::ReachabilityResult, String> {
     probe_reachability_blocking_until_cancel(request, move || cancel.is_cancelled())
 }
 
-pub(super) async fn run_reachability_probe_with_cancel_async(
+pub(crate) async fn run_reachability_probe_with_cancel_async(
     request: ReachabilityRequest,
     cancel: JobCancelHandle,
 ) -> Result<r_wg::backend::wg::tools::ReachabilityResult, String> {
@@ -258,42 +257,32 @@ pub(super) async fn run_reachability_probe_with_cancel_async(
 }
 
 pub(super) fn parse_optional_u16(value: &str) -> Result<Option<u16>, String> {
-    let value = value.trim();
     if value.is_empty() {
         return Ok(None);
     }
-    let parsed = value
+    value
         .parse::<u16>()
-        .map_err(|_| "Port override must be a non-zero integer.".to_string())?;
-    if parsed == 0 {
-        return Err("Port override must be a non-zero integer.".to_string());
-    }
-    Ok(Some(parsed))
+        .map(Some)
+        .map_err(|err| format!("Invalid port override: {err}"))
 }
 
 pub(super) fn parse_timeout_ms(value: &str) -> Result<u64, String> {
-    let value = value.trim();
     if value.is_empty() {
-        return Ok(REACHABILITY_DEFAULT_TIMEOUT_MS.parse().unwrap());
+        return Err("Timeout is required.".to_string());
     }
-    value
+    let timeout_ms = value
         .parse::<u64>()
-        .map_err(|_| "Timeout must be an integer in milliseconds.".to_string())
-        .and_then(|value| {
-            if value == 0 {
-                Err("Timeout must be greater than zero.".to_string())
-            } else {
-                Ok(value)
-            }
-        })
+        .map_err(|err| format!("Invalid timeout value: {err}"))?;
+    if timeout_ms == 0 {
+        return Err("Timeout must be greater than zero.".to_string());
+    }
+    Ok(timeout_ms)
 }
 
-fn active_config_unavailable_message(workspace: &ToolsWorkspace) -> String {
-    match &workspace.active_config.parse_state {
-        ActiveConfigParseState::Loading => "Active config is still being parsed.".to_string(),
-        ActiveConfigParseState::Invalid(message) => {
-            format!("Active config is not usable: {message}")
-        }
-        _ => "No active config is available for prefill.".to_string(),
+fn active_config_unavailable_message(workspace: &ToolsWorkspace) -> &'static str {
+    if workspace.active_config.is_loading() {
+        "Active config is still loading."
+    } else {
+        "No active config is available."
     }
 }

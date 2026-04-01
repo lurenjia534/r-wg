@@ -7,5 +7,4 @@ mod logs;
 mod persistence;
 mod stats;
 mod status;
-pub(crate) mod tools;
 mod tunnel;
