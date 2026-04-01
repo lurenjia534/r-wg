@@ -522,6 +522,7 @@ fn render_routes(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgA
         ));
     }
 
+    let content_style = StyleRefinement::default().flex_1().min_h_0();
     let rows = model.route_rows.clone();
     let scroll_handle = window
         .use_keyed_state(ROUTE_LIST_SCROLL_STATE_ID, cx, |_, _| {
@@ -540,8 +541,10 @@ fn render_routes(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgA
         },
     )
     .track_scroll(scroll_handle.clone())
+    .with_sizing_behavior(ListSizingBehavior::Auto)
     .w_full()
-    .flex_1();
+    .flex_1()
+    .size_full();
 
     div()
         .flex()
@@ -551,24 +554,33 @@ fn render_routes(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgA
         .h_full()
         .min_h(px(0.0))
         .child(
-            GroupBox::new().fill().flex_grow().title("Routes").child(
-                v_flex()
-                    .gap_2()
-                    .flex_grow()
-                    .min_h(px(0.0))
-                    .child(header)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .w_full()
-                            .min_h(px(0.0))
-                            .relative()
-                            .child(list)
-                            .child(Scrollbar::vertical(&scroll_handle)),
-                    ),
-            ),
+            GroupBox::new()
+                .fill()
+                .flex_1()
+                .min_h_0()
+                .content_style(content_style)
+                .title("Routes")
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .w_full()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .child(header)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .h_full()
+                                .w_full()
+                                .min_h(px(0.0))
+                                .overflow_hidden()
+                                .relative()
+                                .child(list)
+                                .child(Scrollbar::vertical(&scroll_handle)),
+                        ),
+                ),
         )
 }
 

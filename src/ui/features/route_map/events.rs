@@ -43,20 +43,31 @@ pub(crate) fn render_events(
         },
     )
     .track_scroll(scroll_handle.clone())
+    .with_sizing_behavior(ListSizingBehavior::Auto)
     .w_full()
-    .flex_1();
+    .flex_1()
+    .size_full();
+    let content_style = StyleRefinement::default().flex_1().min_h_0();
 
     div().flex().flex_col().h_full().min_h(px(0.0)).child(
-        GroupBox::new().fill().title("Events").child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h(px(0.0))
-                .relative()
-                .child(list)
-                .child(Scrollbar::vertical(&scroll_handle)),
-        ),
+        GroupBox::new()
+            .fill()
+            .flex_1()
+            .min_h_0()
+            .content_style(content_style)
+            .title("Events")
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .h_full()
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .relative()
+                    .child(list)
+                    .child(Scrollbar::vertical(&scroll_handle)),
+            ),
     )
 }
 
