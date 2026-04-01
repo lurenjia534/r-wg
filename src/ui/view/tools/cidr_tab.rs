@@ -15,7 +15,7 @@ use super::components::{
     empty_result_state, error_banner, readonly_text_block, summary_block, warning_banner,
 };
 
-pub(super) fn render_cidr_tab(
+pub(crate) fn render_cidr_tab(
     workspace: &ToolsWorkspace,
     stack: bool,
     window: &mut Window,

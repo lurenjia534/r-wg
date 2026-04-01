@@ -19,7 +19,7 @@ use super::common::{
 use super::traffic_analytics::{TrafficSummaryData, TrafficTrendData};
 use super::view_model::OverviewData;
 
-pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T>) -> GroupBox {
+pub(crate) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T>) -> GroupBox {
     let total_text = format_bytes(trend.total_bytes);
     let avg_text = format_avg_bytes(trend.average_bytes);
     let show_avg_rule = trend.non_zero_days >= 2;
@@ -243,7 +243,7 @@ pub(super) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
     )
 }
 
-pub(super) fn traffic_summary_card<T>(
+pub(crate) fn traffic_summary_card<T>(
     app_handle: &Entity<WgApp>,
     overview: &OverviewData,
     cx: &mut Context<T>,

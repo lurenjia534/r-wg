@@ -11,7 +11,7 @@ use super::common::{
 use super::traffic::traffic_column;
 use super::view_model::OverviewData;
 
-pub(super) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> GroupBox {
+pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> GroupBox {
     let runtime = &overview.runtime;
     overview_section(
         OverviewSectionTone::Primary,
@@ -103,7 +103,7 @@ pub(super) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
     )
 }
 
-pub(super) fn network_status_card<T>(
+pub(crate) fn network_status_card<T>(
     app_handle: &Entity<WgApp>,
     overview: &OverviewData,
     cx: &mut Context<T>,
@@ -201,7 +201,7 @@ pub(super) fn network_status_card<T>(
     )
 }
 
-pub(super) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> GroupBox {
+pub(crate) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> GroupBox {
     let runtime = &overview.runtime;
     let upload_sparkline = sparkline_chart(
         build_sparkline_points(&runtime.upload_series),

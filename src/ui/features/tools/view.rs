@@ -8,15 +8,20 @@ use gpui_component::{
     ActiveTheme as _, Sizable as _,
 };
 
-use crate::ui::state::{ActiveConfigParseState, ToolsTab, ToolsWorkspace};
-use crate::ui::view::{PageShell, PageShellHeader};
-
-use super::{
+use crate::ui::state::{ActiveConfigParseState, ToolsTab, ToolsWorkspace, WgApp};
+use crate::ui::view::tools::{
     cidr_tab::render_cidr_tab, components::active_config_source_tag,
     reachability_tab::render_reachability_tab,
 };
+use crate::ui::view::{PageShell, PageShellHeader};
 
 const TOOLS_STACK_BREAKPOINT: f32 = 1240.0;
+
+pub(crate) fn render_tools(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) -> Div {
+    let workspace = app.ensure_tools_workspace(window, cx);
+    app.refresh_tools_active_config_for_display(cx);
+    div().flex().flex_1().min_h(px(0.0)).child(workspace)
+}
 
 impl Render for ToolsWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

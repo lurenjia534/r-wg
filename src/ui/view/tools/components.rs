@@ -8,7 +8,7 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Sizable as _, StyledExt as _,
 };
 
-pub(super) fn empty_result_state<T>(message: &str, cx: &mut Context<T>) -> Div {
+pub(crate) fn empty_result_state<T>(message: &str, cx: &mut Context<T>) -> Div {
     div()
         .rounded_lg()
         .border_1()
@@ -21,7 +21,7 @@ pub(super) fn empty_result_state<T>(message: &str, cx: &mut Context<T>) -> Div {
         .child(message.to_string())
 }
 
-pub(super) fn error_banner<T>(message: impl Into<SharedString>, cx: &mut Context<T>) -> Div {
+pub(crate) fn error_banner<T>(message: impl Into<SharedString>, cx: &mut Context<T>) -> Div {
     div()
         .rounded_md()
         .border_1()
@@ -34,7 +34,7 @@ pub(super) fn error_banner<T>(message: impl Into<SharedString>, cx: &mut Context
         .child(message.into())
 }
 
-pub(super) fn warning_banner<T>(message: impl Into<SharedString>, cx: &mut Context<T>) -> Div {
+pub(crate) fn warning_banner<T>(message: impl Into<SharedString>, cx: &mut Context<T>) -> Div {
     div()
         .rounded_md()
         .border_1()
@@ -47,7 +47,7 @@ pub(super) fn warning_banner<T>(message: impl Into<SharedString>, cx: &mut Conte
         .child(message.into())
 }
 
-pub(super) fn readonly_text_block<T>(
+pub(crate) fn readonly_text_block<T>(
     title: &str,
     content: &str,
     monospace: bool,
@@ -75,7 +75,7 @@ pub(super) fn readonly_text_block<T>(
     )
 }
 
-pub(super) fn summary_block<T>(
+pub(crate) fn summary_block<T>(
     title: &str,
     rows: &[(SharedString, SharedString)],
     cx: &mut Context<T>,
@@ -98,7 +98,7 @@ pub(super) fn summary_block<T>(
         })))
 }
 
-pub(super) fn active_config_source_tag(source: crate::ui::state::ActiveConfigSource) -> Tag {
+pub(crate) fn active_config_source_tag(source: crate::ui::state::ActiveConfigSource) -> Tag {
     match source {
         crate::ui::state::ActiveConfigSource::Draft => {
             Tag::info().small().rounded_full().child("Draft")

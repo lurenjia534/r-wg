@@ -5,10 +5,10 @@ mod configs;
 mod dns;
 mod left_panel;
 mod logs;
-mod overview;
+pub(crate) mod overview;
 pub(crate) mod route_map;
 mod shared;
-mod tools;
+pub(crate) mod tools;
 mod top_bar;
 mod widgets;
 
@@ -94,7 +94,8 @@ impl Render for WgApp {
             main = main.child({
                 let main_body = match self.ui_session.sidebar_active {
                     SidebarItem::Overview => {
-                        let overview_page = overview::ensure_overview_page(cx.entity(), window, cx);
+                        let overview_page =
+                            super::features::ensure_overview_page(cx.entity(), window, cx);
                         overview_page.into_any_element()
                     }
                     SidebarItem::Configs => {
@@ -117,20 +118,12 @@ impl Render for WgApp {
                         let data = root_data
                             .as_ref()
                             .expect("root data should exist outside Configs");
-                        super::features::render_route_map(self, data, window, cx)
-                            .into_any_element()
+                        super::features::render_route_map(self, data, window, cx).into_any_element()
                     }
                     SidebarItem::Tools => {
-                        let workspace = self.ensure_tools_workspace(window, cx);
-                        self.refresh_tools_active_config_for_display(cx);
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .child(workspace)
-                            .into_any_element()
+                        super::features::render_tools(self, window, cx).into_any_element()
                     }
-                    _ => overview::render_placeholder(cx).into_any_element(),
+                    _ => super::features::render_placeholder(cx).into_any_element(),
                 };
 
                 if self.ui_session.sidebar_active == SidebarItem::Configs {

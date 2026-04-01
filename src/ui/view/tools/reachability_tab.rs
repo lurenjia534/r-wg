@@ -26,7 +26,7 @@ use super::components::{empty_result_state, error_banner, warning_banner};
 
 const AUDIT_LIST_SCROLL_STATE_ID: &str = "tools-reach-audit-scroll";
 
-pub(super) fn render_reachability_tab(
+pub(crate) fn render_reachability_tab(
     workspace: &ToolsWorkspace,
     stack: bool,
     window: &mut Window,
