@@ -1,3 +1,11 @@
+//! 概览页面视图模块
+//!
+//! 本模块实现应用概览页面，展示：
+//! - 隧道运行状态
+//! - 网络连接状态
+//! - 流量统计
+//! - 流量趋势图
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -20,9 +28,15 @@ use crate::ui::view::overview::{
 };
 use crate::ui::view::{PageShell, PageShellHeader};
 
+/// 紧凑布局断点（宽度小于此值时使用紧凑布局）
 const OVERVIEW_COMPACT_BREAKPOINT: f32 = 1180.0;
+/// 堆叠布局断点（宽度小于此值时使用堆叠布局）
 const OVERVIEW_STACK_BREAKPOINT: f32 = 980.0;
 
+/// 概览页面缓存键
+///
+/// 用于判断是否需要重新渲染概览页面。
+/// 当任何关联的状态版本号变化时，缓存失效。
 #[derive(Clone, PartialEq, Eq)]
 struct OverviewCacheKey {
     stats_revision: u64,
@@ -46,6 +60,10 @@ impl OverviewCacheKey {
     }
 }
 
+/// 计算配置的指纹
+///
+/// 用于检测配置列表是否发生变化。
+/// 哈希的内容包括：配置 ID、名称、存储路径、来源、文本。
 fn fingerprint_configs(app: &WgApp) -> u64 {
     let mut hasher = DefaultHasher::new();
     for config in app.configs.iter() {
@@ -70,6 +88,9 @@ fn fingerprint_configs(app: &WgApp) -> u64 {
     hasher.finish()
 }
 
+/// 概览页面状态
+///
+/// 管理概览页面的缓存数据。
 pub(crate) struct OverviewPageState {
     app: Entity<WgApp>,
     cache_key: Option<OverviewCacheKey>,
@@ -85,6 +106,9 @@ impl OverviewPageState {
         }
     }
 
+    /// 刷新快照数据
+    ///
+    /// 比较缓存键，如果发生变化则重新计算概览数据。
     fn refresh_snapshot(&mut self, cx: &mut Context<Self>) {
         let app = self.app.read(cx);
         let next_key = OverviewCacheKey::from_app(app);
@@ -109,6 +133,10 @@ impl Render for OverviewPageState {
     }
 }
 
+/// 确保概览页面已创建
+///
+/// 使用 keyed_state 复用页面实体；
+/// 具体的快照刷新由 `refresh_snapshot()` 基于缓存键控制。
 pub(crate) fn ensure_overview_page(
     app: Entity<WgApp>,
     window: &mut Window,
@@ -122,6 +150,11 @@ pub(crate) fn ensure_overview_page(
     })
 }
 
+/// 渲染概览快照
+///
+/// 根据窗口大小自适应布局：
+/// - 紧凑模式：宽度 < 1180px
+/// - 堆叠模式：宽度 < 980px
 fn render_overview_snapshot<T>(
     app: &Entity<WgApp>,
     overview: &OverviewData,
@@ -209,6 +242,7 @@ fn render_overview_snapshot<T>(
     .render(cx)
 }
 
+/// 渲染占位页面
 pub(crate) fn render_placeholder(cx: &mut Context<WgApp>) -> Div {
     div().child(
         GroupBox::new().fill().title("Coming Soon").child(

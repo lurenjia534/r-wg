@@ -1,3 +1,25 @@
+//! WireGuard 配置解析器
+//!
+//! 本模块负责解析标准 WireGuard 配置文件（wg-quick 格式）。
+//!
+//! # 支持的字段
+//!
+//! ## [Interface]
+//! - PrivateKey: 接口私钥（必需）
+//! - ListenPort: 监听端口（可选）
+//! - FwMark: 防火墙标记（可选）
+//! - Address: 接口地址（支持多个，逗号分隔）
+//! - DNS: DNS 服务器和搜索域
+//! - MTU: MTU 值
+//! - Table: 路由表配置
+//!
+//! ## [Peer]
+//! - PublicKey: Peer 公钥（必需）
+//! - PresharedKey: 预共享密钥（可选）
+//! - AllowedIPs: 允许的 IP/网段（可选，支持多个；若提供则不能为空）
+//! - Endpoint: 远端地址（可选）
+//! - PersistentKeepalive: 保活间隔（可选）
+
 use std::net::IpAddr;
 
 use super::types::{
@@ -5,14 +27,16 @@ use super::types::{
     RouteTable, WireGuardConfig,
 };
 
-/// 当前正在解析的段。
+/// 当前正在解析的配置段
 #[derive(Clone, Copy)]
 enum Section {
     Interface,
     Peer,
 }
 
-/// `[Interface]` 解析过程的临时结构。
+/// `[Interface]` 解析过程的临时结构
+///
+/// 使用 Builder 模式收集字段，解析完成后调用 `finish()` 验证必填项并生成最终结构。
 #[derive(Default)]
 struct InterfaceBuilder {
     private_key: Option<Key>,
@@ -26,7 +50,9 @@ struct InterfaceBuilder {
 }
 
 impl InterfaceBuilder {
-    /// 完成构建并校验必填项。
+    /// 完成构建并校验必填项
+    ///
+    /// Interface 必须包含 PrivateKey。
     fn finish(self, line: Option<usize>) -> Result<InterfaceConfig, ConfigError> {
         let private_key = self
             .private_key
@@ -44,7 +70,9 @@ impl InterfaceBuilder {
     }
 }
 
-/// `[Peer]` 解析过程的临时结构，记录起始行用于报错。
+/// `[Peer]` 解析过程的临时结构
+///
+/// 记录起始行号用于报错，解析完成后调用 `finish()` 验证必填项。
 struct PeerBuilder {
     start_line: usize,
     public_key: Option<Key>,
@@ -55,7 +83,7 @@ struct PeerBuilder {
 }
 
 impl PeerBuilder {
-    /// 新建 builder，并记录该 `[Peer]` 起始行号。
+    /// 新建 builder，并记录该 `[Peer]` 起始行号
     fn new(start_line: usize) -> Self {
         Self {
             start_line,
@@ -67,7 +95,10 @@ impl PeerBuilder {
         }
     }
 
-    /// 完成构建并校验必填项。
+    /// 完成构建并校验必填项
+    ///
+    /// Peer 必须包含 PublicKey。
+    /// 若提供 AllowedIPs，则至少需要一个有效条目。
     fn finish(self) -> Result<PeerConfig, ConfigError> {
         let public_key = self.public_key.ok_or_else(|| {
             ConfigError::new(Some(self.start_line), "missing PublicKey in [Peer] section")
@@ -82,10 +113,28 @@ impl PeerBuilder {
     }
 }
 
-/// 解析标准 WireGuard `.conf` 文本。
-/// - 支持 `#` 与 `;` 行内注释。
-/// - 键名大小写不敏感。
-/// - 多个 `[Peer]` 段会被追加到 peers 列表。
+/// 解析标准 WireGuard `.conf` 文本
+///
+/// # 支持的特性
+/// - `#` 与 `;` 行内注释
+/// - 键名大小写不敏感（PrivateKey = privatekey = PRIVATEKEY）
+/// - 多个 `[Peer]` 段会被追加到 peers 列表
+///
+/// # 错误处理
+/// - 返回包含行号的错误信息，便于定位配置问题
+/// - 不支持未知字段（严格解析）
+///
+/// # 示例
+/// ```ignore
+/// [Interface]
+/// PrivateKey = base64key123...
+/// Address = 10.0.0.2/24
+///
+/// [Peer]
+/// PublicKey = base64key456...
+/// AllowedIPs = 0.0.0.0/0
+/// Endpoint = 192.168.1.1:51820
+/// ```
 pub fn parse_config(input: &str) -> Result<WireGuardConfig, ConfigError> {
     let input = input.trim_start_matches('\u{feff}');
     let mut section: Option<Section> = None;
