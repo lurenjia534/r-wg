@@ -13,7 +13,9 @@ pub(crate) fn refresh_privileged_backend_status(app: &mut WgApp, cx: &mut Contex
     cx.notify();
 
     cx.spawn(async move |view, cx| {
-        let status = cx.background_spawn(async move { backend_admin.probe_status() }).await;
+        let status = cx
+            .background_spawn(async move { backend_admin.probe_status() })
+            .await;
         let _ = view.update(cx, |this, cx| {
             this.ui
                 .set_backend_diagnostic(BackendDiagnostic::from_probe_status(status));
@@ -38,7 +40,9 @@ pub(crate) fn run_privileged_backend_action(
     cx.notify();
 
     cx.spawn(async move |view, cx| {
-        let result = cx.background_spawn(async move { backend_admin.run_action(action) }).await;
+        let result = cx
+            .background_spawn(async move { backend_admin.run_action(action) })
+            .await;
         let _ = view.update(cx, |this, cx| {
             match result {
                 Ok(()) => {

@@ -97,18 +97,10 @@ pub fn run(primary: PrimaryInstance) {
                     });
                     // 弱引用：窗口关闭后不会阻止资源释放。
                     let view_handle = view.downgrade();
-                    lifecycle::sync_apply_report(
-                        view_handle.clone(),
-                        tunnel_session.clone(),
-                        cx,
-                    );
+                    lifecycle::sync_apply_report(view_handle.clone(), tunnel_session.clone(), cx);
                     // 启动期向引擎反查一次状态，兼容 helper 已在运行而 UI 后打开的场景。
                     #[cfg(target_os = "windows")]
-                    lifecycle::sync_engine_status(
-                        view_handle.clone(),
-                        tunnel_session.clone(),
-                        cx,
-                    );
+                    lifecycle::sync_engine_status(view_handle.clone(), tunnel_session.clone(), cx);
                     // 初始化系统托盘并启动命令监听。
                     tray::init(
                         primary.clone(),

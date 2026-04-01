@@ -68,7 +68,9 @@ impl ConfigsWorkspace {
         let generation = self.validation_generation;
         cx.spawn(async move |view, cx| {
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(DRAFT_VALIDATION_DEBOUNCE_MS))
+                .timer(std::time::Duration::from_millis(
+                    DRAFT_VALIDATION_DEBOUNCE_MS,
+                ))
                 .await;
             let _ = view.update(cx, |this, cx| {
                 if this.validation_generation != generation || this.operation.is_some() {

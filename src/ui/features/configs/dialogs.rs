@@ -8,8 +8,8 @@ use gpui_component::{
 use crate::ui::state::{ConfigsPrimaryPane, PendingDraftAction, SidebarItem, WgApp};
 
 use super::controller::{
-    delete_configs_blocking_running, handle_import_click, handle_paste_click, load_config_into_inputs,
-    save_draft,
+    delete_configs_blocking_running, handle_import_click, handle_paste_click,
+    load_config_into_inputs, save_draft,
 };
 use super::draft;
 
@@ -50,8 +50,10 @@ pub(crate) fn run_pending_draft_action(
         PendingDraftAction::Paste => handle_paste_click(app, window, cx),
         PendingDraftAction::DeleteCurrent => open_delete_current_config_dialog(app, window, cx),
         PendingDraftAction::RestartTunnel => {
-            app.runtime
-                .queue_pending_start(app.selection.build_pending_start(&app.configs, &app.runtime));
+            app.runtime.queue_pending_start(
+                app.selection
+                    .build_pending_start(&app.configs, &app.runtime),
+            );
             app.handle_start_stop_core(cx);
         }
     }
@@ -220,11 +222,7 @@ pub(crate) fn open_delete_current_config_dialog(
     });
 }
 
-fn handle_confirmed_delete_current(
-    app: &mut WgApp,
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-) {
+fn handle_confirmed_delete_current(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     let Some(config_id) = app.selection.selected_id else {
         app.set_error("Select a tunnel first");
         cx.notify();

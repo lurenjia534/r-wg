@@ -321,5 +321,4 @@ mod tests {
 
         fs::remove_dir_all(&paths.root).expect("temp storage should be cleaned up");
     }
-
 }

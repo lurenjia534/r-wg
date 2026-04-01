@@ -161,7 +161,8 @@ fn start_with_config(
         })
         .ok();
 
-        let request = StartTunnelRequest::new(selected.name.clone(), text.to_string(), dns_selection);
+        let request =
+            StartTunnelRequest::new(selected.name.clone(), text.to_string(), dns_selection);
         let start_task = cx.background_spawn(async move {
             let outcome = tunnel_session.start(request);
             (outcome.result, outcome.apply_report)
@@ -215,7 +216,11 @@ fn start_config_by_id(
 }
 
 fn restart_pending_start(app: &mut WgApp, cx: &mut Context<WgApp>) {
-    let pending_config_id = app.runtime.pending_start.take().map(|pending| pending.config_id);
+    let pending_config_id = app
+        .runtime
+        .pending_start
+        .take()
+        .map(|pending| pending.config_id);
     match decide_after_stop_success(pending_config_id) {
         StopSuccessDecision::RestartPending { config_id } => {
             let delay = app.runtime.restart_delay();

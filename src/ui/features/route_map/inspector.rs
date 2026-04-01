@@ -9,14 +9,12 @@ use gpui_component::{
 };
 
 use crate::ui::state::WgApp;
-use crate::ui::view::route_map::data::{RouteMapData, RouteMapGraphStep, RouteMapGraphStepKind, RouteMapItemStatus};
+use crate::ui::view::route_map::data::{
+    RouteMapData, RouteMapGraphStep, RouteMapGraphStepKind, RouteMapItemStatus,
+};
 use crate::ui::view::route_map::{empty_group, status_chip, summary_chip};
 
-pub(crate) fn render_inspector(
-    app: &WgApp,
-    model: &RouteMapData,
-    cx: &mut Context<WgApp>,
-) -> Div {
+pub(crate) fn render_inspector(app: &WgApp, model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
     let Some(selected) = model.selected_item.as_ref() else {
         return div().child(empty_group(
             "Inspector",

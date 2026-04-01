@@ -113,7 +113,9 @@ impl StartBlockedReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToggleTunnelDecision {
     Noop,
-    QueuePendingStart { config_id: u64 },
+    QueuePendingStart {
+        config_id: u64,
+    },
     StopRunning,
     StartSelected {
         config_id: u64,
@@ -131,7 +133,9 @@ pub enum StopSuccessDecision {
 pub fn decide_toggle(input: ToggleTunnelInput) -> ToggleTunnelDecision {
     if input.busy {
         return match pending_start_target(input.selected_config_id, input.running_config_id) {
-            Some(config_id) if input.running => ToggleTunnelDecision::QueuePendingStart { config_id },
+            Some(config_id) if input.running => {
+                ToggleTunnelDecision::QueuePendingStart { config_id }
+            }
             _ => ToggleTunnelDecision::Noop,
         };
     }
@@ -163,7 +167,10 @@ pub fn decide_after_stop_success(pending_config_id: Option<u64>) -> StopSuccessD
     }
 }
 
-pub fn pending_start_target(selected_config_id: Option<u64>, running_config_id: Option<u64>) -> Option<u64> {
+pub fn pending_start_target(
+    selected_config_id: Option<u64>,
+    running_config_id: Option<u64>,
+) -> Option<u64> {
     selected_config_id.or(running_config_id)
 }
 

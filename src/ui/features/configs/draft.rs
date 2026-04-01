@@ -58,11 +58,7 @@ pub(crate) fn sync_draft_from_inputs(app: &mut WgApp, cx: &mut Context<WgApp>) {
     app.sync_draft_from_values(name, text, cx);
 }
 
-pub(crate) fn discard_current_draft(
-    app: &mut WgApp,
-    window: &mut Window,
-    cx: &mut Context<WgApp>,
-) {
+pub(crate) fn discard_current_draft(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     let draft = app.configs_draft_snapshot(cx);
     if let Some(source_id) = draft.source_id.or(app.selection.selected_id) {
         app.set_selected_config_id(Some(source_id), cx);

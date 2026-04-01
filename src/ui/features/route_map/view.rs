@@ -11,10 +11,10 @@ use gpui_component::{
 };
 
 use crate::ui::state::{RouteFamilyFilter, RouteMapMode, WgApp};
-use crate::ui::view::{PageShell, ViewData};
 use crate::ui::view::route_map::data::{
     EffectiveRoutePlan, RouteMapChip, RouteMapData, RouteMapEvidence, RouteMapTone,
 };
+use crate::ui::view::{PageShell, ViewData};
 
 use super::{controller, events, graph, inspector, inventory};
 
