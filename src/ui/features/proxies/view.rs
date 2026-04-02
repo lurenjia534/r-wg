@@ -1,4 +1,3 @@
-use crate::ui::actions::app as app_actions;
 use crate::ui::state::{ConfigSource, EndpointFamily, ProxiesViewMode, ProxyRunningFilter, WgApp};
 use crate::ui::view::{PageShell, PageShellHeader};
 use gpui::prelude::FluentBuilder as _;
@@ -276,9 +275,9 @@ fn render_proxies_toolbar(
                         .outline()
                         .xsmall()
                         .disabled(app.runtime.busy)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(app_actions::ImportConfig), cx);
-                        }),
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.handle_import_click(window, cx);
+                        })),
                 )
                 .child(
                     Button::new("proxy-clear-filters")
@@ -701,12 +700,9 @@ fn render_proxy_detail_pane(app: &WgApp, model: &ProxiesViewModel, cx: &mut Cont
                                         .label(if is_running { "Disconnect" } else { "Connect" })
                                         .disabled(app.runtime.busy)
                                         .selected(is_running)
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(
-                                                Box::new(app_actions::ToggleTunnel),
-                                                cx,
-                                            );
-                                        }),
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.handle_start_stop(window, cx);
+                                        })),
                                 )
                                 .child(
                                     Button::new("proxy-detail-delete")

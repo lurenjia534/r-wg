@@ -4,9 +4,8 @@ use gpui_component::{
     h_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _,
 };
 
-use super::super::actions::app as app_actions;
 use super::super::features::themes::AppearancePolicy;
-use super::super::state::WgApp;
+use super::super::state::{SidebarItem, WgApp};
 use super::shared::ViewData;
 
 /// 顶部工具栏只负责全局控制，不承载页面标题语义。
@@ -89,9 +88,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .selected(app.runtime.running)
                 .disabled(!can_start)
                 .tooltip(on_tooltip)
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(app_actions::ToggleTunnel), cx);
-                }),
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_start_stop(window, cx);
+                })),
         )
         .child(
             Button::new("mode-off")
@@ -99,9 +98,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .selected(!app.runtime.running)
                 .disabled(!can_stop)
                 .tooltip(off_tooltip)
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(app_actions::ToggleTunnel), cx);
-                }),
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_start_stop(window, cx);
+                })),
         );
 
     let status_chip = {
@@ -147,9 +146,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .small()
         .icon(Icon::new(IconName::Settings).size_5())
         .tooltip("Open preferences")
-        .on_click(|_, window, cx| {
-            window.dispatch_action(Box::new(app_actions::OpenAdvanced), cx);
-        });
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.request_sidebar_active(SidebarItem::Advanced, window, cx);
+        }));
 
     h_flex()
         .items_center()
