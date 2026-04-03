@@ -4724,11 +4724,13 @@ dependencies = [
  "rtnetlink",
  "serde",
  "serde_json",
+ "subtle",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "windows 0.62.2",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]

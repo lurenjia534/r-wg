@@ -7,6 +7,8 @@ use gpui_component::{
     input::{Input, InputState},
     ActiveTheme as _, Sizable as _, WindowExt,
 };
+use subtle::ConstantTimeEq;
+use zeroize::Zeroize;
 
 use crate::ui::state::{PendingStart, WgApp};
 
@@ -496,24 +498,19 @@ fn clear_password_input(input: &gpui::Entity<InputState>, window: &mut Window, c
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    let max_len = left.len().max(right.len());
-    let mut diff = left.len() ^ right.len();
-    for idx in 0..max_len {
-        let a = left.get(idx).copied().unwrap_or(0);
-        let b = right.get(idx).copied().unwrap_or(0);
-        diff |= usize::from(a ^ b);
-    }
-    diff == 0
+    bool::from(left.ct_eq(right))
 }
 
 fn count_chars(bytes: &[u8]) -> usize {
+    // Passwords originate from the text input widget and are expected to be valid UTF-8.
+    // Treat invalid bytes as an invalid password by returning 0.
     std::str::from_utf8(bytes)
         .map(|text| text.chars().count())
         .unwrap_or(0)
 }
 
 fn wipe_bytes(bytes: &mut Vec<u8>) {
-    bytes.fill(0);
+    bytes.zeroize();
     bytes.clear();
 }
 
