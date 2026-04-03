@@ -2,17 +2,12 @@
 //!
 //! 本模块是 WgApp 的动作方法封装，将 UI 事件转发到 session controller 处理。
 
-use gpui::{Context, Window};
+use gpui::Context;
 
 use super::super::features::session::controller;
 use super::super::state::WgApp;
 
 impl WgApp {
-    /// 处理启动/停止按钮点击
-    pub(crate) fn handle_start_stop(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        controller::handle_start_stop(self, _window, cx);
-    }
-
     /// 核心启动/停止逻辑
     pub(crate) fn handle_start_stop_core(&mut self, cx: &mut Context<Self>) {
         controller::handle_start_stop_core(self, cx);

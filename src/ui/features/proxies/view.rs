@@ -14,7 +14,6 @@ use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable, Sizable as _, StyledExt as _,
 };
 
-use super::controller::open_delete_dialog;
 use super::grid::{proxy_grid, ProxyGridMetrics};
 use super::model::{build_proxies_view_model, ProxiesViewModel, ProxyRowData};
 
@@ -261,11 +260,7 @@ fn render_proxies_toolbar(
                         .selected(app.selection.proxy_select_mode)
                         .disabled(app.runtime.busy)
                         .on_click(cx.listener(|this, _, _window, cx| {
-                            this.selection.proxy_select_mode = !this.selection.proxy_select_mode;
-                            if !this.selection.proxy_select_mode {
-                                this.selection.proxy_selected_ids.clear();
-                            }
-                            cx.notify();
+                            this.command_toggle_proxy_select_mode(cx);
                         })),
                 )
                 .child(
@@ -276,7 +271,7 @@ fn render_proxies_toolbar(
                         .xsmall()
                         .disabled(app.runtime.busy)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.handle_import_click(window, cx);
+                            this.command_import_config(window, cx);
                         })),
                 )
                 .child(
@@ -469,9 +464,7 @@ fn render_proxy_bulk_bar(
                         .on_click({
                             let visible_ids = visible_ids.clone();
                             cx.listener(move |this, _, _, cx| {
-                                this.selection.proxy_selected_ids =
-                                    visible_ids.iter().copied().collect();
-                                cx.notify();
+                                this.command_select_visible_proxies(&visible_ids, cx);
                             })
                         }),
                 )
@@ -482,8 +475,7 @@ fn render_proxy_bulk_bar(
                         .xsmall()
                         .disabled(selected_count == 0)
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.selection.proxy_selected_ids.clear();
-                            cx.notify();
+                            this.command_clear_proxy_selection(cx);
                         })),
                 )
                 .child(
@@ -493,29 +485,7 @@ fn render_proxy_bulk_bar(
                         .xsmall()
                         .disabled(app.runtime.busy || selected_count == 0)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            if this.selection.proxy_selected_ids.is_empty() {
-                                this.set_error("Select configs first");
-                                cx.notify();
-                                return;
-                            }
-                            let ids: Vec<u64> =
-                                this.selection.proxy_selected_ids.iter().copied().collect();
-                            let count = ids.len();
-                            let body = if count == 1 {
-                                "Delete 1 selected config? This cannot be undone.".to_string()
-                            } else {
-                                format!("Delete {count} selected configs? This cannot be undone.")
-                            };
-                            open_delete_dialog(
-                                window,
-                                cx,
-                                "Delete selected configs?",
-                                body,
-                                Some("Running tunnels will be skipped.".to_string()),
-                                ids,
-                                true,
-                                true,
-                            );
+                            this.command_prompt_delete_selected_proxies(window, cx);
                         })),
                 ),
         )
@@ -701,7 +671,7 @@ fn render_proxy_detail_pane(app: &WgApp, model: &ProxiesViewModel, cx: &mut Cont
                                         .disabled(app.runtime.busy)
                                         .selected(is_running)
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.handle_start_stop(window, cx);
+                                            this.command_toggle_tunnel(window, cx);
                                         })),
                                 )
                                 .child(
@@ -715,24 +685,7 @@ fn render_proxy_detail_pane(app: &WgApp, model: &ProxiesViewModel, cx: &mut Cont
                                                 || is_running,
                                         )
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            let Some(config) = this.selected_config().cloned() else {
-                                                this.set_error("Select a tunnel first");
-                                                cx.notify();
-                                                return;
-                                            };
-                                            open_delete_dialog(
-                                                window,
-                                                cx,
-                                                "Delete config?",
-                                                format!(
-                                                    "Delete \"{}\"? This cannot be undone.",
-                                                    config.name
-                                                ),
-                                                None,
-                                                vec![config.id],
-                                                false,
-                                                false,
-                                            );
+                                            this.command_prompt_delete_selected_proxy(window, cx);
                                         })),
                                 ),
                         )
@@ -865,12 +818,7 @@ fn proxy_list_row(app: &WgApp, row: &ProxyRowData, cx: &mut Context<WgApp>) -> S
             return;
         }
         if this.selection.proxy_select_mode {
-            if this.selection.proxy_selected_ids.contains(&config_id) {
-                this.selection.proxy_selected_ids.remove(&config_id);
-            } else {
-                this.selection.proxy_selected_ids.insert(config_id);
-            }
-            cx.notify();
+            this.command_toggle_proxy_multi_selection(config_id, cx);
             return;
         }
         this.select_tunnel(config_id, window, cx);
@@ -952,12 +900,7 @@ fn proxy_gallery_card(app: &WgApp, row: &ProxyRowData, cx: &mut Context<WgApp>) 
             return;
         }
         if this.selection.proxy_select_mode {
-            if this.selection.proxy_selected_ids.contains(&config_id) {
-                this.selection.proxy_selected_ids.remove(&config_id);
-            } else {
-                this.selection.proxy_selected_ids.insert(config_id);
-            }
-            cx.notify();
+            this.command_toggle_proxy_multi_selection(config_id, cx);
             return;
         }
         this.select_tunnel(config_id, window, cx);

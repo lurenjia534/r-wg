@@ -1,7 +1,7 @@
 pub(crate) mod backend_admin;
 pub(crate) mod configs;
 pub(crate) mod overview;
-mod proxies;
+pub(crate) mod proxies;
 pub(crate) mod route_map;
 pub(crate) mod session;
 pub(crate) mod themes;

@@ -8,7 +8,7 @@ use gpui_component::{
 use crate::ui::state::WgApp;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn open_delete_dialog(
+pub(crate) fn open_delete_dialog(
     window: &mut Window,
     cx: &mut Context<WgApp>,
     title: impl Into<String>,
@@ -87,7 +87,7 @@ pub(super) fn open_delete_dialog(
     });
 }
 
-pub(super) fn perform_delete(
+pub(crate) fn perform_delete(
     app_handle: &Entity<WgApp>,
     ids: &[u64],
     skip_running: bool,
@@ -100,15 +100,7 @@ pub(super) fn perform_delete(
     let note_skip = skip_running;
     window.on_next_frame(move |window, cx| {
         app_handle.update(cx, |this, cx| {
-            if note_skip {
-                this.delete_configs_skip_running(&ids, window, cx);
-            } else {
-                this.delete_configs_blocking_running(&ids, window, cx);
-            }
-            if clear_selection {
-                this.selection.proxy_select_mode = false;
-                this.selection.proxy_selected_ids.clear();
-            }
+            this.command_delete_proxy_configs(&ids, note_skip, clear_selection, window, cx);
         });
     });
 }

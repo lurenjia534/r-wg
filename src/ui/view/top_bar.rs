@@ -89,7 +89,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .disabled(!can_start)
                 .tooltip(on_tooltip)
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.handle_start_stop(window, cx);
+                    this.command_toggle_tunnel(window, cx);
                 })),
         )
         .child(
@@ -99,7 +99,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .disabled(!can_stop)
                 .tooltip(off_tooltip)
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.handle_start_stop(window, cx);
+                    this.command_toggle_tunnel(window, cx);
                 })),
         );
 
@@ -147,7 +147,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .icon(Icon::new(IconName::Settings).size_5())
         .tooltip("Open preferences")
         .on_click(cx.listener(|this, _, window, cx| {
-            this.request_sidebar_active(SidebarItem::Advanced, window, cx);
+            this.command_open_sidebar_item(SidebarItem::Advanced, window, cx);
         }));
 
     h_flex()

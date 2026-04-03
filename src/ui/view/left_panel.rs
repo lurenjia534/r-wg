@@ -730,7 +730,7 @@ fn activate_sidebar_item(
         return;
     }
 
-    app.request_sidebar_active(item, window, cx);
+    app.command_open_sidebar_item(item, window, cx);
 
     if app.ui_session.sidebar_overlay_open && app.ui_session.sidebar_active == item {
         app.close_sidebar_overlay(cx);

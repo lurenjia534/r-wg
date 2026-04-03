@@ -1,4 +1,4 @@
-mod controller;
+pub(crate) mod controller;
 mod grid;
 mod model;
 mod view;

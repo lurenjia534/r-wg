@@ -37,7 +37,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_start_stop(window, cx);
+        self.command_toggle_tunnel(window, cx);
     }
 
     pub(crate) fn open_overview_action(
@@ -46,7 +46,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::Overview, window, cx);
+        self.command_open_sidebar_item(SidebarItem::Overview, window, cx);
     }
 
     pub(crate) fn open_configs_action(
@@ -55,7 +55,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::Configs, window, cx);
+        self.command_open_sidebar_item(SidebarItem::Configs, window, cx);
     }
 
     pub(crate) fn open_advanced_action(
@@ -64,7 +64,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::Advanced, window, cx);
+        self.command_open_sidebar_item(SidebarItem::Advanced, window, cx);
     }
 
     pub(crate) fn open_proxies_action(
@@ -73,7 +73,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::Proxies, window, cx);
+        self.command_open_sidebar_item(SidebarItem::Proxies, window, cx);
     }
 
     pub(crate) fn open_dns_action(
@@ -82,7 +82,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::Dns, window, cx);
+        self.command_open_sidebar_item(SidebarItem::Dns, window, cx);
     }
 
     pub(crate) fn open_logs_action(
@@ -91,7 +91,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::Logs, window, cx);
+        self.command_open_sidebar_item(SidebarItem::Logs, window, cx);
     }
 
     pub(crate) fn open_route_map_action(
@@ -100,7 +100,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::RouteMap, window, cx);
+        self.command_open_sidebar_item(SidebarItem::RouteMap, window, cx);
     }
 
     pub(crate) fn open_tools_action(
@@ -109,7 +109,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::Tools, window, cx);
+        self.command_open_sidebar_item(SidebarItem::Tools, window, cx);
     }
 
     pub(crate) fn open_about_action(
@@ -118,7 +118,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_sidebar_active(SidebarItem::About, window, cx);
+        self.command_open_sidebar_item(SidebarItem::About, window, cx);
     }
 
     pub(crate) fn import_config_action(
@@ -127,7 +127,7 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_import_click(window, cx);
+        self.command_import_config(window, cx);
     }
 
     pub(crate) fn save_config_action(
@@ -136,6 +136,6 @@ impl WgApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_save_click(window, cx);
+        self.command_save_config(window, cx);
     }
 }

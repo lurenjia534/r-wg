@@ -587,21 +587,21 @@ pub(super) fn editor_action_bar(
                 menu.item(PopupMenuItem::new("Rename").on_click({
                     move |_, window, cx| {
                         rename_handle.update(cx, |this, cx| {
-                            this.handle_rename_click(window, cx);
+                            this.command_rename_config(window, cx);
                         });
                     }
                 }))
                 .item(PopupMenuItem::new("Export").on_click({
                     move |_, _, cx| {
                         export_handle.update(cx, |this, cx| {
-                            this.handle_export_click(cx);
+                            this.command_export_config(cx);
                         });
                     }
                 }))
                 .item(PopupMenuItem::new("Copy").on_click({
                     move |_, _, cx| {
                         copy_handle.update(cx, |this, cx| {
-                            this.handle_copy_click(cx);
+                            this.command_copy_config(cx);
                         });
                     }
                 }))
@@ -609,7 +609,7 @@ pub(super) fn editor_action_bar(
                 .item(PopupMenuItem::new("Delete").on_click({
                     move |_, window, cx| {
                         delete_handle.update(cx, |this, cx| {
-                            this.handle_delete_click(window, cx);
+                            this.command_delete_config(window, cx);
                         });
                     }
                 }))
@@ -633,7 +633,7 @@ pub(super) fn editor_action_bar(
                     let app = app_handle.clone();
                     move |_, window, cx| {
                         app.update(cx, |this, cx| {
-                            this.handle_save_click(window, cx);
+                            this.command_save_config(window, cx);
                         });
                     }
                 }),
@@ -650,7 +650,7 @@ pub(super) fn editor_action_bar(
                     let app = app_handle.clone();
                     move |_, window, cx| {
                         app.update(cx, |this, cx| {
-                            this.handle_save_as_click(window, cx);
+                            this.command_save_config_as_new(window, cx);
                         });
                     }
                 }),
@@ -667,7 +667,7 @@ pub(super) fn editor_action_bar(
                         let app = app_handle.clone();
                         move |_, window, cx| {
                             app.update(cx, |this, cx| {
-                                this.handle_save_and_restart_click(window, cx);
+                                this.command_save_and_restart_config(window, cx);
                             });
                         }
                     }),

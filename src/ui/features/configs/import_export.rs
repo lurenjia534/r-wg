@@ -30,24 +30,6 @@ pub(crate) enum ImportOutcome {
 const IMPORT_CONCURRENCY: usize = 8;
 const IMPORT_BATCH_SIZE: usize = 200;
 
-impl WgApp {
-    pub(crate) fn handle_import_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        handle_import_click(self, window, cx);
-    }
-
-    pub(crate) fn handle_export_click(&mut self, cx: &mut Context<Self>) {
-        handle_export_click(self, cx);
-    }
-
-    pub(crate) fn handle_paste_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        handle_paste_click(self, window, cx);
-    }
-
-    pub(crate) fn handle_copy_click(&mut self, cx: &mut Context<Self>) {
-        handle_copy_click(self, cx);
-    }
-}
-
 pub(crate) fn handle_import_click(app: &mut WgApp, window: &mut Window, cx: &mut Context<WgApp>) {
     if app.configs_is_busy(cx) {
         return;

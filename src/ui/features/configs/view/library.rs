@@ -156,7 +156,7 @@ pub(super) fn render_library_panel(
                                             let workspace = workspace.clone();
                                             move |_, window, cx| {
                                                 app.update(cx, |this, cx| {
-                                                    this.handle_new_draft_click(window, cx);
+                                                    this.command_new_draft(window, cx);
                                                 });
                                                 if compact {
                                                     workspace.update(cx, |workspace, cx| {
@@ -182,7 +182,7 @@ pub(super) fn render_library_panel(
                                             let app = app_handle.clone();
                                             move |_, window, cx| {
                                                 app.update(cx, |this, cx| {
-                                                    this.handle_import_click(window, cx);
+                                                    this.command_import_config(window, cx);
                                                 });
                                             }
                                         }),
@@ -200,7 +200,7 @@ pub(super) fn render_library_panel(
                                             let workspace = workspace.clone();
                                             move |_, window, cx| {
                                                 app.update(cx, |this, cx| {
-                                                    this.handle_paste_click(window, cx);
+                                                    this.command_paste_config(window, cx);
                                                 });
                                                 if compact {
                                                     workspace.update(cx, |workspace, cx| {
