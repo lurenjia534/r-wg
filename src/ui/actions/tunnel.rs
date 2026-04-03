@@ -8,11 +8,6 @@ use super::super::features::session::controller;
 use super::super::state::WgApp;
 
 impl WgApp {
-    /// 核心启动/停止逻辑
-    pub(crate) fn handle_start_stop_core(&mut self, cx: &mut Context<Self>) {
-        controller::handle_start_stop_core(self, cx);
-    }
-
     /// 处理从托盘启动
     pub(crate) fn handle_start_from_tray(&mut self, cx: &mut Context<Self>) {
         controller::handle_start_from_tray(self, cx);
@@ -101,6 +96,7 @@ mod tests {
             .build_pending_start(&app.configs, &app.runtime)
             .expect("selected config should win");
         assert_eq!(pending.config_id, 22);
+        assert!(!pending.password_authorized);
     }
 
     #[test]
@@ -113,5 +109,26 @@ mod tests {
             .build_pending_start(&app.configs, &app.runtime)
             .expect("running config should be used when nothing is selected");
         assert_eq!(pending.config_id, 77);
+        assert!(!pending.password_authorized);
+    }
+
+    #[test]
+    fn queue_pending_start_preserves_password_authorization() {
+        let mut app = make_app();
+
+        let queued = app
+            .runtime
+            .queue_pending_start(Some(crate::ui::state::PendingStart {
+                config_id: 42,
+                password_authorized: true,
+            }));
+
+        assert!(queued);
+        let pending = app
+            .runtime
+            .pending_start
+            .expect("pending start should be stored");
+        assert_eq!(pending.config_id, 42);
+        assert!(pending.password_authorized);
     }
 }

@@ -8,7 +8,8 @@ use crate::ui::state::WgApp;
 use crate::ui::view::widgets::{PageShell, PageShellHeader};
 
 use super::preferences::{
-    dns_mode_item, dns_preset_item, inspector_tab_item, log_auto_follow_item, traffic_period_item,
+    connect_password_item, dns_mode_item, dns_preset_item, inspector_tab_item,
+    log_auto_follow_item, traffic_period_item,
 };
 use super::system::{privileged_backend_item, troubleshooting_item};
 
@@ -37,6 +38,12 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
                 .description("Keep DNS handling predictable across imported configs.")
                 .item(dns_mode_item(app_handle.clone()))
                 .item(dns_preset_item(app_handle.clone())),
+        )
+        .group(
+            SettingGroup::new()
+                .title("Connection Security")
+                .description("Require local approval before new WireGuard sessions start.")
+                .item(connect_password_item(app_handle.clone())),
         );
 
     let monitoring_page = SettingPage::new("Monitoring")

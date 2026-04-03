@@ -279,6 +279,18 @@ impl WgApp {
         cx.notify();
     }
 
+    pub(crate) fn set_connect_password_required_pref(
+        &mut self,
+        value: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.require_connect_password != value {
+            self.ui_prefs.require_connect_password = value;
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn set_dns_mode_pref(&mut self, value: DnsMode, cx: &mut gpui::Context<Self>) {
         if self.ui_prefs.dns_mode != value {
             self.ui_prefs.dns_mode = value;

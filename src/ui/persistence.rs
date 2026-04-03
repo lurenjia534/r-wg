@@ -39,6 +39,8 @@ pub(crate) struct PersistedState {
     pub(crate) theme_dark_name: Option<String>,
     #[serde(default)]
     pub(crate) log_auto_follow: Option<bool>,
+    #[serde(default)]
+    pub(crate) require_connect_password: Option<bool>,
     #[serde(default, alias = "preferred_right_tab")]
     pub(crate) preferred_inspector_tab: Option<ConfigInspectorTab>,
     #[serde(default)]
@@ -222,6 +224,7 @@ mod tests {
             theme_light_name: Some("Signal Light".to_string()),
             theme_dark_name: Some("Network Dark".to_string()),
             log_auto_follow: Some(true),
+            require_connect_password: Some(true),
             preferred_inspector_tab: Some(ConfigInspectorTab::Preview),
             preferred_traffic_period: Some(TrafficPeriod::Today),
             configs_library_width: Some(300.0),
@@ -291,6 +294,10 @@ mod tests {
         assert_eq!(loaded.theme_dark_name, state.theme_dark_name);
         assert_eq!(loaded.log_auto_follow, state.log_auto_follow);
         assert_eq!(
+            loaded.require_connect_password,
+            state.require_connect_password
+        );
+        assert_eq!(
             loaded.preferred_inspector_tab,
             state.preferred_inspector_tab
         );
@@ -320,5 +327,25 @@ mod tests {
         }
 
         fs::remove_dir_all(&paths.root).expect("temp storage should be cleaned up");
+    }
+
+    #[test]
+    fn load_legacy_state_without_connect_password_field() {
+        let legacy = format!(
+            r#"{{
+  "version": {version},
+  "next_id": 5,
+  "selected_id": null,
+  "configs": []
+}}"#,
+            version = STATE_VERSION
+        );
+
+        let state: PersistedState =
+            serde_json::from_str(&legacy).expect("legacy state should deserialize");
+
+        assert_eq!(state.version, STATE_VERSION);
+        assert_eq!(state.require_connect_password, None);
+        assert!(state.configs.is_empty());
     }
 }

@@ -180,9 +180,13 @@ impl SelectionState {
         if let Some(config_id) = self.selected_id {
             return configs.get_by_id(config_id).map(|config| PendingStart {
                 config_id: config.id,
+                password_authorized: false,
             });
         }
-        runtime.running_id.map(|id| PendingStart { config_id: id })
+        runtime.running_id.map(|id| PendingStart {
+            config_id: id,
+            password_authorized: false,
+        })
     }
 
     pub(crate) fn restore_after_persist(
@@ -418,6 +422,7 @@ impl StatsState {
 
 pub(crate) struct UiPrefsState {
     pub(crate) log_auto_follow: bool,
+    pub(crate) require_connect_password: bool,
     pub(crate) preferred_inspector_tab: ConfigInspectorTab,
     pub(crate) preferred_traffic_period: TrafficPeriod,
     pub(crate) configs_library_width: f32,
@@ -446,6 +451,7 @@ impl UiPrefsState {
     ) -> Self {
         Self {
             log_auto_follow: true,
+            require_connect_password: false,
             preferred_inspector_tab: ConfigInspectorTab::Preview,
             preferred_traffic_period: TrafficPeriod::Today,
             configs_library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,

@@ -41,4 +41,5 @@ pub(crate) struct TunnelConfig {
 #[derive(Clone, Copy)]
 pub(crate) struct PendingStart {
     pub(crate) config_id: u64,
+    pub(crate) password_authorized: bool,
 }

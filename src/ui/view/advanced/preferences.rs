@@ -1,8 +1,10 @@
-use gpui::{div, Entity, ParentElement};
-use gpui_component::button::{Button, ButtonGroup};
+use gpui::{div, Axis, Entity, ParentElement, Styled};
+use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::setting::{SettingField, SettingItem};
-use gpui_component::{Selectable, Sizable};
+use gpui_component::switch::Switch;
+use gpui_component::{h_flex, v_flex, ActiveTheme as _, Selectable, Sizable, Size};
 
+use crate::ui::features::session::password_gate;
 use crate::ui::state::{ConfigInspectorTab, TrafficPeriod, WgApp};
 
 use super::system::{
@@ -27,6 +29,82 @@ pub(super) fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {
         ),
     )
     .description("Keep the log pane pinned to the latest runtime events.")
+}
+
+pub(super) fn connect_password_item(app: Entity<WgApp>) -> SettingItem {
+    SettingItem::new(
+        "Connect Password",
+        SettingField::render(move |_, _window, cx| {
+            let required = app.read(cx).ui_prefs.require_connect_password;
+            let toggle_handle = app.clone();
+            let manage_handle = app.clone();
+            let remove_handle = app.clone();
+
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    Switch::new("advanced-connect-password-required")
+                        .label("Require password before connecting")
+                        .checked(required)
+                        .with_size(Size::Small)
+                        .on_click(move |checked, window, cx| {
+                            toggle_handle.update(cx, |app, cx| {
+                                password_gate::toggle_connect_password_requirement(
+                                    app, *checked, window, cx,
+                                );
+                            });
+                        }),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new("advanced-connect-password-manage")
+                                .label(if required {
+                                    "Change Password"
+                                } else {
+                                    "Set Password"
+                                })
+                                .outline()
+                                .small()
+                                .compact()
+                                .on_click(move |_, window, cx| {
+                                    manage_handle.update(cx, |app, cx| {
+                                        password_gate::open_connect_password_editor(
+                                            app, window, cx,
+                                        );
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("advanced-connect-password-remove")
+                                .label("Remove")
+                                .danger()
+                                .small()
+                                .compact()
+                                .on_click(move |_, window, cx| {
+                                    remove_handle.update(cx, |app, cx| {
+                                        password_gate::remove_connect_password(
+                                            app, window, cx,
+                                        );
+                                    });
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            "Stored in your system credential manager. When enabled, tray starts are blocked until you unlock from the main window.",
+                        ),
+                )
+        }),
+    )
+    .layout(Axis::Vertical)
+    .description("Require a local password before starting a WireGuard tunnel.")
 }
 
 pub(super) fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {

@@ -20,19 +20,30 @@ use crate::ui::permissions::start_permission_message;
 use crate::ui::state::{PendingStart, TunnelConfig, WgApp};
 use crate::ui::tray;
 
+use super::password_gate::{
+    connect_password_window_required_message, request_connect_password_action,
+    ConnectPasswordAction,
+};
+
 /// 处理启动/停止按钮点击
 ///
 /// 这是主 UI 入口点，会根据当前状态决定执行什么操作。
 pub(crate) fn handle_start_stop(app: &mut WgApp, _window: &mut Window, cx: &mut Context<WgApp>) {
-    handle_start_stop_core(app, cx);
+    let decision = current_toggle_decision(app, cx);
+    apply_toggle_decision(app, decision, Some(_window), cx);
 }
 
 /// 核心启动/停止逻辑
 ///
 /// 根据当前状态（busy、running、选中的配置等）决定操作。
 pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
+    let decision = current_toggle_decision(app, cx);
+    apply_toggle_decision(app, decision, None, cx);
+}
+
+fn current_toggle_decision(app: &mut WgApp, cx: &mut Context<WgApp>) -> ToggleTunnelDecision {
     let draft = app.configs_draft_snapshot(cx);
-    let decision = decide_toggle(ToggleTunnelInput {
+    decide_toggle(ToggleTunnelInput {
         busy: app.runtime.busy,
         running: app.runtime.running,
         selected_config_id: app.selection.selected_id,
@@ -40,18 +51,41 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
         draft_has_saved_source: draft.source_id.is_some(),
         draft_is_dirty: draft.is_dirty(),
         restart_delay: app.runtime.restart_delay(),
-    });
+    })
+}
 
+fn apply_toggle_decision(
+    app: &mut WgApp,
+    decision: ToggleTunnelDecision,
+    mut window: Option<&mut Window>,
+    cx: &mut Context<WgApp>,
+) {
     match decision {
         // 无操作：当前状态不支持任何操作
         ToggleTunnelDecision::Noop => {}
 
         // 排队等待启动：忙碌中但有新启动请求
         ToggleTunnelDecision::QueuePendingStart { config_id } => {
-            if app
-                .runtime
-                .queue_pending_start(Some(PendingStart { config_id }))
-            {
+            if app.ui_prefs.require_connect_password {
+                let Some(window) = window.as_deref_mut() else {
+                    let message = connect_password_window_required_message();
+                    app.set_error(message);
+                    tray::notify_system("r-wg", message, true);
+                    cx.notify();
+                    return;
+                };
+                request_connect_password_action(
+                    app,
+                    ConnectPasswordAction::QueuePendingStart { config_id },
+                    window,
+                    cx,
+                );
+                return;
+            }
+            if app.runtime.queue_pending_start(Some(PendingStart {
+                config_id,
+                password_authorized: false,
+            })) {
                 app.set_status("Stopping... (queued start)");
                 cx.notify();
             }
@@ -100,7 +134,33 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
             config_id,
             restart_delay,
         } => {
-            start_config_by_id(app, config_id, restart_delay, cx, "Select a tunnel first");
+            if app.ui_prefs.require_connect_password {
+                let Some(window) = window.as_deref_mut() else {
+                    let message = connect_password_window_required_message();
+                    app.set_error(message);
+                    tray::notify_system("r-wg", message, true);
+                    cx.notify();
+                    return;
+                };
+                request_connect_password_action(
+                    app,
+                    ConnectPasswordAction::StartSelected {
+                        config_id,
+                        restart_delay,
+                    },
+                    window,
+                    cx,
+                );
+                return;
+            }
+            start_config_by_id(
+                app,
+                config_id,
+                restart_delay,
+                cx,
+                "Select a tunnel first",
+                false,
+            );
         }
 
         // 启动被阻止（显示错误消息）
@@ -108,7 +168,7 @@ pub(crate) fn handle_start_stop_core(app: &mut WgApp, cx: &mut Context<WgApp>) {
             app.set_error(reason.message());
             cx.notify();
         }
-    };
+    }
 }
 
 /// 处理从托盘启动隧道
@@ -240,13 +300,19 @@ fn start_with_config(
 /// 根据配置 ID 启动
 ///
 /// 查找配置并调用 start_with_config。
-fn start_config_by_id(
+pub(crate) fn start_config_by_id(
     app: &mut WgApp,
     config_id: u64,
     delay: Option<Duration>,
     cx: &mut Context<WgApp>,
     missing_message: &str,
+    password_authorized: bool,
 ) {
+    if app.ui_prefs.require_connect_password && !password_authorized {
+        app.set_error(connect_password_window_required_message());
+        cx.notify();
+        return;
+    }
     let Some(selected) = app.configs.find_by_id(config_id) else {
         app.set_error(missing_message.to_string());
         cx.notify();
@@ -261,15 +327,22 @@ fn start_config_by_id(
 ///
 /// 停止成功后检查是否有排队的启动请求。
 fn restart_pending_start(app: &mut WgApp, cx: &mut Context<WgApp>) {
-    let pending_config_id = app
-        .runtime
-        .pending_start
-        .take()
-        .map(|pending| pending.config_id);
+    let pending_start = app.runtime.pending_start.take();
+    let pending_config_id = pending_start.map(|pending| pending.config_id);
     match decide_after_stop_success(pending_config_id) {
         StopSuccessDecision::RestartPending { config_id } => {
             let delay = app.runtime.restart_delay();
-            start_config_by_id(app, config_id, delay, cx, "Pending start config not found");
+            let password_authorized = pending_start
+                .map(|pending| pending.password_authorized)
+                .unwrap_or(false);
+            start_config_by_id(
+                app,
+                config_id,
+                delay,
+                cx,
+                "Pending start config not found",
+                password_authorized,
+            );
         }
         StopSuccessDecision::Idle => {}
     }

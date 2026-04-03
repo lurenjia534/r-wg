@@ -10,6 +10,9 @@ use crate::ui::state::{ConfigsPrimaryPane, PendingDraftAction, SidebarItem, WgAp
 use super::draft;
 use super::import_export::{handle_import_click, handle_paste_click};
 use super::storage::{delete_configs_blocking_running, load_config_into_inputs, save_draft};
+use crate::ui::features::session::password_gate::{
+    request_connect_password_action, ConnectPasswordAction,
+};
 
 pub(crate) fn run_pending_draft_action(
     app: &mut WgApp,
@@ -48,11 +51,27 @@ pub(crate) fn run_pending_draft_action(
         PendingDraftAction::Paste => handle_paste_click(app, window, cx),
         PendingDraftAction::DeleteCurrent => open_delete_current_config_dialog(app, window, cx),
         PendingDraftAction::RestartTunnel => {
-            app.runtime.queue_pending_start(
-                app.selection
-                    .build_pending_start(&app.configs, &app.runtime),
-            );
-            app.handle_start_stop_core(cx);
+            let Some(pending_start) = app
+                .selection
+                .build_pending_start(&app.configs, &app.runtime)
+            else {
+                app.set_error("Select a tunnel first");
+                cx.notify();
+                return;
+            };
+            if app.ui_prefs.require_connect_password {
+                request_connect_password_action(
+                    app,
+                    ConnectPasswordAction::RestartAfterStop {
+                        config_id: pending_start.config_id,
+                    },
+                    window,
+                    cx,
+                );
+                return;
+            }
+            app.runtime.queue_pending_start(Some(pending_start));
+            crate::ui::features::session::controller::handle_start_stop(app, window, cx);
         }
     }
 }
