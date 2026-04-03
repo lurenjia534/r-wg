@@ -16,11 +16,27 @@ use crate::ui::view::{PageShell, ViewData};
 use super::data::{EffectiveRoutePlan, RouteMapChip, RouteMapData, RouteMapEvidence, RouteMapTone};
 use super::{controller, events, graph, inspector, inventory};
 
-const ROUTE_MAP_STACK_BREAKPOINT: f32 = 1360.0;
+const ROUTE_MAP_WIDE_CONTENT_MIN_WIDTH: f32 = 1260.0;
+const ROUTE_MAP_SPLIT_CONTENT_MIN_WIDTH: f32 = 860.0;
+const ROUTE_MAP_ESTIMATED_SIDEBAR_EXPANDED_WIDTH: f32 = 256.0;
+const ROUTE_MAP_ESTIMATED_SIDEBAR_COLLAPSED_WIDTH: f32 = 48.0;
+const ROUTE_MAP_ESTIMATED_OUTER_GUTTER: f32 = 32.0;
+const ROUTE_MAP_SIDEBAR_COLLAPSE_BREAKPOINT: f32 = 1160.0;
+const ROUTE_MAP_SIDEBAR_OVERLAY_BREAKPOINT: f32 = 820.0;
 const ROUTE_MAP_COMPACT_INVENTORY_HEIGHT: f32 = 280.0;
-const ROUTE_MAP_COMPACT_GRAPH_HEIGHT: f32 = 460.0;
+const ROUTE_MAP_COMPACT_FLOW_HEIGHT: f32 = 460.0;
+const ROUTE_MAP_COMPACT_ROUTES_HEIGHT: f32 = 560.0;
+const ROUTE_MAP_COMPACT_EXPLAIN_HEIGHT: f32 = 420.0;
 const ROUTE_MAP_COMPACT_INSPECTOR_HEIGHT: f32 = 320.0;
 const ROUTE_MAP_COMPACT_EVENTS_HEIGHT: f32 = 520.0;
+const ROUTE_MAP_SPLIT_INSPECTOR_HEIGHT: f32 = 320.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RouteMapLayoutMode {
+    Wide,
+    Split,
+    Stacked,
+}
 
 #[derive(Default)]
 struct RouteMapWorkspaceState {
@@ -71,7 +87,7 @@ pub(crate) fn render_route_map(
     let query = app.ui.route_map_search.debounced_query.to_string();
     let inventory_width = app.ui_prefs.route_map_inventory_width;
     let inspector_width = app.ui_prefs.route_map_inspector_width;
-    let compact_layout = window.viewport_size().width < px(ROUTE_MAP_STACK_BREAKPOINT);
+    let layout_mode = route_map_layout_mode(window);
     let workspace = window.use_keyed_state("route-map-workspace", cx, |_, _| {
         RouteMapWorkspaceState::default()
     });
@@ -92,14 +108,22 @@ pub(crate) fn render_route_map(
             .flex_1()
             .w_full()
             .min_h(px(0.0))
-            .child(if compact_layout && mode == RouteMapMode::Events {
-                render_compact_events_layout(app, &model, window, cx)
-            } else if compact_layout {
-                render_compact_layout(app, &model, mode, window, cx)
-            } else if mode == RouteMapMode::Events {
-                render_events_layout(app, &model, inventory_width, app_handle.clone(), window, cx)
-            } else {
-                render_standard_layout(
+            .child(match (layout_mode, mode) {
+                (RouteMapLayoutMode::Stacked, RouteMapMode::Events) => {
+                    render_compact_events_layout(app, &model, window, cx)
+                }
+                (RouteMapLayoutMode::Stacked, _) => {
+                    render_compact_layout(app, &model, mode, window, cx)
+                }
+                (_, RouteMapMode::Events) => render_events_layout(
+                    app,
+                    &model,
+                    inventory_width,
+                    app_handle.clone(),
+                    window,
+                    cx,
+                ),
+                (RouteMapLayoutMode::Wide, _) => render_standard_layout(
                     app,
                     &model,
                     inventory_width,
@@ -108,7 +132,16 @@ pub(crate) fn render_route_map(
                     app_handle.clone(),
                     window,
                     cx,
-                )
+                ),
+                (RouteMapLayoutMode::Split, _) => render_split_layout(
+                    app,
+                    &model,
+                    inventory_width,
+                    mode,
+                    app_handle.clone(),
+                    window,
+                    cx,
+                ),
             }),
     )
     .toolbar(render_toolbar(app, &search_input, cx))
@@ -209,7 +242,7 @@ fn render_compact_layout(
                             inventory::render_inventory(app, model, window, cx).into_any_element(),
                         ))
                         .child(compact_panel(
-                            px(ROUTE_MAP_COMPACT_GRAPH_HEIGHT),
+                            compact_primary_panel_height(mode),
                             graph::render_graph(model, mode, window, cx).into_any_element(),
                         ))
                         .child(compact_panel(
@@ -217,6 +250,70 @@ fn render_compact_layout(
                             inspector::render_inspector(app, model, cx).into_any_element(),
                         )),
                 ),
+        )
+        .into_any_element()
+}
+
+fn render_split_layout(
+    app: &mut WgApp,
+    model: &RouteMapData,
+    inventory_width: f32,
+    mode: RouteMapMode,
+    app_handle: Entity<WgApp>,
+    window: &mut Window,
+    cx: &mut Context<WgApp>,
+) -> AnyElement {
+    h_resizable("route-map-layout-split")
+        .on_resize(move |state: &Entity<ResizableState>, _window, cx| {
+            let sizes = state.read(cx).sizes().clone();
+            let Some(inventory_size) = sizes.first() else {
+                return;
+            };
+            app_handle.update(cx, |app, cx| {
+                let changed = app.persist_route_map_panel_widths(
+                    inventory_size.as_f32(),
+                    app.ui_prefs.route_map_inspector_width,
+                    cx,
+                );
+                if changed {
+                    cx.notify();
+                }
+            });
+        })
+        .child(
+            resizable_panel()
+                .size(px(inventory_width))
+                .size_range(px(220.0)..px(320.0))
+                .child(panel_shell(
+                    inventory::render_inventory(app, model, window, cx).into_any_element(),
+                )),
+        )
+        .child(
+            resizable_panel()
+                .size_range(px(620.0)..Pixels::MAX)
+                .child(panel_shell(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .w_full()
+                        .h_full()
+                        .min_h(px(0.0))
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_h(px(0.0))
+                                .child(graph::render_graph(model, mode, window, cx)),
+                        )
+                        .child(compact_panel(
+                            px(ROUTE_MAP_SPLIT_INSPECTOR_HEIGHT),
+                            inspector::render_inspector(app, model, cx).into_any_element(),
+                        ))
+                        .into_any_element(),
+                )),
         )
         .into_any_element()
 }
@@ -264,6 +361,39 @@ fn compact_panel(height: Pixels, child: AnyElement) -> Div {
         .h(height)
         .min_h(height)
         .child(panel_shell(child))
+}
+
+fn compact_primary_panel_height(mode: RouteMapMode) -> Pixels {
+    match mode {
+        RouteMapMode::Flow => px(ROUTE_MAP_COMPACT_FLOW_HEIGHT),
+        RouteMapMode::Routes => px(ROUTE_MAP_COMPACT_ROUTES_HEIGHT),
+        RouteMapMode::Explain => px(ROUTE_MAP_COMPACT_EXPLAIN_HEIGHT),
+        RouteMapMode::Events => px(ROUTE_MAP_COMPACT_EVENTS_HEIGHT),
+    }
+}
+
+fn route_map_layout_mode(window: &Window) -> RouteMapLayoutMode {
+    let content_width = estimated_route_map_content_width(window);
+    if content_width >= px(ROUTE_MAP_WIDE_CONTENT_MIN_WIDTH) {
+        RouteMapLayoutMode::Wide
+    } else if content_width >= px(ROUTE_MAP_SPLIT_CONTENT_MIN_WIDTH) {
+        RouteMapLayoutMode::Split
+    } else {
+        RouteMapLayoutMode::Stacked
+    }
+}
+
+fn estimated_route_map_content_width(window: &Window) -> Pixels {
+    let viewport_width = window.viewport_size().width;
+    let sidebar_width = if viewport_width < px(ROUTE_MAP_SIDEBAR_OVERLAY_BREAKPOINT) {
+        px(0.0)
+    } else if viewport_width < px(ROUTE_MAP_SIDEBAR_COLLAPSE_BREAKPOINT) {
+        px(ROUTE_MAP_ESTIMATED_SIDEBAR_COLLAPSED_WIDTH)
+    } else {
+        px(ROUTE_MAP_ESTIMATED_SIDEBAR_EXPANDED_WIDTH)
+    };
+
+    (viewport_width - sidebar_width - px(ROUTE_MAP_ESTIMATED_OUTER_GUTTER)).max(px(0.0))
 }
 
 fn render_events_layout(
@@ -315,6 +445,7 @@ fn panel_shell(child: AnyElement) -> Div {
         .flex_col()
         .flex_1()
         .w_full()
+        .min_w(px(0.0))
         .h_full()
         .min_h(px(0.0))
         .p_3()
@@ -531,13 +662,14 @@ fn render_toolbar(
                     h_flex()
                         .items_center()
                         .gap_2()
+                        .flex_wrap()
                         .child(mode_group)
                         .child(family_group),
                 )
                 .child(
                     div()
-                        .w(px(320.0))
-                        .max_w_full()
+                        .w_full()
+                        .max_w(px(360.0))
                         .px_2()
                         .py_1()
                         .rounded_lg()

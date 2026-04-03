@@ -8,8 +8,9 @@ use gpui_component::{
     h_flex,
     scroll::ScrollableElement as _,
     scroll::Scrollbar,
+    tag::Tag,
     theme::ThemeMode,
-    v_flex, ActiveTheme as _, Icon, StyledExt as _,
+    v_flex, ActiveTheme as _, Icon, Sizable as _, StyledExt as _,
 };
 
 use crate::ui::state::{RouteMapMode, WgApp};
@@ -21,6 +22,7 @@ use super::{empty_group, events, explain, status_chip};
 
 const ROUTE_LIST_SCROLL_STATE_ID: &str = "route-map-routes-scroll";
 const ROUTE_ROW_HEIGHT: f32 = 48.0;
+const ROUTE_CARD_LAYOUT_BREAKPOINT: f32 = 1500.0;
 const FLOW_HORIZONTAL_BREAKPOINT: f32 = 1500.0;
 const FLOW_HORIZONTAL_MAX_WIDTH: f32 = 1120.0;
 const FLOW_VERTICAL_MAX_WIDTH: f32 = 820.0;
@@ -522,6 +524,10 @@ fn render_routes(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgA
         ));
     }
 
+    if window.viewport_size().width < px(ROUTE_CARD_LAYOUT_BREAKPOINT) {
+        return render_route_cards(model, cx);
+    }
+
     let content_style = StyleRefinement::default().flex_1().min_h_0();
     let rows = model.route_rows.clone();
     let scroll_handle = window
@@ -541,10 +547,8 @@ fn render_routes(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgA
         },
     )
     .track_scroll(scroll_handle.clone())
-    .with_sizing_behavior(ListSizingBehavior::Auto)
     .w_full()
-    .flex_1()
-    .size_full();
+    .flex_1();
 
     div()
         .flex()
@@ -579,6 +583,50 @@ fn render_routes(model: &RouteMapData, window: &mut Window, cx: &mut Context<WgA
                                 .relative()
                                 .child(list)
                                 .child(Scrollbar::vertical(&scroll_handle)),
+                        ),
+                ),
+        )
+}
+
+fn render_route_cards(model: &RouteMapData, cx: &mut Context<WgApp>) -> Div {
+    let content_style = StyleRefinement::default().flex_1().min_h_0();
+
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .w_full()
+        .h_full()
+        .min_h(px(0.0))
+        .child(
+            GroupBox::new()
+                .fill()
+                .flex_1()
+                .min_h_0()
+                .content_style(content_style)
+                .title("Routes")
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .w_full()
+                        .min_h(px(0.0))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .w_full()
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scrollbar()
+                                .child(
+                                    v_flex().w_full().gap_2().children(
+                                        model
+                                            .route_rows
+                                            .iter()
+                                            .map(|row| render_route_card(row, cx)),
+                                    ),
+                                ),
                         ),
                 ),
         )
@@ -666,6 +714,112 @@ fn route_cell(
         base.flex_1().min_w(px(0.0))
     };
     base.child(value)
+}
+
+fn render_route_card(row: &RouteMapRouteRow, cx: &mut Context<WgApp>) -> Div {
+    div()
+        .w_full()
+        .rounded_lg()
+        .border_1()
+        .border_color(cx.theme().border.alpha(0.72))
+        .bg(cx.theme().group_box)
+        .p_3()
+        .child(
+            v_flex()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .items_start()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .min_w(px(0.0))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_semibold()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Destination"),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_semibold()
+                                        .font_family(cx.theme().mono_font_family.clone())
+                                        .child(row.destination.clone()),
+                                ),
+                        )
+                        .child(
+                            Tag::secondary()
+                                .small()
+                                .rounded_full()
+                                .child(row.status.clone()),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_1()
+                        .flex_wrap()
+                        .child(
+                            Tag::secondary()
+                                .small()
+                                .rounded_full()
+                                .child(row.family.clone()),
+                        )
+                        .child(
+                            Tag::secondary()
+                                .small()
+                                .rounded_full()
+                                .child(row.kind.clone()),
+                        )
+                        .child(
+                            Tag::secondary()
+                                .small()
+                                .rounded_full()
+                                .child(row.peer.clone()),
+                        )
+                        .child(
+                            Tag::secondary()
+                                .small()
+                                .rounded_full()
+                                .child(row.table.clone()),
+                        ),
+                )
+                .child(route_card_line("Endpoint", row.endpoint.clone(), true, cx))
+                .child(route_card_line("Note", row.note.clone(), false, cx)),
+        )
+}
+
+fn route_card_line(
+    label: &str,
+    value: SharedString,
+    monospace: bool,
+    cx: &mut Context<WgApp>,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_xs()
+                .font_semibold()
+                .text_color(cx.theme().muted_foreground)
+                .child(label.to_string()),
+        )
+        .child(
+            div()
+                .text_sm()
+                .when(monospace, |this| {
+                    this.font_family(cx.theme().mono_font_family.clone())
+                })
+                .child(value),
+        )
 }
 
 fn selected_summary(selected: &RouteMapInventoryItem) -> SharedString {
