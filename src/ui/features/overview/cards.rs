@@ -1,5 +1,5 @@
 use gpui::*;
-use gpui_component::{group_box::GroupBox, h_flex, v_flex, ActiveTheme as _, IconName};
+use gpui_component::{h_flex, tag::Tag, v_flex, ActiveTheme as _, IconName, Sizable as _};
 
 use crate::ui::state::WgApp;
 
@@ -11,29 +11,101 @@ use super::common::{
 use super::traffic::traffic_column;
 use super::view_model::OverviewData;
 
-pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> GroupBox {
+pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> Div {
     let runtime = &overview.runtime;
+    let running_name = if runtime.is_running {
+        runtime.running_name_text.as_str()
+    } else {
+        "Tunnel idle"
+    };
+    let running_name: SharedString = running_name.to_string().into();
+    let status_tag = if runtime.is_running {
+        Tag::success().rounded_full().small().child("Connected")
+    } else {
+        Tag::secondary()
+            .outline()
+            .rounded_full()
+            .small()
+            .child("Idle")
+    };
+
     overview_section(
         OverviewSectionTone::Primary,
         section_title(
             IconName::PanelBottom,
             "Runtime Health",
-            None::<SharedString>,
+            Some("Live session metrics and transport state"),
             OverviewSectionTone::Primary,
             cx,
         ),
         v_flex()
-            .gap_0()
+            .gap_4()
+            .child(
+                h_flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_3()
+                    .flex_wrap()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .min_w(px(220.0))
+                            .child(status_tag)
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(running_name),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!("Last updated {}", runtime.last_updated_text)),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_3()
+                            .flex_wrap()
+                            .child(
+                                metric_cell(
+                                    IconName::LoaderCircle,
+                                    "Uptime",
+                                    &runtime.uptime_text,
+                                    cx.theme().muted_foreground,
+                                    false,
+                                    cx,
+                                )
+                                .min_w(px(148.0)),
+                            )
+                            .child(
+                                status_item(
+                                    IconName::CircleUser,
+                                    "Peers",
+                                    &runtime.peer_count_text,
+                                    cx.theme().muted_foreground,
+                                    false,
+                                    cx,
+                                )
+                                .min_w(px(128.0)),
+                            )
+                            .child(
+                                status_item(
+                                    IconName::ExternalLink,
+                                    "Handshake",
+                                    &runtime.handshake_text,
+                                    cx.theme().muted_foreground,
+                                    false,
+                                    cx,
+                                )
+                                .min_w(px(168.0)),
+                            ),
+                    ),
+            )
             .child(two_row_grid(
                 [
-                    metric_cell(
-                        IconName::LoaderCircle,
-                        "Uptime",
-                        &runtime.uptime_text,
-                        cx.theme().muted_foreground,
-                        false,
-                        cx,
-                    ),
                     metric_cell(
                         IconName::ArrowDown,
                         "RX",
@@ -50,55 +122,36 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                         false,
                         cx,
                     ),
+                    status_state_item(runtime.is_running, cx),
                 ],
                 [
-                    status_state_item(runtime.is_running, cx),
                     status_item(
-                        IconName::CircleUser,
-                        "Peers",
-                        &runtime.peer_count_text,
+                        IconName::PanelBottom,
+                        "Running Tunnel",
+                        &runtime.running_name_text,
                         cx.theme().muted_foreground,
                         false,
                         cx,
                     ),
                     status_item(
-                        IconName::ExternalLink,
-                        "Handshake",
-                        &runtime.handshake_text,
+                        IconName::LayoutDashboard,
+                        "Memory",
+                        &runtime.memory_text,
+                        cx.theme().muted_foreground,
+                        false,
+                        cx,
+                    ),
+                    status_item(
+                        IconName::LoaderCircle,
+                        "Updated",
+                        &runtime.last_updated_text,
                         cx.theme().muted_foreground,
                         false,
                         cx,
                     ),
                 ],
                 cx,
-            ))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .pt_2()
-                    .child(
-                        status_item(
-                            IconName::PanelBottom,
-                            "Running Tunnel",
-                            &runtime.running_name_text,
-                            cx.theme().muted_foreground,
-                            true,
-                            cx,
-                        )
-                        .w(relative(0.6)),
-                    )
-                    .child(
-                        status_item(
-                            IconName::LayoutDashboard,
-                            "Memory",
-                            &runtime.memory_text,
-                            cx.theme().muted_foreground,
-                            true,
-                            cx,
-                        )
-                        .w(relative(0.4)),
-                    ),
-            ),
+            )),
         cx,
     )
 }
@@ -107,23 +160,69 @@ pub(crate) fn network_status_card<T>(
     app_handle: &Entity<WgApp>,
     overview: &OverviewData,
     cx: &mut Context<T>,
-) -> GroupBox {
+) -> Div {
     let preview = &overview.preview;
+    let selected_name: SharedString = preview.selected_name_text.clone().into();
+    let preview_tag = if preview.has_selection {
+        Tag::secondary()
+            .outline()
+            .rounded_full()
+            .small()
+            .child("Selected preview")
+    } else {
+        Tag::secondary()
+            .rounded_full()
+            .small()
+            .child("No selection")
+    };
+
     overview_section(
         OverviewSectionTone::Secondary,
         section_title(
             IconName::Globe,
             "Selected Config Preview",
-            if preview.has_selection {
-                Some(preview.context_text.clone())
-            } else {
-                Some("No saved config selected for preview.".to_string())
-            },
+            Some("Saved config values shown as a stable reference"),
             OverviewSectionTone::Secondary,
             cx,
         ),
         v_flex()
-            .gap_0()
+            .gap_4()
+            .child(
+                h_flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_3()
+                    .flex_wrap()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .min_w(px(220.0))
+                            .child(preview_tag)
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(selected_name),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(preview.context_text.clone()),
+                            ),
+                    )
+                    .child(
+                        status_item(
+                            IconName::FolderOpen,
+                            "Source",
+                            &preview.source_text,
+                            cx.theme().muted_foreground,
+                            false,
+                            cx,
+                        )
+                        .min_w(px(220.0)),
+                    ),
+            )
             .child(two_row_grid(
                 [
                     copyable_metric_cell(
@@ -167,14 +266,6 @@ pub(crate) fn network_status_card<T>(
                         cx,
                     ),
                     status_item(
-                        IconName::FolderOpen,
-                        "Source",
-                        &preview.source_text,
-                        cx.theme().muted_foreground,
-                        false,
-                        cx,
-                    ),
-                    status_item(
                         IconName::Map,
                         "Route Table",
                         &preview.route_table_text,
@@ -182,26 +273,22 @@ pub(crate) fn network_status_card<T>(
                         true,
                         cx,
                     ),
+                    status_item(
+                        IconName::SortAscending,
+                        "Allowed IPs",
+                        &preview.allowed_text,
+                        cx.theme().muted_foreground,
+                        true,
+                        cx,
+                    ),
                 ],
                 cx,
-            ))
-            .child(
-                status_item(
-                    IconName::SortAscending,
-                    "Allowed IPs",
-                    &preview.allowed_text,
-                    cx.theme().muted_foreground,
-                    true,
-                    cx,
-                )
-                .w_full()
-                .mt_3(),
-            ),
+            )),
         cx,
     )
 }
 
-pub(crate) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> GroupBox {
+pub(crate) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> Div {
     let runtime = &overview.runtime;
     let upload_sparkline = sparkline_chart(
         build_sparkline_points(&runtime.upload_series),
@@ -217,39 +304,47 @@ pub(crate) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>
         section_title(
             IconName::ChartPie,
             "Traffic Stats",
-            None::<SharedString>,
+            Some("Current throughput and accumulated transfer"),
             OverviewSectionTone::Primary,
             cx,
         ),
         h_flex()
-            .gap_4()
+            .gap_5()
             .items_start()
-            .p_3()
-            .child(traffic_column(
-                super::traffic::TrafficColumnProps {
-                    icon: IconName::ArrowUp,
-                    label: "Upload Speed",
-                    footer_label: "Upload",
-                    speed: &runtime.upload_speed_text,
-                    total: &runtime.upload_total_text,
-                    color: cx.theme().chart_1,
-                    sparkline: upload_sparkline,
-                },
-                cx,
-            ))
+            .flex_wrap()
+            .child(
+                traffic_column(
+                    super::traffic::TrafficColumnProps {
+                        icon: IconName::ArrowUp,
+                        label: "Upload Speed",
+                        footer_label: "Upload",
+                        speed: &runtime.upload_speed_text,
+                        total: &runtime.upload_total_text,
+                        color: cx.theme().chart_1,
+                        sparkline: upload_sparkline,
+                    },
+                    cx,
+                )
+                .min_w(px(260.0))
+                .flex_1(),
+            )
             .child(vertical_rule(cx).h(px(152.0)))
-            .child(traffic_column(
-                super::traffic::TrafficColumnProps {
-                    icon: IconName::ArrowDown,
-                    label: "Download Speed",
-                    footer_label: "Download",
-                    speed: &runtime.download_speed_text,
-                    total: &runtime.download_total_text,
-                    color: cx.theme().chart_2,
-                    sparkline: download_sparkline,
-                },
-                cx,
-            )),
+            .child(
+                traffic_column(
+                    super::traffic::TrafficColumnProps {
+                        icon: IconName::ArrowDown,
+                        label: "Download Speed",
+                        footer_label: "Download",
+                        speed: &runtime.download_speed_text,
+                        total: &runtime.download_total_text,
+                        color: cx.theme().chart_2,
+                        sparkline: download_sparkline,
+                    },
+                    cx,
+                )
+                .min_w(px(260.0))
+                .flex_1(),
+            ),
         cx,
     )
 }

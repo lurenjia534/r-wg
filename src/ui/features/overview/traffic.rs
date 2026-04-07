@@ -3,7 +3,6 @@ use gpui::*;
 use gpui_component::{
     button::{Button, ButtonGroup},
     chart::{BarChart, PieChart},
-    group_box::GroupBox,
     h_flex, v_flex, ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _,
     StyledExt as _,
 };
@@ -19,7 +18,7 @@ use super::common::{
 use super::traffic_analytics::{TrafficSummaryData, TrafficTrendData};
 use super::view_model::OverviewData;
 
-pub(crate) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T>) -> GroupBox {
+pub(crate) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T>) -> Div {
     let total_text = format_bytes(trend.total_bytes);
     let avg_text = format_avg_bytes(trend.average_bytes);
     let show_avg_rule = trend.non_zero_days >= 2;
@@ -247,7 +246,7 @@ pub(crate) fn traffic_summary_card<T>(
     app_handle: &Entity<WgApp>,
     overview: &OverviewData,
     cx: &mut Context<T>,
-) -> GroupBox {
+) -> Div {
     let summary = &overview.traffic_summary;
     let upload_color = cx.theme().chart_1;
     let download_color = cx.theme().chart_2;

@@ -17,11 +17,10 @@ use gpui_component::{
     h_flex,
     scroll::ScrollableElement as _,
     tag::Tag,
-    ActiveTheme as _, Sizable as _,
+    v_flex, ActiveTheme as _, Sizable as _,
 };
 
 use crate::ui::state::WgApp;
-use crate::ui::view::{PageShell, PageShellHeader};
 
 use super::{
     cards::{network_status_card, running_status_card, traffic_stats_card},
@@ -186,61 +185,104 @@ fn render_overview_snapshot<T>(
             )
         });
 
-    PageShell::new(
-        PageShellHeader::new(
-            "DASHBOARD",
-            "Overview",
-            "Runtime health, traffic, and selected config context in one place.",
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.0))
+        .child(render_overview_header(header_actions, cx))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.0))
+                .overflow_y_scrollbar()
+                .px_2()
+                .pb_2()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_5()
+                        .w_full()
+                        .child(
+                            h_flex()
+                                .items_start()
+                                .gap_4()
+                                .flex_wrap()
+                                .when(stacked, |this| this.flex_col())
+                                .child(
+                                    running_status_card(overview, cx)
+                                        .min_w(px(if stacked { 320.0 } else { 520.0 }))
+                                        .flex_1(),
+                                )
+                                .child(
+                                    network_status_card(app, overview, cx)
+                                        .min_w(px(if stacked { 320.0 } else { 380.0 }))
+                                        .flex_1(),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .items_start()
+                                .gap_4()
+                                .flex_wrap()
+                                .when(stacked, |this| this.flex_col())
+                                .child(
+                                    traffic_stats_card(overview, cx)
+                                        .min_w(px(if compact { 320.0 } else { 420.0 }))
+                                        .flex_1(),
+                                )
+                                .child(
+                                    traffic_trend_card(&overview.traffic_trend, cx)
+                                        .min_w(px(if compact { 320.0 } else { 360.0 }))
+                                        .flex_1(),
+                                ),
+                        )
+                        .child(traffic_summary_card(app, overview, cx)),
+                ),
         )
-        .actions(header_actions),
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h(px(0.0))
-            .overflow_y_scrollbar()
-            .px_5()
-            .py_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .w_full()
-                    .child(
-                        h_flex()
-                            .items_start()
-                            .gap_3()
-                            .flex_wrap()
-                            .when(stacked, |this| this.flex_col())
-                            .child(running_status_card(overview, cx).min_w(px(320.0)).flex_1())
-                            .child(
-                                network_status_card(app, overview, cx)
-                                    .min_w(px(320.0))
-                                    .flex_1(),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .items_start()
-                            .gap_3()
-                            .flex_wrap()
-                            .when(stacked, |this| this.flex_col())
-                            .child(
-                                traffic_stats_card(overview, cx)
-                                    .min_w(px(if compact { 320.0 } else { 420.0 }))
-                                    .flex_1(),
-                            )
-                            .child(
-                                traffic_trend_card(&overview.traffic_trend, cx)
-                                    .min_w(px(if compact { 320.0 } else { 360.0 }))
-                                    .flex_1(),
-                            ),
-                    )
-                    .child(traffic_summary_card(app, overview, cx)),
-            ),
-    )
-    .render(cx)
+}
+
+fn render_overview_header<T>(actions: Div, cx: &mut Context<T>) -> Div {
+    div()
+        .px_3()
+        .pt_1()
+        .pb_4()
+        .child(
+            h_flex()
+                .items_start()
+                .justify_between()
+                .gap_4()
+                .flex_wrap()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().muted_foreground)
+                                .child("CONTROL ROOM"),
+                        )
+                        .child(
+                            div()
+                                .text_xl()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Overview"),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(
+                                    "Runtime health, selected config reference, and traffic posture in one surface.",
+                                ),
+                        ),
+                )
+                .child(actions),
+        )
 }
 
 /// 渲染占位页面

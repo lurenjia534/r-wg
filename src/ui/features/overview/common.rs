@@ -2,7 +2,6 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     button::{Button, ButtonVariants as _},
-    group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     tag::Tag,
     v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
@@ -20,12 +19,58 @@ pub(super) fn overview_section<T>(
     tone: OverviewSectionTone,
     title: impl IntoElement,
     body: impl IntoElement,
-    _cx: &mut Context<T>,
-) -> GroupBox {
-    match tone {
-        OverviewSectionTone::Primary => GroupBox::new().fill().title(title).child(body),
-        OverviewSectionTone::Secondary => GroupBox::new().outline().title(title).child(body),
-    }
+    cx: &mut Context<T>,
+) -> Div {
+    let border = match tone {
+        OverviewSectionTone::Primary => {
+            cx.theme()
+                .border
+                .alpha(if cx.theme().is_dark() { 0.62 } else { 0.5 })
+        }
+        OverviewSectionTone::Secondary => {
+            cx.theme()
+                .border
+                .alpha(if cx.theme().is_dark() { 0.46 } else { 0.42 })
+        }
+    };
+    let surface = match tone {
+        OverviewSectionTone::Primary => cx.theme().tiles,
+        OverviewSectionTone::Secondary => {
+            cx.theme()
+                .background
+                .alpha(if cx.theme().is_dark() { 0.76 } else { 0.92 })
+        }
+    };
+    let header_bg = match tone {
+        OverviewSectionTone::Primary => {
+            cx.theme()
+                .background
+                .alpha(if cx.theme().is_dark() { 0.56 } else { 0.72 })
+        }
+        OverviewSectionTone::Secondary => {
+            cx.theme()
+                .background
+                .alpha(if cx.theme().is_dark() { 0.42 } else { 0.62 })
+        }
+    };
+
+    v_flex()
+        .rounded_xl()
+        .border_1()
+        .border_color(border)
+        .bg(surface)
+        .overflow_hidden()
+        .when(cx.theme().shadow, |this| this.shadow_sm())
+        .child(
+            div()
+                .px_4()
+                .py_3()
+                .border_b_1()
+                .border_color(border)
+                .bg(header_bg)
+                .child(title),
+        )
+        .child(div().px_4().py_4().child(body))
 }
 
 pub(super) fn section_title<T>(
@@ -104,9 +149,9 @@ pub(super) fn tile_shell<T>(cx: &mut Context<T>) -> Div {
         .flex_grow()
         .min_w(px(0.0))
         .p_3()
-        .rounded_lg()
+        .rounded_md()
         .border_1()
-        .border_color(tile_border(cx))
+        .border_color(tile_border(cx).alpha(if cx.theme().is_dark() { 0.88 } else { 0.72 }))
         .bg(tile_surface(cx))
 }
 
@@ -284,7 +329,7 @@ pub(super) fn two_row_grid<T>(top: [Div; 3], bottom: [Div; 3], _cx: &mut Context
     div()
         .grid()
         .grid_cols(3)
-        .gap_2()
+        .gap_3()
         .child(top_left)
         .child(top_mid)
         .child(top_right)
