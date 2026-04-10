@@ -40,6 +40,8 @@ pub(super) fn render_configs_desktop_layout(
 ) -> AnyElement {
     div()
         .flex_1()
+        .w_full()
+        .min_w(px(0.0))
         .min_h(px(0.0))
         .child(
             h_resizable("configs-workspace")
@@ -73,42 +75,88 @@ pub(super) fn render_configs_desktop_layout(
                 .child(
                     resizable_panel()
                         .size(px(library_width))
-                        .size_range(px(240.0)..px(420.0))
-                        .child(div().h_full().p_3().child(render_library_panel(
-                            app_handle,
-                            runtime.selected_id,
-                            data,
-                            workspace,
-                            library_rows,
-                            library_search_input,
-                            ConfigsLayoutMode::Desktop,
-                            window,
-                            cx,
-                        ))),
+                        .size_range(px(272.0)..px(360.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .w_full()
+                                .min_w(px(0.0))
+                                .h_full()
+                                .min_h(px(0.0))
+                                .bg(cx.theme().background.alpha(0.74))
+                                .border_r_1()
+                                .border_color(cx.theme().border.alpha(0.72))
+                                .child(configs_sidebar_shell(
+                                    render_library_panel(
+                                        app_handle,
+                                        runtime.selected_id,
+                                        data,
+                                        workspace,
+                                        library_rows,
+                                        library_search_input,
+                                        ConfigsLayoutMode::Desktop,
+                                        window,
+                                        cx,
+                                    )
+                                    .into_any_element(),
+                                )),
+                        ),
                 )
-                .child(resizable_panel().size_range(px(420.0)..Pixels::MAX).child(
-                    div().h_full().p_3().child(render_editor_panel(
-                        app_handle,
-                        workspace,
-                        data,
-                        name_input,
-                        config_input,
-                        ConfigsLayoutMode::Desktop,
-                        cx,
-                    )),
-                ))
+                .child(
+                    resizable_panel().size_range(px(560.0)..Pixels::MAX).child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .w_full()
+                            .min_w(px(0.0))
+                            .h_full()
+                            .min_h(px(0.0))
+                            .bg(cx.theme().tiles)
+                            .child(configs_editor_shell(
+                                render_editor_panel(
+                                    app_handle,
+                                    workspace,
+                                    data,
+                                    name_input,
+                                    config_input,
+                                    ConfigsLayoutMode::Desktop,
+                                    cx,
+                                )
+                                .into_any_element(),
+                            )),
+                    ),
+                )
                 .child(
                     resizable_panel()
                         .size(px(inspector_width))
-                        .size_range(px(280.0)..px(440.0))
-                        .child(div().h_full().p_3().child(render_inspector_panel(
-                            runtime,
-                            workspace,
-                            inspector_tab,
-                            ConfigsLayoutMode::Desktop,
-                            data,
-                            cx,
-                        ))),
+                        .size_range(px(288.0)..px(360.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .w_full()
+                                .min_w(px(0.0))
+                                .h_full()
+                                .min_h(px(0.0))
+                                .bg(cx.theme().background.alpha(0.78))
+                                .border_l_1()
+                                .border_color(cx.theme().border.alpha(0.72))
+                                .child(configs_sidebar_shell(
+                                    render_inspector_panel(
+                                        runtime,
+                                        workspace,
+                                        inspector_tab,
+                                        ConfigsLayoutMode::Desktop,
+                                        data,
+                                        cx,
+                                    )
+                                    .into_any_element(),
+                                )),
+                        ),
                 ),
         )
         .into_any_element()
@@ -132,6 +180,8 @@ pub(super) fn render_configs_medium_layout(
 ) -> AnyElement {
     div()
         .flex_1()
+        .w_full()
+        .min_w(px(0.0))
         .min_h(px(0.0))
         .child(
             h_resizable("configs-workspace-medium")
@@ -165,28 +215,43 @@ pub(super) fn render_configs_medium_layout(
                 .child(
                     resizable_panel()
                         .size(px(library_width))
-                        .size_range(px(240.0)..px(380.0))
-                        .child(div().h_full().p_3().child(render_library_panel(
-                            app_handle,
-                            runtime.selected_id,
-                            data,
-                            workspace,
-                            library_rows,
-                            library_search_input,
-                            ConfigsLayoutMode::Medium,
-                            window,
-                            cx,
-                        ))),
+                        .size_range(px(264.0)..px(344.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .w_full()
+                                .min_w(px(0.0))
+                                .h_full()
+                                .min_h(px(0.0))
+                                .bg(cx.theme().background.alpha(0.74))
+                                .border_r_1()
+                                .border_color(cx.theme().border.alpha(0.72))
+                                .child(configs_sidebar_shell(
+                                    render_library_panel(
+                                        app_handle,
+                                        runtime.selected_id,
+                                        data,
+                                        workspace,
+                                        library_rows,
+                                        library_search_input,
+                                        ConfigsLayoutMode::Medium,
+                                        window,
+                                        cx,
+                                    )
+                                    .into_any_element(),
+                                )),
+                        ),
                 )
                 .child(
-                    resizable_panel().size_range(px(620.0)..Pixels::MAX).child(
-                        div().h_full().p_3().child(
+                    resizable_panel().size_range(px(700.0)..Pixels::MAX).child(
+                        configs_editor_shell(
                             div()
                                 .flex()
                                 .flex_col()
                                 .h_full()
                                 .min_h(px(0.0))
-                                .gap_3()
                                 .child(div().flex_1().min_h(px(0.0)).overflow_hidden().child(
                                     render_editor_panel(
                                         app_handle,
@@ -202,6 +267,9 @@ pub(super) fn render_configs_medium_layout(
                                     div()
                                         .h(px(CONFIGS_MEDIUM_INSPECTOR_HEIGHT))
                                         .min_h(px(CONFIGS_MEDIUM_INSPECTOR_HEIGHT))
+                                        .border_t_1()
+                                        .border_color(cx.theme().border.alpha(0.82))
+                                        .bg(cx.theme().background.alpha(0.78))
                                         .child(render_inspector_panel(
                                             runtime,
                                             workspace,
@@ -210,7 +278,8 @@ pub(super) fn render_configs_medium_layout(
                                             data,
                                             cx,
                                         )),
-                                ),
+                                )
+                                .into_any_element(),
                         ),
                     ),
                 ),
@@ -296,45 +365,30 @@ pub(super) fn render_configs_shell_header(
     let selected_name = data.title.clone();
 
     div()
-        .px_6()
-        .py_5()
-        .min_h(px(84.0))
+        .px_5()
+        .py_3()
         .border_b_1()
-        .border_color(cx.theme().border)
-        .bg(linear_gradient(
-            135.0,
-            linear_color_stop(cx.theme().background.alpha(0.98), 0.0),
-            linear_color_stop(cx.theme().muted.alpha(0.72), 1.0),
-        ))
+        .border_color(cx.theme().border.alpha(0.78))
         .child(
             h_flex()
-                .items_start()
+                .items_center()
                 .justify_between()
                 .flex_wrap()
                 .gap_4()
                 .child(
                     v_flex()
-                        .gap_1()
+                        .gap_0p5()
+                        .child(div().text_lg().font_semibold().child("Configs"))
                         .child(
                             div()
                                 .text_xs()
-                                .font_semibold()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("CONFIGURATION"),
-                        )
-                        .child(div().text_xl().font_semibold().child("Configs"))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(
-                                "Edit, validate, and manage tunnel profiles from one workspace.",
-                            ),
+                                .child("Edit, validate, and manage tunnel profiles."),
                         ),
                 )
                 .child(
                     h_flex()
-                        .items_start()
+                        .items_center()
                         .flex_wrap()
                         .gap_2()
                         .child(Tag::secondary().small().rounded_full().child(selected_name))
@@ -349,4 +403,31 @@ pub(super) fn render_configs_shell_header(
                         }),
                 ),
         )
+}
+
+fn configs_sidebar_shell(child: AnyElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .w_full()
+        .min_w(px(0.0))
+        .h_full()
+        .min_h(px(0.0))
+        .p_2()
+        .child(child)
+}
+
+fn configs_editor_shell(child: AnyElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .w_full()
+        .min_w(px(0.0))
+        .h_full()
+        .min_h(px(0.0))
+        .px_4()
+        .py_3()
+        .child(child)
 }

@@ -2,7 +2,6 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{Context, Stateful, *};
 use gpui_component::{
     button::{Button, ButtonVariants},
-    description_list::DescriptionList,
     h_flex,
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
@@ -29,6 +28,24 @@ pub(super) fn render_inspector_panel(
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     let compact = matches!(mode, ConfigsLayoutMode::Compact);
+    let framed = compact;
+    let validation_badge = match &data.draft.validation {
+        DraftValidationState::Idle => Tag::secondary().small().child("Idle"),
+        DraftValidationState::Valid { .. } => Tag::success().small().child("Valid"),
+        DraftValidationState::Invalid { .. } => Tag::danger().small().child("Invalid"),
+    };
+    let save_badge = if data.shared.draft_dirty {
+        Tag::warning().small().child("Dirty")
+    } else {
+        Tag::secondary().small().child("Saved")
+    };
+    let runtime_badge = if data.shared.needs_restart {
+        Tag::warning().small().child("Restart")
+    } else if data.is_running_draft {
+        Tag::success().small().child("Running")
+    } else {
+        Tag::secondary().small().child("Stored")
+    };
     let preview_card = {
         let addresses = data
             .shared
@@ -65,17 +82,14 @@ pub(super) fn render_inspector_panel(
         inspector_card(
             "Preview",
             "Interface and routing summary",
-            DescriptionList::new()
-                .small()
-                .columns(1)
-                .label_width(px(92.0))
-                .bordered(false)
-                .item("Source", source, 1)
-                .item("Local Address", addresses, 1)
-                .item("DNS", dns, 1)
-                .item("Route Table", route_table, 1)
-                .item("Allowed IPs", routes, 1)
-                .item("Peers", peers, 1),
+            v_flex()
+                .gap_1()
+                .child(inspector_summary_row("Source", source, cx))
+                .child(inspector_summary_row("Local", addresses, cx))
+                .child(inspector_summary_row("DNS", dns, cx))
+                .child(inspector_summary_row("Route Table", route_table, cx))
+                .child(inspector_summary_row("Allowed IPs", routes, cx))
+                .child(inspector_summary_row("Peers", peers, cx)),
             compact,
             cx,
         )
@@ -109,30 +123,35 @@ pub(super) fn render_inspector_panel(
         } else {
             "Stored config".to_string()
         };
-        let mut details = DescriptionList::new()
-            .small()
-            .columns(1)
-            .label_width(px(88.0))
-            .bordered(false)
-            .item("Validation", state.clone(), 1)
-            .item("Save", save_state, 1)
-            .item("Runtime", runtime_state, 1);
-        if let Some(line) = line {
-            details = details.item("Line", line.to_string(), 1);
-        }
+        let details = v_flex()
+            .gap_1()
+            .child(inspector_summary_row("Validation", state.clone(), cx))
+            .child(inspector_summary_row("Save", save_state, cx))
+            .child(inspector_summary_row("Runtime", runtime_state, cx))
+            .when_some(line, |this, line| {
+                this.child(inspector_summary_row("Line", line.to_string(), cx))
+            });
 
         inspector_card(
             "Diagnostics",
             "Validation detail and save state",
             v_flex()
                 .gap_2()
+                .child(details)
                 .child(
                     div()
-                        .text_sm()
+                        .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(message),
                 )
-                .child(details),
+                .when(data.shared.needs_restart, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Restart the running tunnel after saving to apply this draft."),
+                    )
+                }),
             compact,
             cx,
         )
@@ -142,7 +161,7 @@ pub(super) fn render_inspector_panel(
         "Activity",
         "Recent runtime notes",
         v_flex()
-            .gap_2()
+            .gap_1()
             .child(inspector_activity_row(
                 "Latest Status",
                 activity_value_or_fallback(&runtime.latest_status, "No recent status update."),
@@ -179,7 +198,7 @@ pub(super) fn render_inspector_panel(
         }
     } else {
         v_flex()
-            .gap_3()
+            .gap_0()
             .child(preview_card)
             .child(diagnostics_card)
             .child(activity_card)
@@ -189,57 +208,100 @@ pub(super) fn render_inspector_panel(
     div()
         .flex()
         .flex_col()
-        .gap_3()
+        .flex_1()
+        .w_full()
+        .min_w(px(0.0))
         .h_full()
         .min_h(px(0.0))
-        .rounded_xl()
-        .border_1()
-        .border_color(cx.theme().border.alpha(0.9))
-        .bg(if compact {
-            cx.theme().background
-        } else {
-            cx.theme().background.alpha(0.84)
+        .bg(cx
+            .theme()
+            .background
+            .alpha(if compact { 0.0 } else { 0.68 }))
+        .when(framed, |this| {
+            this.rounded_xl()
+                .border_1()
+                .border_color(cx.theme().border.alpha(0.9))
+                .bg(cx.theme().background)
         })
-        .child(
-            div()
-                .px_4()
-                .py_4()
-                .border_b_1()
-                .border_color(cx.theme().border.alpha(0.62))
-                .bg(if compact {
-                    linear_gradient(
-                        180.0,
-                        linear_color_stop(cx.theme().background, 0.0),
-                        linear_color_stop(cx.theme().group_box, 1.0),
-                    )
-                } else {
-                    linear_gradient(
-                        180.0,
-                        linear_color_stop(cx.theme().background.alpha(0.96), 0.0),
-                        linear_color_stop(cx.theme().group_box.alpha(0.84), 1.0),
-                    )
-                })
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(div().text_lg().font_semibold().child("Inspector"))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Preview parsed config, validation, and runtime notes."),
-                        ),
-                ),
-        )
+        .when(compact, |this| {
+            this.child(
+                div()
+                    .px(px(16.0))
+                    .py(px(16.0))
+                    .border_b_1()
+                    .border_color(cx.theme().border.alpha(0.62))
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_semibold()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("INSPECTOR"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_semibold()
+                                    .child("Config summary and runtime notes."),
+                            ),
+                    ),
+            )
+        })
+        .when(!compact, |this| {
+            this.child(
+                div()
+                    .px(px(14.0))
+                    .py(px(13.0))
+                    .border_b_1()
+                    .border_color(cx.theme().border.alpha(0.74))
+                    .bg(cx.theme().background.alpha(0.9))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_semibold()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("INSPECTOR"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_semibold()
+                                    .truncate()
+                                    .child(data.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .truncate()
+                                    .child(data.source_summary.clone()),
+                            )
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .flex_wrap()
+                                    .child(validation_badge)
+                                    .child(save_badge)
+                                    .child(runtime_badge),
+                            ),
+                    ),
+            )
+        })
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap_3()
                 .flex_1()
                 .min_h(px(0.0))
                 .overflow_y_scrollbar()
-                .p_3()
+                .px(px(if compact { 12.0 } else { 16.0 }))
+                .py(px(if compact { 12.0 } else { 14.0 }))
                 .when(compact, |this| this.child(inspector_tabs))
                 .child(inspector_body),
         )
@@ -503,58 +565,50 @@ pub(super) fn render_diagnostics_strip(
     div()
         .flex()
         .items_start()
+        .justify_between()
         .gap_3()
-        .px_0()
-        .py_0()
-        .rounded_lg()
+        .px(px(12.0))
+        .py(px(9.0))
+        .rounded_md()
         .border_1()
         .border_color(tone_border)
         .bg(tone_bg)
-        .child(div().w(px(3.0)).h_full().rounded_lg().bg(tone_bar))
         .child(
             h_flex()
                 .items_start()
-                .justify_between()
-                .gap_3()
+                .gap_2()
                 .flex_1()
-                .px_3()
-                .py_3()
                 .child(
-                    h_flex()
-                        .items_start()
-                        .gap_3()
-                        .child(
-                            div()
-                                .mt(px(1.0))
-                                .child(Icon::new(icon).size_4().text_color(tone_bar)),
-                        )
-                        .child(
-                            v_flex()
-                                .gap_1()
-                                .child(div().text_sm().font_semibold().child(title))
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(detail),
-                                ),
-                        ),
+                    div()
+                        .mt(px(1.0))
+                        .child(Icon::new(icon).size_4().text_color(tone_bar)),
                 )
                 .child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .flex_wrap()
-                        .when_some(line_tag, |this, line_tag| {
-                            this.child(Tag::danger().small().child(line_tag))
-                        })
-                        .when(data.shared.needs_restart, |this| {
-                            this.child(Tag::warning().small().child("Restart"))
-                        })
-                        .when(data.is_running_draft, |this| {
-                            this.child(Tag::success().small().child("Running"))
-                        }),
+                    v_flex()
+                        .gap_0p5()
+                        .child(div().text_xs().font_semibold().child(title))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(detail),
+                        ),
                 ),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .flex_wrap()
+                .when_some(line_tag, |this, line_tag| {
+                    this.child(Tag::danger().small().child(line_tag))
+                })
+                .when(data.shared.needs_restart, |this| {
+                    this.child(Tag::warning().small().child("Restart"))
+                })
+                .when(data.is_running_draft, |this| {
+                    this.child(Tag::success().small().child("Running"))
+                }),
         )
 }
 
@@ -687,27 +741,60 @@ fn inspector_card<T: IntoElement>(
         .flex()
         .flex_col()
         .gap_2()
-        .rounded_xl()
-        .border_1()
-        .border_color(cx.theme().border.alpha(0.56))
-        .bg(if compact {
-            cx.theme().group_box
-        } else {
-            cx.theme().group_box.alpha(0.84)
+        .when(compact, |this| {
+            this.rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border.alpha(0.48))
+                .bg(cx.theme().group_box)
+                .p_3()
         })
-        .p_3()
+        .when(!compact, |this| {
+            this.py_3()
+                .border_b_1()
+                .border_color(cx.theme().border.alpha(0.58))
+        })
         .child(
             v_flex()
-                .gap_1()
-                .child(div().text_sm().font_semibold().child(title))
+                .gap_0p5()
                 .child(
                     div()
                         .text_xs()
+                        .font_semibold()
                         .text_color(cx.theme().muted_foreground)
-                        .child(subtitle),
-                ),
+                        .child(title.to_uppercase()),
+                )
+                .when(compact, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(subtitle),
+                    )
+                }),
         )
         .child(body)
+}
+
+fn inspector_summary_row(
+    label: &'static str,
+    value: String,
+    cx: &mut Context<ConfigsWorkspace>,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .py(px(5.0))
+        .border_b_1()
+        .border_color(cx.theme().border.alpha(0.36))
+        .child(
+            div()
+                .text_xs()
+                .font_semibold()
+                .text_color(cx.theme().muted_foreground)
+                .child(label),
+        )
+        .child(div().text_xs().child(value))
 }
 
 fn inspector_activity_row(
@@ -718,13 +805,10 @@ fn inspector_activity_row(
     div()
         .flex()
         .flex_col()
-        .gap_1()
-        .rounded_lg()
-        .border_1()
-        .border_color(cx.theme().border.alpha(0.42))
-        .bg(cx.theme().background.alpha(0.72))
-        .px_3()
-        .py_2()
+        .gap_0p5()
+        .py(px(5.0))
+        .border_b_1()
+        .border_color(cx.theme().border.alpha(0.36))
         .child(
             div()
                 .text_xs()
@@ -732,7 +816,7 @@ fn inspector_activity_row(
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
-        .child(div().text_sm().child(value))
+        .child(div().text_xs().child(value))
 }
 
 fn activity_value_or_fallback(value: &str, fallback: &str) -> String {

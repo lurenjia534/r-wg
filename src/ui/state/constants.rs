@@ -12,7 +12,7 @@ pub(crate) const TRAFFIC_ROLLING_DAYS: usize = 60;
 pub(crate) const TRAFFIC_HOURLY_HISTORY: usize = 48;
 /// stop -> start 的最短冷却时间。
 pub(crate) const RESTART_COOLDOWN: Duration = Duration::from_millis(300);
-pub(crate) const DEFAULT_CONFIGS_LIBRARY_WIDTH: f32 = 300.0;
-pub(crate) const DEFAULT_CONFIGS_INSPECTOR_WIDTH: f32 = 332.0;
+pub(crate) const DEFAULT_CONFIGS_LIBRARY_WIDTH: f32 = 296.0;
+pub(crate) const DEFAULT_CONFIGS_INSPECTOR_WIDTH: f32 = 320.0;
 pub(crate) const DEFAULT_ROUTE_MAP_INVENTORY_WIDTH: f32 = 280.0;
 pub(crate) const DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH: f32 = 340.0;

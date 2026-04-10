@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{App, Stateful, Window, *};
 use gpui_component::{
-    button::Button,
+    button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
     scroll::Scrollbar,
@@ -34,6 +34,7 @@ pub(super) fn render_library_panel(
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     let compact = matches!(mode, ConfigsLayoutMode::Compact);
+    let framed = compact;
     let query = search_input.read(cx).value().trim().to_lowercase();
     let total_count = rows.len();
     let filtered_indices = Arc::new(
@@ -86,30 +87,47 @@ pub(super) fn render_library_panel(
     div()
         .flex()
         .flex_col()
+        .flex_1()
+        .w_full()
+        .min_w(px(0.0))
         .h_full()
         .min_h(px(0.0))
-        .rounded_lg()
-        .border_1()
-        .border_color(cx.theme().border)
-        .bg(if compact {
-            cx.theme().background
-        } else {
-            cx.theme().background.alpha(0.76)
+        .when(framed, |this| {
+            this.rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
         })
         .child(
             div()
-                .px_4()
-                .py_4()
+                .px(px(if compact { 16.0 } else { 20.0 }))
+                .py(px(if compact { 16.0 } else { 18.0 }))
                 .border_b_1()
-                .border_color(cx.theme().border)
+                .border_color(cx.theme().border.alpha(if compact { 1.0 } else { 0.88 }))
                 .child(
                     v_flex()
-                        .gap_2()
+                        .gap(px(if compact { 10.0 } else { 10.0 }))
                         .child(
                             h_flex()
-                                .items_center()
+                                .items_start()
                                 .justify_between()
-                                .child(div().text_lg().font_semibold().child("Library"))
+                                .child(
+                                    v_flex()
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_semibold()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child("LIBRARY"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_base()
+                                                .font_semibold()
+                                                .child("Tunnel configs"),
+                                        ),
+                                )
                                 .child(Tag::secondary().small().child(if query.is_empty() {
                                     format!("{count} configs")
                                 } else {
@@ -117,19 +135,22 @@ pub(super) fn render_library_panel(
                                 })),
                         )
                         .child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Saved and imported tunnel profiles."),
-                        )
-                        .child(
                             h_flex()
                                 .items_center()
                                 .gap_2()
-                                .px_2()
-                                .py_1()
+                                .px(px(10.0))
+                                .py(px(7.0))
                                 .rounded_md()
-                                .bg(cx.theme().secondary.alpha(0.88))
+                                .border_1()
+                                .border_color(cx.theme().border.alpha(if compact {
+                                    0.52
+                                } else {
+                                    0.42
+                                }))
+                                .bg(cx
+                                    .theme()
+                                    .background
+                                    .alpha(if compact { 0.92 } else { 0.86 }))
                                 .child(Icon::new(IconName::Search).size_4())
                                 .child(
                                     Input::new(search_input)
@@ -141,13 +162,13 @@ pub(super) fn render_library_panel(
                         .child(
                             h_flex()
                                 .items_center()
-                                .gap_2()
-                                .flex_wrap()
+                                .gap_1()
+                                .w_full()
                                 .child(
                                     Button::new("cfg-new")
                                         .icon(Icon::new(IconName::Plus).size_3())
                                         .label("New")
-                                        .outline()
+                                        .primary()
                                         .small()
                                         .compact()
                                         .disabled(data.is_busy)
@@ -174,7 +195,7 @@ pub(super) fn render_library_panel(
                                     Button::new("cfg-library-import")
                                         .icon(Icon::new(IconName::FolderOpen).size_3())
                                         .label("Import")
-                                        .outline()
+                                        .ghost()
                                         .small()
                                         .compact()
                                         .disabled(data.is_busy)
@@ -191,7 +212,7 @@ pub(super) fn render_library_panel(
                                     Button::new("cfg-library-paste")
                                         .icon(Icon::new(IconName::Plus).size_3())
                                         .label("Paste")
-                                        .outline()
+                                        .ghost()
                                         .small()
                                         .compact()
                                         .disabled(data.is_busy)
@@ -222,10 +243,18 @@ pub(super) fn render_library_panel(
                                     div()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child("Working on an unsaved draft."),
+                                        .child("Unsaved draft in editor."),
                                 )
                             },
-                        ),
+                        )
+                        .when(query.is_empty() && !rows.is_empty(), |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("All profiles"),
+                            )
+                        }),
                 ),
         )
         .child(
@@ -234,7 +263,6 @@ pub(super) fn render_library_panel(
                 .flex_col()
                 .flex_1()
                 .min_h(px(0.0))
-                .rounded_md()
                 .overflow_hidden()
                 .child(if rows.is_empty() {
                     div()
@@ -256,8 +284,8 @@ pub(super) fn render_library_panel(
                         .flex_col()
                         .flex_1()
                         .min_h(px(0.0))
-                        .px_2()
-                        .py_1()
+                        .px(px(if compact { 8.0 } else { 10.0 }))
+                        .py(px(if compact { 6.0 } else { 10.0 }))
                         .child(list)
                         .child(Scrollbar::vertical(&scroll_handle))
                         .into_any_element()
@@ -276,24 +304,34 @@ fn render_library_row(
     let is_selected = selected_id == Some(row.id);
 
     let bg = if is_selected {
-        cx.theme().list_active
+        cx.theme().sidebar_accent.alpha(0.96)
     } else {
         cx.theme().background.alpha(0.0)
     };
     let border = if is_selected {
-        cx.theme().list_active_border
+        cx.theme().sidebar_primary.alpha(0.36)
     } else {
         cx.theme().background.alpha(0.0)
     };
     let accent = if is_selected {
-        cx.theme().list_active_border
+        cx.theme().sidebar_primary
     } else {
         cx.theme().background.alpha(0.0)
     };
     let hover_bg = if is_selected {
-        cx.theme().list_active
+        cx.theme().sidebar_accent.opacity(0.9)
     } else {
         cx.theme().list_hover
+    };
+    let title_color = if is_selected {
+        cx.theme().sidebar_accent_foreground
+    } else {
+        cx.theme().foreground
+    };
+    let subtitle_color = if is_selected {
+        cx.theme().sidebar_accent_foreground.opacity(0.82)
+    } else {
+        cx.theme().muted_foreground
     };
 
     let config_id = row.id;
@@ -302,17 +340,24 @@ fn render_library_row(
         .id(("configs-library-row", config_id))
         .flex()
         .items_start()
-        .gap_3()
-        .px_3()
-        .py_2()
+        .gap_2()
+        .px(px(10.0))
+        .py(px(7.0))
         .h(px(CONFIGS_LIBRARY_ROW_HEIGHT))
-        .rounded_lg()
+        .rounded(px(11.0))
         .border_1()
         .border_color(border)
         .bg(bg)
         .cursor_pointer()
         .hover(move |this| this.bg(hover_bg))
-        .child(div().w(px(3.0)).h_full().rounded_full().bg(accent))
+        .child(
+            div()
+                .w(px(2.0))
+                .h_4()
+                .mt(px(10.0))
+                .rounded_full()
+                .bg(accent),
+        )
         .child(
             div()
                 .flex()
@@ -329,6 +374,7 @@ fn render_library_row(
                             div()
                                 .text_sm()
                                 .font_semibold()
+                                .text_color(title_color)
                                 .truncate()
                                 .child(row.name.clone()),
                         )
@@ -337,25 +383,25 @@ fn render_library_row(
                                 .items_center()
                                 .gap_1()
                                 .when(row.is_running, |this| {
-                                    this.child(Tag::success().small().child("Running"))
+                                    this.child(Tag::success().xsmall().child("Running"))
                                 })
                                 .when(row.is_dirty, |this| {
-                                    this.child(Tag::warning().small().child("Dirty"))
+                                    this.child(Tag::warning().xsmall().child("Dirty"))
                                 }),
                         ),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(cx.theme().muted_foreground)
+                        .text_color(subtitle_color)
                         .truncate()
                         .child(row.subtitle.clone()),
                 )
-                .when(is_selected, |this| {
+                .when(is_selected || compact, |this| {
                     this.child(
                         h_flex()
                             .items_center()
-                            .gap_2()
+                            .gap_1()
                             .flex_wrap()
                             .child(source_tag(&row.source))
                             .when(row.endpoint_family != EndpointFamily::Unknown, |this| {

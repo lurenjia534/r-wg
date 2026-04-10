@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{Context, Render, Window, *};
-use gpui_component::{input::InputState, ActiveTheme as _};
+use gpui_component::input::InputState;
 
 use crate::ui::features::configs::state::{ConfigsLibraryRow, ConfigsWorkspace};
 use crate::ui::state::{ConfigInspectorTab, ConfigsPrimaryPane, WgApp};
@@ -16,7 +16,7 @@ use super::ConfigsViewData;
 
 pub(crate) const CONFIGS_DESKTOP_BREAKPOINT: f32 = 1420.0;
 pub(crate) const CONFIGS_COMPACT_BREAKPOINT: f32 = 1040.0;
-pub(crate) const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 76.0;
+pub(crate) const CONFIGS_LIBRARY_ROW_HEIGHT: f32 = 62.0;
 pub(crate) const CONFIGS_LIBRARY_SCROLL_STATE_ID: &str = "configs-library-scroll";
 pub(crate) const CONFIGS_MEDIUM_INSPECTOR_HEIGHT: f32 = 328.0;
 
@@ -190,16 +190,22 @@ fn render_configs_page(
         ),
     };
 
-    div()
+    let page = div()
         .flex()
         .flex_col()
         .flex_1()
         .min_h(px(0.0))
-        .rounded_lg()
-        .border_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().tiles)
-        .overflow_hidden()
-        .child(render_configs_shell_header(data, cx))
-        .child(workspace)
+        .child(workspace);
+
+    if matches!(mode, ConfigsLayoutMode::Compact) {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(render_configs_shell_header(data, cx))
+            .child(page)
+    } else {
+        page
+    }
 }
