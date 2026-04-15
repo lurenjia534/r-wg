@@ -3,17 +3,13 @@ use std::io::{self, BufReader};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Instant;
 
 use super::super::engine::Engine as LocalEngine;
 use super::super::ipc::{read_json_line, write_json_line, BackendCommand, BackendReply};
 use super::super::ipc_server::dispatch_command;
-use super::super::EngineStatus;
 use super::auth::{is_peer_allowed, peer_credentials};
 use super::fs_ops::{configure_socket_permissions, lookup_group_gid, remove_stale_socket};
-use super::install_model::{
-    ServiceOptions, SERVICE_IDLE_TIMEOUT, SERVICE_IO_TIMEOUT, SERVICE_POLL_INTERVAL,
-};
+use super::install_model::{ServiceOptions, SERVICE_IO_TIMEOUT, SERVICE_POLL_INTERVAL};
 use super::remote_error;
 use super::systemd::inherited_listener;
 
@@ -52,7 +48,6 @@ pub(super) fn run_service(options: ServiceOptions) -> Result<(), super::super::E
         .map_err(|err| remote_error(format!("startup repair failed: {err}")))?;
 
     let engine = LocalEngine::new();
-    let mut last_activity = Instant::now();
 
     loop {
         if SERVICE_TERMINATE_REQUESTED.load(Ordering::Relaxed) {
@@ -60,7 +55,6 @@ pub(super) fn run_service(options: ServiceOptions) -> Result<(), super::super::E
         }
         match listener.accept() {
             Ok((stream, _)) => {
-                last_activity = Instant::now();
                 let engine = engine.clone();
                 if let Err(err) = thread::Builder::new()
                     .name("wg-linux-service-client".to_string())
@@ -76,10 +70,6 @@ pub(super) fn run_service(options: ServiceOptions) -> Result<(), super::super::E
                 }
             }
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                let running = matches!(engine.status(), Ok(EngineStatus::Running));
-                if !running && last_activity.elapsed() >= SERVICE_IDLE_TIMEOUT {
-                    break Ok(());
-                }
                 thread::sleep(SERVICE_POLL_INTERVAL);
             }
             Err(err) => {

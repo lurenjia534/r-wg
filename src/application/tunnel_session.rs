@@ -16,7 +16,10 @@
 
 use std::time::Duration;
 
-use crate::backend::wg::{Engine, EngineError, EngineStats, EngineStatus, StartRequest};
+use crate::backend::wg::{
+    Engine, EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, QuantumFailureKind,
+    QuantumMode, StartRequest,
+};
 use crate::core::dns::DnsSelection;
 use crate::core::route_plan::RouteApplyReport;
 
@@ -46,11 +49,21 @@ impl TunnelSessionService {
             request.tun_name,
             request.config_text,
             request.dns_selection,
+            request.quantum_mode,
         ));
-        let apply_report = self.engine.apply_report().ok().flatten();
+        let runtime_snapshot = self
+            .engine
+            .runtime_snapshot()
+            .ok()
+            .map(map_runtime_snapshot);
+        let apply_report = runtime_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.apply_report.clone())
+            .or_else(|| self.engine.apply_report().ok().flatten());
         StartTunnelOutcome {
             result,
             apply_report,
+            runtime_snapshot,
         }
     }
 
@@ -78,10 +91,7 @@ impl TunnelSessionService {
     ///
     /// 包含当前状态和路由应用报告，用于 UI 恢复显示。
     pub fn runtime_snapshot(&self) -> Result<TunnelRuntimeSnapshot, EngineError> {
-        Ok(TunnelRuntimeSnapshot {
-            status: self.engine.status()?,
-            apply_report: self.engine.apply_report().ok().flatten(),
-        })
+        self.engine.runtime_snapshot().map(map_runtime_snapshot)
     }
 }
 
@@ -94,6 +104,8 @@ pub struct StartTunnelRequest {
     pub config_text: String,
     /// DNS 选择配置
     pub dns_selection: DnsSelection,
+    /// 量子抗性隧道升级模式
+    pub quantum_mode: QuantumMode,
 }
 
 impl StartTunnelRequest {
@@ -102,11 +114,13 @@ impl StartTunnelRequest {
         tun_name: impl Into<String>,
         config_text: impl Into<String>,
         dns_selection: DnsSelection,
+        quantum_mode: QuantumMode,
     ) -> Self {
         Self {
             tun_name: tun_name.into(),
             config_text: config_text.into(),
             dns_selection,
+            quantum_mode,
         }
     }
 }
@@ -117,16 +131,32 @@ pub struct StartTunnelOutcome {
     pub result: Result<(), EngineError>,
     /// 路由应用报告
     pub apply_report: Option<RouteApplyReport>,
+    /// 运行态快照
+    pub runtime_snapshot: Option<TunnelRuntimeSnapshot>,
 }
 
 /// 运行时快照
 ///
 /// 包含恢复 UI 显示所需的最小状态信息。
+#[derive(Debug, Clone)]
 pub struct TunnelRuntimeSnapshot {
     /// 当前运行状态
     pub status: EngineStatus,
     /// 最近一次路由应用报告
     pub apply_report: Option<RouteApplyReport>,
+    /// 当前会话是否已经切换到量子保护态
+    pub quantum_protected: bool,
+    /// 最近一次量子升级失败分类
+    pub last_quantum_failure: Option<QuantumFailureKind>,
+}
+
+fn map_runtime_snapshot(snapshot: EngineRuntimeSnapshot) -> TunnelRuntimeSnapshot {
+    TunnelRuntimeSnapshot {
+        status: snapshot.status,
+        apply_report: snapshot.apply_report,
+        quantum_protected: snapshot.quantum_protected,
+        last_quantum_failure: snapshot.last_quantum_failure,
+    }
 }
 
 /// 切换隧道的输入参数
@@ -256,6 +286,24 @@ pub fn pending_start_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::wg::{EngineRuntimeSnapshot, EngineStatus, QuantumFailureKind};
+
+    #[test]
+    fn runtime_snapshot_mapping_preserves_quantum_state() {
+        let snapshot = map_runtime_snapshot(EngineRuntimeSnapshot {
+            status: EngineStatus::Running,
+            apply_report: None,
+            quantum_protected: true,
+            last_quantum_failure: Some(QuantumFailureKind::Timeout),
+        });
+
+        assert!(matches!(snapshot.status, EngineStatus::Running));
+        assert!(snapshot.quantum_protected);
+        assert_eq!(
+            snapshot.last_quantum_failure,
+            Some(QuantumFailureKind::Timeout)
+        );
+    }
 
     #[test]
     fn busy_running_queues_selected_config() {

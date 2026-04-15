@@ -44,6 +44,16 @@ fn connect_error(socket_path: &Path, err: io::Error) -> EngineError {
     if is_access_denied_error(&err) {
         return EngineError::AccessDenied;
     }
+    if matches!(
+        err.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    ) || matches!(err.raw_os_error(), Some(libc::EAGAIN))
+    {
+        return remote_error(format!(
+            "timed out waiting for Linux privileged backend reply {}: {err}",
+            socket_path.display()
+        ));
+    }
     if is_missing_backend_error(&err) {
         return remote_error(format!(
             "Linux privileged backend is not installed or not running ({})",

@@ -3,6 +3,7 @@ use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::setting::{SettingField, SettingItem};
 use gpui_component::switch::Switch;
 use gpui_component::{h_flex, v_flex, ActiveTheme as _, Selectable, Sizable, Size};
+use r_wg::backend::wg::QuantumMode;
 
 use crate::ui::features::session::password_gate;
 use crate::ui::state::{ConfigInspectorTab, TrafficPeriod, WgApp};
@@ -134,6 +135,29 @@ pub(super) fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {
         SettingField::render(move |_, _window, cx| render_dns_preset_field(app.clone(), cx)),
     )
     .description("Only used when DNS mode fills or overrides resolver records.")
+}
+
+pub(super) fn quantum_mode_item(app: Entity<WgApp>) -> SettingItem {
+    let get_handle = app.clone();
+    let set_handle = app;
+
+    SettingItem::new(
+        "Quantum Tunnel Upgrade",
+        SettingField::switch(
+            move |cx| get_handle.read(cx).ui_prefs.quantum_mode == QuantumMode::On,
+            move |value, cx| {
+                let next = if value {
+                    QuantumMode::On
+                } else {
+                    QuantumMode::Off
+                };
+                set_handle.update(cx, |app, cx| {
+                    app.set_quantum_mode_pref(next, cx);
+                });
+            },
+        ),
+    )
+    .description("Reserved for the upcoming Mullvad-compatible post-connect quantum upgrade path.")
 }
 
 pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {

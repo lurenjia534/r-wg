@@ -1,6 +1,7 @@
 use super::engine::Engine as LocalEngine;
 use super::ipc::{
-    error_reply, option_reply, unit_reply, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
+    error_reply, option_reply, runtime_snapshot_reply, unit_reply, BackendCommand, BackendReply,
+    IPC_PROTOCOL_VERSION,
 };
 
 pub(crate) fn dispatch_command(engine: &LocalEngine, command: BackendCommand) -> BackendReply {
@@ -20,5 +21,6 @@ pub(crate) fn dispatch_command(engine: &LocalEngine, command: BackendCommand) ->
             Err(err) => error_reply(err),
         },
         BackendCommand::ApplyReport => option_reply(engine.apply_report()),
+        BackendCommand::RuntimeSnapshot => runtime_snapshot_reply(engine.runtime_snapshot()),
     }
 }

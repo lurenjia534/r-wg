@@ -8,7 +8,7 @@ use super::super::ipc::{
     read_json_line, write_json_line, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
 };
 use super::super::ipc_client::{self, BackendTransport};
-use super::super::{EngineError, EngineStats, EngineStatus, StartRequest};
+use super::super::{EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, StartRequest};
 use super::auth::socket_access_status;
 use super::install_model::{
     control_socket_path, installation_exists, PrivilegedServiceStatus, SERVICE_IO_TIMEOUT,
@@ -102,6 +102,10 @@ impl Engine {
     ) -> Result<Option<crate::core::route_plan::RouteApplyReport>, EngineError> {
         self.inner.apply_report()
     }
+
+    pub fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
+        self.inner.runtime_snapshot()
+    }
 }
 
 impl RemoteEngine {
@@ -133,6 +137,10 @@ impl RemoteEngine {
         ipc_client::apply_report(self, EngineError::NotRunning)
     }
 
+    pub(super) fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
+        ipc_client::runtime_snapshot(self, EngineError::NotRunning)
+    }
+
     pub(super) fn send_command_raw(
         &self,
         command: BackendCommand,
@@ -161,5 +169,12 @@ impl BackendTransport for RemoteEngine {
 
     fn is_access_denied_error(&self, err: &io::Error) -> bool {
         is_access_denied_error(err)
+    }
+
+    fn is_timeout_error(&self, err: &io::Error) -> bool {
+        matches!(
+            err.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ) || matches!(err.raw_os_error(), Some(libc::EAGAIN))
     }
 }

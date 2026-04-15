@@ -28,13 +28,20 @@ pub(crate) fn sync_engine_status(
             }
             this.runtime.running = true;
             this.runtime.busy = false;
-            this.runtime.set_last_apply_report(snapshot.apply_report);
+            this.runtime
+                .set_last_apply_report(snapshot.apply_report.clone());
+            this.runtime
+                .set_quantum_status(snapshot.quantum_protected, snapshot.last_quantum_failure);
             // helper 恢复场景下不一定拿得到原始配置名，先放通用占位避免 UI 空白。
             if this.runtime.running_name.is_none() {
                 this.runtime.running_name = Some("Tunnel".to_string());
             }
             // 这里只恢复运行态与统计轮询，不推断具体配置来源。
-            this.set_status("Tunnel running");
+            if snapshot.quantum_protected {
+                this.set_status("Tunnel running (quantum protected)");
+            } else {
+                this.set_status("Tunnel running");
+            }
             this.stats.reset_for_start();
             this.start_stats_polling(cx);
             cx.notify();

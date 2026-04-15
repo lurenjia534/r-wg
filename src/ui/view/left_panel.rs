@@ -93,6 +93,7 @@ struct LeftPanelCacheKey {
     sidebar_collapsed: bool,
     runtime_running: bool,
     runtime_busy: bool,
+    quantum_protected: bool,
     running_name: Option<String>,
     draft_dirty: bool,
 }
@@ -101,6 +102,7 @@ struct LeftPanelCacheKey {
 struct LeftPanelSnapshot {
     sidebar_collapsed: bool,
     runtime_running: bool,
+    quantum_protected: bool,
     status_text: SharedString,
     primary: Vec<NavEntry>,
     network: Vec<NavEntry>,
@@ -280,13 +282,18 @@ pub(crate) fn sync_left_panel(
         sidebar_collapsed: app.ui_session.sidebar_collapsed,
         runtime_running: app.runtime.running,
         runtime_busy: app.runtime.busy,
+        quantum_protected: app.runtime.quantum_protected,
         running_name: app.runtime.running_name.clone(),
         draft_dirty,
     };
     let status_text: SharedString = if app.runtime.busy {
         "Updating".into()
     } else if let Some(name) = app.runtime.running_name.as_ref() {
-        name.clone().into()
+        if app.runtime.quantum_protected {
+            format!("{name} - Quantum").into()
+        } else {
+            name.clone().into()
+        }
     } else {
         "Ready".into()
     };
@@ -295,6 +302,7 @@ pub(crate) fn sync_left_panel(
     let next_snapshot = LeftPanelSnapshot {
         sidebar_collapsed: app.ui_session.sidebar_collapsed,
         runtime_running,
+        quantum_protected: app.runtime.quantum_protected,
         status_text,
         primary: primary_nav_entries(active, draft_dirty, runtime_running),
         network: insight_nav_entries(active),
@@ -453,7 +461,15 @@ fn render_sidebar_header(
                                                     .text_color(cx.theme().muted_foreground)
                                                     .truncate()
                                                     .child(snapshot.status_text.clone()),
-                                            ),
+                                            )
+                                            .when(snapshot.quantum_protected, |this| {
+                                                this.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(cx.theme().sidebar_primary)
+                                                        .child("Protected"),
+                                                )
+                                            }),
                                     ),
                             )
                         }),

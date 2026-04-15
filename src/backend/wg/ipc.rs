@@ -11,8 +11,10 @@
 //! # 协议版本历史
 //!
 //! - v1: 初始版本
-//! - v2: 添加 ApplyReport 支持
-//! - v3: 当前版本
+//! - v2: 初始 Windows/Linux helper 兼容版本
+//! - v3: 添加 ApplyReport 支持
+//! - v4: StartRequest 新增 quantum_mode
+//! - v5: RuntimeSnapshot 新增量子状态与失败分类
 //!
 //! # 消息格式
 //!
@@ -32,13 +34,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::route_plan::RouteApplyReport;
 
-use super::engine::{EngineError, EngineStats, EngineStatus, StartRequest};
+use super::engine::{EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, StartRequest};
 
 /// 当前 IPC 协议版本
 ///
 /// 当 UI 和服务端的版本不匹配时，会返回 VersionMismatch 错误。
 /// 升级时需要确保双方都支持相同的版本。
-pub const IPC_PROTOCOL_VERSION: u32 = 3;
+pub const IPC_PROTOCOL_VERSION: u32 = 5;
 
 /// UI -> 特权后端的命令枚举
 ///
@@ -60,6 +62,8 @@ pub enum BackendCommand {
     Stats,
     /// 查询最近一次网络应用报告
     ApplyReport,
+    /// 查询完整运行时快照
+    RuntimeSnapshot,
 }
 
 /// 特权后端 -> UI 的响应枚举
@@ -78,6 +82,8 @@ pub enum BackendReply {
     Stats { stats: EngineStats },
     /// 路由报告响应：返回最近一次路由应用的结果
     ApplyReport { report: Option<RouteApplyReport> },
+    /// 运行时快照响应：返回包含量子状态的完整运行态
+    RuntimeSnapshot { snapshot: EngineRuntimeSnapshot },
     /// 执行失败响应：包含错误分类和可读消息
     Error {
         kind: BackendErrorKind,
@@ -119,6 +125,13 @@ pub fn unit_reply(result: Result<(), EngineError>) -> BackendReply {
 pub fn option_reply(result: Result<Option<RouteApplyReport>, EngineError>) -> BackendReply {
     match result {
         Ok(report) => BackendReply::ApplyReport { report },
+        Err(err) => error_reply(err),
+    }
+}
+
+pub fn runtime_snapshot_reply(result: Result<EngineRuntimeSnapshot, EngineError>) -> BackendReply {
+    match result {
+        Ok(snapshot) => BackendReply::RuntimeSnapshot { snapshot },
         Err(err) => error_reply(err),
     }
 }

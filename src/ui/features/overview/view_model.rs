@@ -23,6 +23,7 @@ pub(crate) struct OverviewData {
 
 pub(crate) struct OverviewRuntimeData {
     pub(crate) is_running: bool,
+    pub(crate) quantum_protected: bool,
     pub(crate) running_name_text: String,
     pub(crate) last_updated_text: String,
     pub(crate) uptime_text: String,
@@ -64,6 +65,7 @@ impl OverviewData {
         Self {
             runtime: OverviewRuntimeData {
                 is_running: app.runtime.running,
+                quantum_protected: app.runtime.quantum_protected,
                 running_name_text: app
                     .runtime
                     .running_name

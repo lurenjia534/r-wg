@@ -2,6 +2,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use gpui_component::theme::ThemeMode;
+use r_wg::backend::wg::QuantumMode;
 use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +60,8 @@ pub(crate) struct PersistedState {
     pub(crate) dns_mode: Option<DnsMode>,
     #[serde(default)]
     pub(crate) dns_preset: Option<DnsPreset>,
+    #[serde(default)]
+    pub(crate) quantum_mode: Option<QuantumMode>,
     #[serde(default)]
     pub(crate) traffic_global_days: Vec<PersistedTrafficDayBucket>,
     #[serde(default)]
@@ -234,6 +237,7 @@ mod tests {
             proxies_view_mode: Some(ProxiesViewMode::List),
             dns_mode: Some(DnsMode::FollowConfig),
             dns_preset: Some(DnsPreset::CloudflareStandard),
+            quantum_mode: Some(QuantumMode::On),
             traffic_global_days: vec![PersistedTrafficDayBucket {
                 day_key: 20513,
                 rx_bytes: 400,
@@ -308,6 +312,7 @@ mod tests {
         assert_eq!(loaded.proxies_view_mode, state.proxies_view_mode);
         assert_eq!(loaded.dns_mode, state.dns_mode);
         assert_eq!(loaded.dns_preset, state.dns_preset);
+        assert_eq!(loaded.quantum_mode, state.quantum_mode);
         assert_eq!(loaded.traffic_global_days.len(), 1);
         assert_eq!(loaded.traffic_global_days[0].rx_bytes, 400);
         assert_eq!(loaded.traffic_global_days[0].tx_bytes, 624);
@@ -346,6 +351,7 @@ mod tests {
 
         assert_eq!(state.version, STATE_VERSION);
         assert_eq!(state.require_connect_password, None);
+        assert_eq!(state.quantum_mode, None);
         assert!(state.configs.is_empty());
     }
 }

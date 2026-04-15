@@ -8,6 +8,8 @@ use gpui::{Entity, SharedString};
 use gpui_component::input::InputState;
 use gpui_component::theme::ThemeMode;
 use r_wg::backend::wg::PeerStats;
+use r_wg::backend::wg::QuantumFailureKind;
+use r_wg::backend::wg::QuantumMode;
 use r_wg::core::route_plan::RouteApplyReport;
 use r_wg::dns::{DnsMode, DnsPreset};
 
@@ -213,6 +215,8 @@ pub(crate) struct RuntimeState {
     pub(crate) last_stop_at: Option<Instant>,
     pub(crate) running_name: Option<String>,
     pub(crate) running_id: Option<u64>,
+    pub(crate) quantum_protected: bool,
+    pub(crate) last_quantum_failure: Option<QuantumFailureKind>,
     pub(crate) last_apply_report: Option<RouteApplyReport>,
     pub(crate) runtime_revision: u64,
 }
@@ -245,6 +249,8 @@ impl RuntimeState {
             last_stop_at: None,
             running_name: None,
             running_id: None,
+            quantum_protected: false,
+            last_quantum_failure: None,
             last_apply_report: None,
             runtime_revision: 0,
         }
@@ -278,6 +284,8 @@ impl RuntimeState {
         self.running = false;
         self.running_name = None;
         self.running_id = None;
+        self.quantum_protected = false;
+        self.last_quantum_failure = None;
         self.clear_last_apply_report();
         self.last_stop_at = Some(Instant::now());
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
@@ -291,6 +299,8 @@ impl RuntimeState {
 
     pub(crate) fn begin_start(&mut self) {
         self.busy = true;
+        self.quantum_protected = false;
+        self.last_quantum_failure = None;
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
@@ -303,6 +313,16 @@ impl RuntimeState {
         self.running = true;
         self.running_name = Some(selected.name.clone());
         self.running_id = Some(selected.id);
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
+    }
+
+    pub(crate) fn set_quantum_status(
+        &mut self,
+        protected: bool,
+        failure: Option<QuantumFailureKind>,
+    ) {
+        self.quantum_protected = protected;
+        self.last_quantum_failure = failure;
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
@@ -438,6 +458,7 @@ pub(crate) struct UiPrefsState {
     pub(crate) theme_dark_name: Option<SharedString>,
     pub(crate) dns_mode: DnsMode,
     pub(crate) dns_preset: DnsPreset,
+    pub(crate) quantum_mode: QuantumMode,
 }
 
 impl UiPrefsState {
@@ -467,6 +488,7 @@ impl UiPrefsState {
             theme_dark_name,
             dns_mode: DnsMode::FollowConfig,
             dns_preset: DnsPreset::CloudflareStandard,
+            quantum_mode: QuantumMode::Off,
         }
     }
 

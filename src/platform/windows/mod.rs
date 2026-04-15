@@ -12,6 +12,7 @@ mod dns;
 mod error;
 mod firewall;
 mod metrics;
+mod mtu;
 mod nrpt;
 mod recovery;
 mod report;
@@ -25,6 +26,7 @@ use crate::core::config::WireGuardConfig;
 use crate::core::route_plan::{RouteApplyReport, RoutePlan};
 
 pub use error::NetworkError;
+pub(crate) use mtu::lower_tunnel_ipv4_mtu;
 pub use report::AppliedNetworkState;
 
 use recovery::load_persisted_apply_report as load_persisted_apply_report_from_disk;

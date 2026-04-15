@@ -30,6 +30,18 @@ pub fn network_configured() {
     log_info!("engine", "network configured");
 }
 
+pub fn quantum_upgrade_requested() {
+    log_info!("engine", "quantum upgrade requested");
+}
+
+pub fn quantum_upgrade_completed() {
+    log_info!("engine", "quantum upgrade completed");
+}
+
+pub fn quantum_upgrade_failed(message: &str) {
+    log_info!("engine", "quantum upgrade failed: {}", message);
+}
+
 pub fn stop_requested() {
     log_info!("engine", "stop requested");
 }

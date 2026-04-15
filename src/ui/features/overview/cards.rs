@@ -1,3 +1,4 @@
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{h_flex, tag::Tag, v_flex, ActiveTheme as _, IconName, Sizable as _};
 
@@ -50,7 +51,17 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                         v_flex()
                             .gap_1()
                             .min_w(px(220.0))
-                            .child(status_tag)
+                            .child(h_flex().items_center().gap_2().child(status_tag).when(
+                                runtime.is_running && runtime.quantum_protected,
+                                |this| {
+                                    this.child(
+                                        Tag::secondary()
+                                            .rounded_full()
+                                            .small()
+                                            .child("Quantum protected"),
+                                    )
+                                },
+                            ))
                             .child(
                                 div()
                                     .text_xl()

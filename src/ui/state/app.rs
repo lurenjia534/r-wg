@@ -24,6 +24,7 @@ use gpui_component::notification::Notification;
 use gpui_component::theme::ThemeMode;
 use gpui_component::WindowExt;
 use r_wg::application::{BackendAdminService, ConfigLibraryService, TunnelSessionService};
+use r_wg::backend::wg::QuantumMode;
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use crate::ui::features::themes::{self, AppearancePolicy};
@@ -302,6 +303,18 @@ impl WgApp {
     pub(crate) fn set_dns_preset_pref(&mut self, value: DnsPreset, cx: &mut gpui::Context<Self>) {
         if self.ui_prefs.dns_preset != value {
             self.ui_prefs.dns_preset = value;
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_quantum_mode_pref(
+        &mut self,
+        value: QuantumMode,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.quantum_mode != value {
+            self.ui_prefs.quantum_mode = value;
             self.persist_state_async(cx);
         }
         cx.notify();

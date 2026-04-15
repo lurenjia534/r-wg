@@ -4,7 +4,7 @@ use super::ipc::{
     map_backend_error, protocol_mismatch, unexpected_reply, BackendCommand, BackendReply,
     IPC_PROTOCOL_VERSION,
 };
-use super::{EngineError, EngineStats, EngineStatus, StartRequest};
+use super::{EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, StartRequest};
 use crate::core::route_plan::RouteApplyReport;
 
 pub(crate) trait BackendTransport {
@@ -12,6 +12,7 @@ pub(crate) trait BackendTransport {
     fn connect_error(&self, err: io::Error) -> EngineError;
     fn is_missing_backend_error(&self, err: &io::Error) -> bool;
     fn is_access_denied_error(&self, err: &io::Error) -> bool;
+    fn is_timeout_error(&self, err: &io::Error) -> bool;
 }
 
 pub(crate) fn info<T: BackendTransport>(transport: &T) -> Result<u32, EngineError> {
@@ -32,9 +33,15 @@ pub(crate) fn start<T: BackendTransport>(
     request: StartRequest,
 ) -> Result<(), EngineError> {
     check_protocol(transport)?;
-    let reply = transport
-        .send_command_raw(BackendCommand::Start { request })
-        .map_err(|err| transport.connect_error(err))?;
+    let reply = match transport.send_command_raw(BackendCommand::Start { request }) {
+        Ok(reply) => reply,
+        Err(err) => {
+            if transport.is_timeout_error(&err) {
+                attempt_start_cleanup(transport);
+            }
+            return Err(map_transport_error(transport, err, None));
+        }
+    };
     expect_unit(reply)
 }
 
@@ -88,6 +95,19 @@ pub(crate) fn apply_report<T: BackendTransport>(
     }
 }
 
+pub(crate) fn runtime_snapshot<T: BackendTransport>(
+    transport: &T,
+    missing_error: EngineError,
+) -> Result<EngineRuntimeSnapshot, EngineError> {
+    check_protocol(transport)?;
+    match transport.send_command_raw(BackendCommand::RuntimeSnapshot) {
+        Ok(BackendReply::RuntimeSnapshot { snapshot }) => Ok(snapshot),
+        Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
+        Ok(other) => Err(unexpected_reply(other)),
+        Err(err) => Err(map_transport_error(transport, err, Some(missing_error))),
+    }
+}
+
 fn check_protocol<T: BackendTransport>(transport: &T) -> Result<(), EngineError> {
     let protocol_version = info(transport)?;
     if protocol_version == IPC_PROTOCOL_VERSION {
@@ -119,4 +139,87 @@ fn map_transport_error<T: BackendTransport>(
         }
     }
     transport.connect_error(err)
+}
+
+fn attempt_start_cleanup<T: BackendTransport>(transport: &T) {
+    match transport.send_command_raw(BackendCommand::Stop) {
+        Ok(_) => {}
+        Err(err) if transport.is_missing_backend_error(&err) => {}
+        Err(err) if transport.is_timeout_error(&err) => {}
+        Err(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::io;
+
+    use super::*;
+    use crate::backend::wg::QuantumMode;
+    use crate::core::dns::{DnsMode, DnsPreset, DnsSelection};
+
+    #[derive(Default)]
+    struct MockTransport {
+        commands: RefCell<Vec<BackendCommand>>,
+    }
+
+    impl BackendTransport for MockTransport {
+        fn send_command_raw(&self, command: BackendCommand) -> Result<BackendReply, io::Error> {
+            self.commands.borrow_mut().push(command.clone());
+            match command {
+                BackendCommand::Info => Ok(BackendReply::Info {
+                    protocol_version: IPC_PROTOCOL_VERSION,
+                }),
+                BackendCommand::Start { .. } => Err(io::Error::from(io::ErrorKind::TimedOut)),
+                BackendCommand::Stop => Ok(BackendReply::Ok),
+                other => panic!("unexpected command: {other:?}"),
+            }
+        }
+
+        fn connect_error(&self, err: io::Error) -> EngineError {
+            EngineError::Remote(err.to_string())
+        }
+
+        fn is_missing_backend_error(&self, _err: &io::Error) -> bool {
+            false
+        }
+
+        fn is_access_denied_error(&self, _err: &io::Error) -> bool {
+            false
+        }
+
+        fn is_timeout_error(&self, err: &io::Error) -> bool {
+            matches!(
+                err.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            )
+        }
+    }
+
+    #[test]
+    fn start_timeout_queues_cleanup_stop() {
+        let transport = MockTransport::default();
+
+        let result = start(
+            &transport,
+            StartRequest::new(
+                "wg0",
+                "[Interface]\n",
+                DnsSelection::new(DnsMode::FollowConfig, DnsPreset::CloudflareStandard),
+                QuantumMode::Off,
+            ),
+        );
+
+        assert!(result.is_err());
+        let commands = transport.commands.borrow();
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                BackendCommand::Info,
+                BackendCommand::Start { .. },
+                BackendCommand::Stop
+            ]
+        ));
+    }
 }

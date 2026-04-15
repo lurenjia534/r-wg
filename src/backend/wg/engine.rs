@@ -20,6 +20,8 @@ use crate::core::route_plan::{
 use crate::log::events::engine as log_engine;
 use crate::platform;
 
+use super::quantum::{self, QuantumFailureKind, QuantumMode};
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn trim_allocator() {
     // 尝试让 glibc 将空闲堆页归还给 OS，尽量降低 RSS（不保证一定生效）。
@@ -46,6 +48,8 @@ pub struct StartRequest {
     pub config_text: String,
     /// DNS 选择（全局 UI 状态传入）。
     pub dns: DnsSelection,
+    /// 量子抗性隧道升级模式。
+    pub quantum_mode: QuantumMode,
 }
 
 impl StartRequest {
@@ -54,11 +58,13 @@ impl StartRequest {
         tun_name: impl Into<String>,
         config_text: impl Into<String>,
         dns: DnsSelection,
+        quantum_mode: QuantumMode,
     ) -> Self {
         Self {
             tun_name: tun_name.into(),
             config_text: config_text.into(),
             dns,
+            quantum_mode,
         }
     }
 }
@@ -73,6 +79,17 @@ pub enum EngineStatus {
     Stopped,
     /// 已启动。
     Running,
+}
+
+/// 引擎运行时快照。
+///
+/// 用于 UI/IPC 恢复展示，包含基础运行态、最近一次路由应用结果，以及量子升级状态。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineRuntimeSnapshot {
+    pub status: EngineStatus,
+    pub apply_report: Option<RouteApplyReport>,
+    pub quantum_protected: bool,
+    pub last_quantum_failure: Option<QuantumFailureKind>,
 }
 
 /// gotatun 设备的运行时统计信息。
@@ -111,6 +128,8 @@ pub enum EngineError {
     Config(ConfigError),
     /// 系统网络配置错误（地址/路由/DNS 应用失败）。
     Network(platform::NetworkError),
+    /// 量子抗性升级流程失败。
+    Quantum(String),
     /// UI 与特权后端协议版本不一致。
     VersionMismatch { expected: u32, actual: u32 },
     /// Windows 提权 helper / IPC 层返回的文本错误。
@@ -128,6 +147,7 @@ impl fmt::Display for EngineError {
             EngineError::Device(err) => write!(f, "device error: {err}"),
             EngineError::Config(err) => write!(f, "config error: {err}"),
             EngineError::Network(err) => write!(f, "network error: {err}"),
+            EngineError::Quantum(message) => write!(f, "quantum upgrade error: {message}"),
             EngineError::VersionMismatch { expected, actual } => write!(
                 f,
                 "privileged backend protocol mismatch (expected v{expected}, got v{actual})"
@@ -185,6 +205,8 @@ enum Command {
     Stats(oneshot::Sender<Result<EngineStats, EngineError>>),
     /// 查询最近一次结构化路由应用报告。
     ApplyReport(oneshot::Sender<Option<RouteApplyReport>>),
+    /// 查询包含量子状态的完整运行时快照。
+    RuntimeSnapshot(oneshot::Sender<EngineRuntimeSnapshot>),
 }
 
 impl Engine {
@@ -277,6 +299,17 @@ impl Engine {
             .blocking_recv()
             .map_err(|_| EngineError::ChannelClosed)
     }
+
+    pub fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.inner
+            .tx
+            .blocking_send(Command::RuntimeSnapshot(reply_tx))
+            .map_err(|_| EngineError::ChannelClosed)?;
+        reply_rx
+            .blocking_recv()
+            .map_err(|_| EngineError::ChannelClosed)
+    }
 }
 
 /// 后台线程维护的运行态状态。
@@ -292,6 +325,10 @@ struct EngineState {
     route_apply_report: Option<RouteApplyReport>,
     /// 是否处于“已启动并生效”的状态。
     running: bool,
+    /// 当前运行态是否使用了量子升级后的临时本地密钥。
+    quantum_active: bool,
+    /// 最近一次量子升级失败分类。
+    last_quantum_failure: Option<QuantumFailureKind>,
 }
 
 /// 缓存的 gotatun 设备与其 TUN 名称。
@@ -311,6 +348,8 @@ impl EngineState {
             return Err(EngineError::AlreadyRunning);
         }
         self.route_apply_report = None;
+        self.quantum_active = false;
+        self.last_quantum_failure = None;
 
         log_engine::start(&request.tun_name, request.config_text.len());
 
@@ -366,7 +405,7 @@ impl EngineState {
                     device.set_fwmark(fwmark)?;
                 }
                 device.clear_peers();
-                device.add_peers(settings.peers);
+                device.add_peers(settings.peers.clone());
                 Ok::<_, device::Error>(())
             })
             .await
@@ -396,9 +435,61 @@ impl EngineState {
                 }
             };
         log_engine::network_configured();
+        self.route_apply_report = Some(net_result.report.clone());
+
+        if request.quantum_mode.is_enabled() {
+            log_engine::quantum_upgrade_requested();
+            let Some(base_peer) = settings.peers.first() else {
+                let error = quantum::Error::UnsupportedConfig(
+                    "quantum upgrade requires exactly one configured peer",
+                );
+                let message = error.to_string();
+                self.last_quantum_failure = Some(error.kind());
+                log_engine::quantum_upgrade_failed(&message);
+                let cleanup_result = platform::cleanup_network_config(net_result.state)
+                    .await
+                    .map_err(EngineError::from);
+                if created_new {
+                    self.shutdown_device().await;
+                } else {
+                    let _ = device.clear_peers().await;
+                }
+                return match cleanup_result {
+                    Ok(()) => Err(EngineError::Quantum(message)),
+                    Err(err) => Err(err),
+                };
+            };
+            if let Err(error) = quantum::upgrade_tunnel(
+                request.quantum_mode,
+                device,
+                &request.tun_name,
+                &parsed,
+                base_peer,
+            )
+            .await
+            {
+                self.last_quantum_failure = Some(error.kind());
+                let message = error.to_string();
+                log_engine::quantum_upgrade_failed(&message);
+                let cleanup_result = platform::cleanup_network_config(net_result.state)
+                    .await
+                    .map_err(EngineError::from);
+                if created_new {
+                    self.shutdown_device().await;
+                } else {
+                    let _ = device.clear_peers().await;
+                }
+                return match cleanup_result {
+                    Ok(()) => Err(EngineError::Quantum(message)),
+                    Err(err) => Err(err),
+                };
+            }
+            log_engine::quantum_upgrade_completed();
+            self.quantum_active = true;
+            self.last_quantum_failure = None;
+        }
 
         // 保存运行态状态，便于后续 stop/cleanup。
-        self.route_apply_report = Some(net_result.report);
         self.net_state = Some(net_result.state);
         self.running = true;
 
@@ -424,12 +515,20 @@ impl EngineState {
             Ok(())
         };
 
-        // 保留 gotatun 设备，只清空 peers。
-        if let Some(slot) = &self.device {
+        // 量子升级后的本地临时私钥不复用，直接销毁整个 gotatun device。
+        if self.quantum_active {
+            if let Some(slot) = self.device.take() {
+                slot.device.stop().await;
+                log_engine::device_stopped();
+            }
+        } else if let Some(slot) = &self.device {
+            // 普通隧道保留 gotatun 设备，只清空 peers。
             slot.device.clear_peers().await?;
         }
         self.route_apply_report = None;
         self.running = false;
+        self.quantum_active = false;
+        self.last_quantum_failure = None;
 
         trim_allocator();
 
@@ -444,6 +543,8 @@ impl EngineState {
             log_engine::device_stopped();
         }
         self.running = false;
+        self.quantum_active = false;
+        self.last_quantum_failure = None;
         self.net_state = None;
         self.route_apply_report = None;
         trim_allocator();
@@ -486,6 +587,15 @@ impl EngineState {
 
     fn apply_report(&self) -> Option<RouteApplyReport> {
         self.route_apply_report.clone()
+    }
+
+    fn runtime_snapshot(&self) -> EngineRuntimeSnapshot {
+        EngineRuntimeSnapshot {
+            status: self.status(),
+            apply_report: self.apply_report(),
+            quantum_protected: self.running && self.quantum_active,
+            last_quantum_failure: self.last_quantum_failure,
+        }
     }
 }
 
@@ -530,6 +640,9 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
             }
             Command::ApplyReport(reply) => {
                 let _ = reply.send(state.apply_report());
+            }
+            Command::RuntimeSnapshot(reply) => {
+                let _ = reply.send(state.runtime_snapshot());
             }
         }
     }

@@ -4,6 +4,7 @@ use std::time::Duration;
 use gpui::SharedString;
 use gpui::{AppContext, Context, Timer, Window};
 use gpui_component::theme::ThemeMode;
+use r_wg::backend::wg::QuantumMode;
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use super::super::features::themes::{self, AppearancePolicy};
@@ -247,6 +248,7 @@ impl<'a> PersistedStateSnapshot<'a> {
             proxies_view_mode: Some(self.ui_prefs.proxies_view_mode),
             dns_mode: Some(self.ui_prefs.dns_mode),
             dns_preset: Some(self.ui_prefs.dns_preset),
+            quantum_mode: Some(self.ui_prefs.quantum_mode),
             traffic_global_days: self
                 .stats
                 .traffic
@@ -328,6 +330,7 @@ struct PersistedStateRestore {
     proxies_view_mode: Option<super::super::state::ProxiesViewMode>,
     dns_mode: Option<DnsMode>,
     dns_preset: Option<DnsPreset>,
+    quantum_mode: Option<QuantumMode>,
     configs: Vec<TunnelConfig>,
     next_config_id: u64,
     selected_id: Option<u64>,
@@ -429,6 +432,7 @@ impl PersistedStateRestore {
             proxies_view_mode: state.proxies_view_mode,
             dns_mode: state.dns_mode,
             dns_preset: state.dns_preset,
+            quantum_mode: state.quantum_mode,
             next_config_id: state.next_id.max(max_id.saturating_add(1)),
             selected_id: state.selected_id,
             traffic: TrafficStore {
@@ -504,6 +508,9 @@ impl PersistedStateRestore {
         }
         if let Some(dns_preset) = self.dns_preset {
             ui_prefs.dns_preset = dns_preset;
+        }
+        if let Some(quantum_mode) = self.quantum_mode {
+            ui_prefs.quantum_mode = quantum_mode;
         }
 
         configs.configs = self.configs;

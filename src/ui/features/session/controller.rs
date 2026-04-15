@@ -215,6 +215,7 @@ fn start_with_config(
     let tunnel_session = app.tunnel_session.clone();
     let config_library = app.config_library.clone();
     let dns_selection = DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset);
+    let quantum_mode = app.ui_prefs.quantum_mode;
 
     cx.spawn(async move |view, cx| {
         // 如果指定了延迟，先等待
@@ -258,13 +259,21 @@ fn start_with_config(
         .ok();
 
         // 发起启动请求
-        let request =
-            StartTunnelRequest::new(selected.name.clone(), text.to_string(), dns_selection);
+        let request = StartTunnelRequest::new(
+            selected.name.clone(),
+            text.to_string(),
+            dns_selection,
+            quantum_mode,
+        );
         let start_task = cx.background_spawn(async move {
             let outcome = tunnel_session.start(request);
-            (outcome.result, outcome.apply_report)
+            (
+                outcome.result,
+                outcome.apply_report,
+                outcome.runtime_snapshot,
+            )
         });
-        let (result, apply_report) = start_task.await;
+        let (result, apply_report, runtime_snapshot) = start_task.await;
 
         // 处理结果
         view.update(cx, |this, cx| {
@@ -272,7 +281,17 @@ fn start_with_config(
             match result {
                 Ok(()) => {
                     this.runtime.mark_started(&selected);
-                    this.runtime.set_last_apply_report(apply_report);
+                    if let Some(snapshot) = runtime_snapshot.as_ref() {
+                        this.runtime
+                            .set_last_apply_report(snapshot.apply_report.clone());
+                        this.runtime.set_quantum_status(
+                            snapshot.quantum_protected,
+                            snapshot.last_quantum_failure,
+                        );
+                    } else {
+                        this.runtime.set_last_apply_report(apply_report);
+                        this.runtime.set_quantum_status(false, None);
+                    }
                     this.refresh_configs_workspace_row_flags(cx);
                     this.stats.reset_for_start();
                     this.set_status(format!("Running {}", selected.name));
@@ -284,8 +303,19 @@ fn start_with_config(
                     this.start_stats_polling(cx);
                 }
                 Err(err) => {
-                    this.runtime.set_last_apply_report(apply_report);
-                    let message = format!("Start failed: {err}");
+                    if let Some(snapshot) = runtime_snapshot.as_ref() {
+                        this.runtime
+                            .set_last_apply_report(snapshot.apply_report.clone());
+                        this.runtime
+                            .set_quantum_status(false, snapshot.last_quantum_failure);
+                    } else {
+                        this.runtime.set_last_apply_report(apply_report);
+                        this.runtime.set_quantum_status(false, None);
+                    }
+                    let quantum_failure = runtime_snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.last_quantum_failure);
+                    let message = format_start_failure(&err, quantum_failure);
                     this.set_error(message.clone());
                     tray::notify_system("r-wg", &message, true);
                 }
@@ -364,4 +394,31 @@ pub(crate) fn complete_stop_success(app: &mut WgApp, cx: &mut Context<WgApp>) {
 pub(crate) fn complete_stop_failure(app: &mut WgApp, message: impl Into<SharedString>) {
     app.runtime.finish_stop_failure();
     app.set_error(message);
+}
+
+fn format_start_failure(
+    err: &impl std::fmt::Display,
+    quantum_failure: Option<r_wg::backend::wg::QuantumFailureKind>,
+) -> String {
+    match quantum_failure {
+        Some(kind) => format!("Start failed ({kind}): {err}"),
+        None => format!("Start failed: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use r_wg::backend::wg::QuantumFailureKind;
+
+    use super::format_start_failure;
+
+    #[test]
+    fn format_start_failure_includes_quantum_failure_kind() {
+        let message = format_start_failure(&"timed out", Some(QuantumFailureKind::Timeout));
+
+        assert_eq!(
+            message,
+            "Start failed (ephemeral peer negotiation timeout): timed out"
+        );
+    }
 }

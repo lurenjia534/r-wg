@@ -17,7 +17,7 @@ use super::ipc_client::{self, BackendTransport};
 use super::windows_pipe::PipeStream;
 use super::windows_service_host;
 use super::windows_service_manager;
-use super::{EngineError, EngineStats, EngineStatus, StartRequest};
+use super::{EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, StartRequest};
 
 pub(crate) const SERVICE_NAME: &str = "r-wg-service";
 pub(crate) const SERVICE_DISPLAY_NAME: &str = "r-wg Privileged Backend";
@@ -133,6 +133,10 @@ impl Engine {
     ) -> Result<Option<crate::core::route_plan::RouteApplyReport>, EngineError> {
         self.inner.apply_report()
     }
+
+    pub fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
+        self.inner.runtime_snapshot()
+    }
 }
 
 impl RemoteEngine {
@@ -162,6 +166,10 @@ impl RemoteEngine {
         ipc_client::apply_report(self, EngineError::ChannelClosed)
     }
 
+    fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
+        ipc_client::runtime_snapshot(self, EngineError::ChannelClosed)
+    }
+
     fn send_command_raw(&self, command: BackendCommand) -> Result<BackendReply, io::Error> {
         let mut stream = PipeStream::connect()?;
         write_json_line(&mut stream, &command)?;
@@ -185,6 +193,13 @@ impl BackendTransport for RemoteEngine {
 
     fn is_access_denied_error(&self, err: &io::Error) -> bool {
         is_access_denied_error(err)
+    }
+
+    fn is_timeout_error(&self, err: &io::Error) -> bool {
+        matches!(
+            err.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        )
     }
 }
 
