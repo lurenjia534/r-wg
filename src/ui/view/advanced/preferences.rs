@@ -157,7 +157,9 @@ pub(super) fn quantum_mode_item(app: Entity<WgApp>) -> SettingItem {
             },
         ),
     )
-    .description("Reserved for the upcoming Mullvad-compatible post-connect quantum upgrade path.")
+    .description(
+        "Currently supports only Mullvad single-hop WireGuard tunnels. Enabling this for other providers will fail.",
+    )
 }
 
 pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
