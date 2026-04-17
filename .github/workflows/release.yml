@@ -89,6 +89,29 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Extract release notes from changelog
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          version="${TAG_NAME#v}"
+          awk -v header="## ${version} -" '
+            $0 ~ "^" header {
+              found = 1
+              next
+            }
+            found && $0 ~ /^## / {
+              exit
+            }
+            found {
+              print
+            }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "Failed to find changelog entry for ${version}" >&2
+            exit 1
+          fi
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,6 +120,7 @@ jobs:
         run: |
           if gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" dist/* --clobber --repo "$GH_REPO"
+            gh release edit "$TAG_NAME" --notes-file RELEASE_NOTES.md --title "$TAG_NAME" --repo "$GH_REPO"
           else
-            gh release create "$TAG_NAME" dist/* --generate-notes --verify-tag --repo "$GH_REPO"
+            gh release create "$TAG_NAME" dist/* --notes-file RELEASE_NOTES.md --title "$TAG_NAME" --verify-tag --repo "$GH_REPO"
           fi

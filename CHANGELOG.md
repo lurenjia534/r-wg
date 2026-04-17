@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.0 - 2026-04-17
+
+- Added a dedicated Tools workspace with CIDR exclusion/normalization and reachability audit flows, including saved-config audits, cancellation/progress snapshots, virtualized result lists, and host-side endpoint probing without extending privileged IPC.
+- Added a Mullvad-only post-quantum tunnel upgrade path across the backend, privileged IPC, and desktop surfaces, introducing the new ephemeral-peer protobuf plumbing, Windows MTU support, and clearer UI copy around provider-specific availability.
+- Introduced shared `core` and `application` service layers for config parsing, route planning, DNS, tunnel sessions, backend administration, diagnostics, and config-library workflows, reducing coupling between the backend engines and UI controllers.
+- Completed a broad UI feature-slice migration across Configs, Route Map, Overview, Tools, Session, and Backend Admin, split commands by domain, removed dead shims, and restored regressions like direct button handlers and Route Map list layout during the transition.
+- Rebuilt the Configs workspace around a cleaner responsive library/editor/inspector layout, extracted import/export and draft/storage flows into feature-local modules, and aligned the Overview and top bar chrome so the main workspaces share a more consistent structure.
+- Added a connect-password gate before tunnel start, hardened password handling and persistence, and threaded the new session flow through the relevant commands, dialogs, and advanced preferences surfaces.
+- Added the Apache 2.0 license, expanded module-level documentation/comments to match the refactored structure, and updated Linux CI/release runners to install `protoc` so protobuf-backed builds succeed in automation.
+
 ## 0.2.9 - 2026-03-25
 
 - Rewrote the README around the app-first workflow, platform support, privileged-backend install/repair flow, and source-build guidance, so first-run setup and backend management are documented much more clearly on both Linux and Windows.
