@@ -74,6 +74,8 @@ zbus = "5.13.2"
 
 [build-dependencies]
 embed-resource = "3.0.6"
+prost-build = "0.13.5"
+protoc-bin-vendored = "3.2.0"
 tonic-build = { version = "0.12.3", default-features = false, features = ["prost", "transport"] }
 
 [patch.crates-io]

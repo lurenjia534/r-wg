@@ -2,12 +2,27 @@
 
 use std::{env, fs, path::PathBuf};
 
+fn configure_protoc(config: &mut prost_build::Config) {
+    println!("cargo:rerun-if-env-changed=PROTOC");
+
+    let protoc = env::var_os("PROTOC")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            protoc_bin_vendored::protoc_bin_path().expect("failed to locate vendored protoc binary")
+        });
+
+    config.protoc_executable(protoc);
+}
+
 fn main() {
-    println!("cargo:rerun-if-changed=proto/ephemeralpeer.proto");
+    let mut prost_config = prost_build::Config::new();
+    configure_protoc(&mut prost_config);
+
     tonic_build::configure()
         .build_client(true)
         .build_server(false)
-        .compile_protos(&["proto/ephemeralpeer.proto"], &["proto"])
+        .compile_protos_with_config(prost_config, &["proto/ephemeralpeer.proto"], &["proto"])
         .expect("failed to compile quantum tunnel proto");
 
     // 读取 Cargo 的目标三元组，用它判断是否为 Windows 构建。
