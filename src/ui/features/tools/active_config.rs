@@ -202,7 +202,9 @@ impl ToolsWorkspace {
                     .soft_wrap(true)
                     .searchable(false)
                     .rows(8)
-                    .placeholder("10.0.0.0/8\n192.168.0.0/16\n2001:db8::/32")
+                    // Keep placeholders single-line; multiline placeholders can panic on Windows
+                    // in gpui-component 0.5.1 during text shaping.
+                    .placeholder("One CIDR per line, e.g. 10.0.0.0/8")
             });
             let subscription = cx.subscribe(
                 &input,
@@ -226,7 +228,7 @@ impl ToolsWorkspace {
                     .soft_wrap(true)
                     .searchable(false)
                     .rows(8)
-                    .placeholder("10.0.0.0/24\n10.1.0.0/16")
+                    .placeholder("One CIDR per line, e.g. 10.0.0.0/24")
             });
             let subscription = cx.subscribe(
                 &input,

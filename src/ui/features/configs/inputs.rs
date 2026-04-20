@@ -140,7 +140,9 @@ impl ConfigsWorkspace {
         }
 
         if self.config_input.is_none() {
-            let placeholder = "[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = ...\nAllowedIPs = 0.0.0.0/0\nEndpoint = example.com:51820";
+            // Keep placeholders single-line; gpui-component 0.5.1 can panic on Windows
+            // when multiline placeholders are shaped line-by-line with full-text runs.
+            let placeholder = "Paste a WireGuard config";
             let input = cx.new(|cx| {
                 InputState::new(window, cx)
                     .code_editor("toml")
