@@ -184,6 +184,11 @@ pub(super) fn render_inspector_panel(
                     "No handshake recorded yet.",
                 ),
                 cx,
+            ))
+            .child(inspector_activity_row(
+                "DAITA",
+                activity_value_or_fallback(&data.shared.daita_overhead, "DAITA inactive."),
+                cx,
             )),
         compact,
         cx,

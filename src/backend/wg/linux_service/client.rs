@@ -8,7 +8,10 @@ use super::super::ipc::{
     read_json_line, write_json_line, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
 };
 use super::super::ipc_client::{self, BackendTransport};
-use super::super::{EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, StartRequest};
+use super::super::{
+    EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, RelayInventoryStatusSnapshot,
+    StartRequest,
+};
 use super::auth::socket_access_status;
 use super::install_model::{
     control_socket_path, installation_exists, PrivilegedServiceStatus, SERVICE_IO_TIMEOUT,
@@ -53,7 +56,13 @@ pub fn probe_privileged_service() -> PrivilegedServiceStatus {
         return match engine.send_command_raw(BackendCommand::Info) {
             Ok(BackendReply::Info { protocol_version }) => {
                 if protocol_version == IPC_PROTOCOL_VERSION {
-                    PrivilegedServiceStatus::Running
+                    match engine.status() {
+                        Ok(_) => PrivilegedServiceStatus::Running,
+                        Err(EngineError::AccessDenied) => PrivilegedServiceStatus::AccessDenied,
+                        Err(err) => PrivilegedServiceStatus::Unreachable(format!(
+                            "Linux privileged backend service is running but its worker channel is unavailable: {err}"
+                        )),
+                    }
                 } else {
                     PrivilegedServiceStatus::VersionMismatch {
                         expected: IPC_PROTOCOL_VERSION,
@@ -106,6 +115,14 @@ impl Engine {
     pub fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
         self.inner.runtime_snapshot()
     }
+
+    pub fn relay_inventory_status(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        self.inner.relay_inventory_status()
+    }
+
+    pub fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        self.inner.refresh_relay_inventory()
+    }
 }
 
 impl RemoteEngine {
@@ -139,6 +156,18 @@ impl RemoteEngine {
 
     pub(super) fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
         ipc_client::runtime_snapshot(self, EngineError::NotRunning)
+    }
+
+    pub(super) fn relay_inventory_status(
+        &self,
+    ) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        ipc_client::relay_inventory_status(self, EngineError::ChannelClosed)
+    }
+
+    pub(super) fn refresh_relay_inventory(
+        &self,
+    ) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        ipc_client::refresh_relay_inventory(self, EngineError::ChannelClosed)
     }
 
     pub(super) fn send_command_raw(

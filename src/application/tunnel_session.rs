@@ -17,8 +17,8 @@
 use std::time::Duration;
 
 use crate::backend::wg::{
-    Engine, EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, QuantumFailureKind,
-    QuantumMode, StartRequest,
+    DaitaMode, Engine, EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus,
+    EphemeralFailureKind, QuantumMode, RelayInventoryStatusSnapshot, StartRequest,
 };
 use crate::core::dns::DnsSelection;
 use crate::core::route_plan::RouteApplyReport;
@@ -50,6 +50,7 @@ impl TunnelSessionService {
             request.config_text,
             request.dns_selection,
             request.quantum_mode,
+            request.daita_mode,
         ));
         let runtime_snapshot = self
             .engine
@@ -93,6 +94,14 @@ impl TunnelSessionService {
     pub fn runtime_snapshot(&self) -> Result<TunnelRuntimeSnapshot, EngineError> {
         self.engine.runtime_snapshot().map(map_runtime_snapshot)
     }
+
+    pub fn relay_inventory_status(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        self.engine.relay_inventory_status()
+    }
+
+    pub fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        self.engine.refresh_relay_inventory()
+    }
 }
 
 /// 启动隧道的请求参数
@@ -106,6 +115,8 @@ pub struct StartTunnelRequest {
     pub dns_selection: DnsSelection,
     /// 量子抗性隧道升级模式
     pub quantum_mode: QuantumMode,
+    /// DAITA 模式
+    pub daita_mode: DaitaMode,
 }
 
 impl StartTunnelRequest {
@@ -115,12 +126,14 @@ impl StartTunnelRequest {
         config_text: impl Into<String>,
         dns_selection: DnsSelection,
         quantum_mode: QuantumMode,
+        daita_mode: DaitaMode,
     ) -> Self {
         Self {
             tun_name: tun_name.into(),
             config_text: config_text.into(),
             dns_selection,
             quantum_mode,
+            daita_mode,
         }
     }
 }
@@ -147,7 +160,11 @@ pub struct TunnelRuntimeSnapshot {
     /// 当前会话是否已经切换到量子保护态
     pub quantum_protected: bool,
     /// 最近一次量子升级失败分类
-    pub last_quantum_failure: Option<QuantumFailureKind>,
+    pub last_quantum_failure: Option<EphemeralFailureKind>,
+    /// 当前会话是否启用了 DAITA
+    pub daita_active: bool,
+    /// 最近一次 DAITA 协商失败分类
+    pub last_daita_failure: Option<EphemeralFailureKind>,
 }
 
 fn map_runtime_snapshot(snapshot: EngineRuntimeSnapshot) -> TunnelRuntimeSnapshot {
@@ -156,6 +173,8 @@ fn map_runtime_snapshot(snapshot: EngineRuntimeSnapshot) -> TunnelRuntimeSnapsho
         apply_report: snapshot.apply_report,
         quantum_protected: snapshot.quantum_protected,
         last_quantum_failure: snapshot.last_quantum_failure,
+        daita_active: snapshot.daita_active,
+        last_daita_failure: snapshot.last_daita_failure,
     }
 }
 
@@ -286,7 +305,7 @@ pub fn pending_start_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::wg::{EngineRuntimeSnapshot, EngineStatus, QuantumFailureKind};
+    use crate::backend::wg::{EngineRuntimeSnapshot, EngineStatus, EphemeralFailureKind};
 
     #[test]
     fn runtime_snapshot_mapping_preserves_quantum_state() {
@@ -294,15 +313,19 @@ mod tests {
             status: EngineStatus::Running,
             apply_report: None,
             quantum_protected: true,
-            last_quantum_failure: Some(QuantumFailureKind::Timeout),
+            last_quantum_failure: Some(EphemeralFailureKind::Timeout),
+            daita_active: true,
+            last_daita_failure: Some(EphemeralFailureKind::Rpc),
         });
 
         assert!(matches!(snapshot.status, EngineStatus::Running));
         assert!(snapshot.quantum_protected);
         assert_eq!(
             snapshot.last_quantum_failure,
-            Some(QuantumFailureKind::Timeout)
+            Some(EphemeralFailureKind::Timeout)
         );
+        assert!(snapshot.daita_active);
+        assert_eq!(snapshot.last_daita_failure, Some(EphemeralFailureKind::Rpc));
     }
 
     #[test]

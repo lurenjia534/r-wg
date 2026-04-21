@@ -218,6 +218,7 @@ impl BackendDiagnostic {
                     | BackendHealth::Running
                     | BackendHealth::AccessDenied
                     | BackendHealth::VersionMismatch { .. }
+                    | BackendHealth::Unreachable
             ),
         }
     }
@@ -234,5 +235,23 @@ impl BackendDiagnostic {
     fn checked_now(mut self) -> Self {
         self.checked_at = Some(SystemTime::now());
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BackendDiagnostic, BackendHealth};
+    use r_wg::backend::wg::PrivilegedServiceAction;
+
+    #[test]
+    fn unreachable_backend_allows_remove() {
+        let diagnostic = BackendDiagnostic {
+            health: BackendHealth::Unreachable,
+            detail: "worker channel unavailable".into(),
+            checked_at: None,
+        };
+
+        assert!(diagnostic.allows_action(PrivilegedServiceAction::Repair));
+        assert!(diagnostic.allows_action(PrivilegedServiceAction::Remove));
     }
 }

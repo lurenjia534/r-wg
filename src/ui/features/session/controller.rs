@@ -216,6 +216,7 @@ fn start_with_config(
     let config_library = app.config_library.clone();
     let dns_selection = DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset);
     let quantum_mode = app.ui_prefs.quantum_mode;
+    let daita_mode = app.ui_prefs.daita_mode;
 
     cx.spawn(async move |view, cx| {
         // 如果指定了延迟，先等待
@@ -264,6 +265,7 @@ fn start_with_config(
             text.to_string(),
             dns_selection,
             quantum_mode,
+            daita_mode,
         );
         let start_task = cx.background_spawn(async move {
             let outcome = tunnel_session.start(request);
@@ -288,18 +290,19 @@ fn start_with_config(
                             snapshot.quantum_protected,
                             snapshot.last_quantum_failure,
                         );
+                        this.runtime
+                            .set_daita_status(snapshot.daita_active, snapshot.last_daita_failure);
                     } else {
                         this.runtime.set_last_apply_report(apply_report);
                         this.runtime.set_quantum_status(false, None);
+                        this.runtime.set_daita_status(false, None);
                     }
                     this.refresh_configs_workspace_row_flags(cx);
                     this.stats.reset_for_start();
-                    this.set_status(format!("Running {}", selected.name));
-                    tray::notify_system(
-                        "r-wg",
-                        &format!("Tunnel connected: {}", selected.name),
-                        false,
-                    );
+                    let status = format!("Running {}", selected.name);
+                    let notification = format!("Tunnel connected: {}", selected.name);
+                    this.set_status(status);
+                    tray::notify_system("r-wg", &notification, false);
                     this.start_stats_polling(cx);
                 }
                 Err(err) => {
@@ -308,14 +311,19 @@ fn start_with_config(
                             .set_last_apply_report(snapshot.apply_report.clone());
                         this.runtime
                             .set_quantum_status(false, snapshot.last_quantum_failure);
+                        this.runtime
+                            .set_daita_status(false, snapshot.last_daita_failure);
                     } else {
                         this.runtime.set_last_apply_report(apply_report);
                         this.runtime.set_quantum_status(false, None);
+                        this.runtime.set_daita_status(false, None);
                     }
-                    let quantum_failure = runtime_snapshot
+                    let negotiation_failure = runtime_snapshot
                         .as_ref()
-                        .and_then(|snapshot| snapshot.last_quantum_failure);
-                    let message = format_start_failure(&err, quantum_failure);
+                        .and_then(|snapshot| {
+                            snapshot.last_quantum_failure.or(snapshot.last_daita_failure)
+                        });
+                    let message = format_start_failure(&err, negotiation_failure);
                     this.set_error(message.clone());
                     tray::notify_system("r-wg", &message, true);
                 }
@@ -398,9 +406,9 @@ pub(crate) fn complete_stop_failure(app: &mut WgApp, message: impl Into<SharedSt
 
 fn format_start_failure(
     err: &impl std::fmt::Display,
-    quantum_failure: Option<r_wg::backend::wg::QuantumFailureKind>,
+    negotiation_failure: Option<r_wg::backend::wg::EphemeralFailureKind>,
 ) -> String {
-    match quantum_failure {
+    match negotiation_failure {
         Some(kind) => format!("Start failed ({kind}): {err}"),
         None => format!("Start failed: {err}"),
     }
@@ -408,13 +416,13 @@ fn format_start_failure(
 
 #[cfg(test)]
 mod tests {
-    use r_wg::backend::wg::QuantumFailureKind;
+    use r_wg::backend::wg::EphemeralFailureKind;
 
     use super::format_start_failure;
 
     #[test]
     fn format_start_failure_includes_quantum_failure_kind() {
-        let message = format_start_failure(&"timed out", Some(QuantumFailureKind::Timeout));
+        let message = format_start_failure(&"timed out", Some(EphemeralFailureKind::Timeout));
 
         assert_eq!(
             message,

@@ -2,6 +2,7 @@ use gpui::{Context, SharedString};
 
 use r_wg::backend::wg::PrivilegedServiceAction;
 
+use super::super::features::daita_resources::controller as daita_resources_controller;
 use super::super::features::backend_admin::controller;
 use super::super::state::WgApp;
 
@@ -18,6 +19,14 @@ impl WgApp {
     /// 说明：错误会覆盖状态栏文字，确保用户能立即看到失败原因。
     pub(crate) fn set_error(&mut self, message: impl Into<SharedString>) -> bool {
         self.ui.set_error(message)
+    }
+
+    pub(crate) fn refresh_daita_resources_status(&mut self, cx: &mut Context<Self>) {
+        daita_resources_controller::refresh_daita_resources_status(self, cx);
+    }
+
+    pub(crate) fn refresh_daita_resources_cache(&mut self, cx: &mut Context<Self>) {
+        daita_resources_controller::refresh_daita_resources_cache(self, cx);
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]

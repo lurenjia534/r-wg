@@ -32,16 +32,20 @@ pub(crate) fn sync_engine_status(
                 .set_last_apply_report(snapshot.apply_report.clone());
             this.runtime
                 .set_quantum_status(snapshot.quantum_protected, snapshot.last_quantum_failure);
+            this.runtime
+                .set_daita_status(snapshot.daita_active, snapshot.last_daita_failure);
             // helper 恢复场景下不一定拿得到原始配置名，先放通用占位避免 UI 空白。
             if this.runtime.running_name.is_none() {
                 this.runtime.running_name = Some("Tunnel".to_string());
             }
             // 这里只恢复运行态与统计轮询，不推断具体配置来源。
-            if snapshot.quantum_protected {
-                this.set_status("Tunnel running (quantum protected)");
-            } else {
-                this.set_status("Tunnel running");
-            }
+            let status = match (snapshot.quantum_protected, snapshot.daita_active) {
+                (true, true) => "Tunnel running (quantum protected, DAITA active)",
+                (true, false) => "Tunnel running (quantum protected)",
+                (false, true) => "Tunnel running (DAITA active)",
+                (false, false) => "Tunnel running",
+            };
+            this.set_status(status);
             this.stats.reset_for_start();
             this.start_stats_polling(cx);
             cx.notify();

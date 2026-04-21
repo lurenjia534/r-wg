@@ -1,12 +1,18 @@
+use std::time::{Duration, SystemTime};
+
+use chrono::{DateTime, Local};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{div, Axis, Entity, ParentElement, Styled};
 use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::setting::{SettingField, SettingItem};
 use gpui_component::switch::Switch;
-use gpui_component::{h_flex, v_flex, ActiveTheme as _, Selectable, Sizable, Size};
-use r_wg::backend::wg::QuantumMode;
+use gpui_component::{
+    h_flex, v_flex, ActiveTheme as _, Disableable as _, Selectable, Sizable, Size,
+};
+use r_wg::backend::wg::{DaitaMode, QuantumMode};
 
 use crate::ui::features::session::password_gate;
-use crate::ui::state::{ConfigInspectorTab, TrafficPeriod, WgApp};
+use crate::ui::state::{ConfigInspectorTab, DaitaResourcesHealth, TrafficPeriod, WgApp};
 
 use super::system::{
     dns_mode_from_value, dns_mode_options, dns_mode_value, render_dns_preset_field,
@@ -162,6 +168,126 @@ pub(super) fn quantum_mode_item(app: Entity<WgApp>) -> SettingItem {
     )
 }
 
+pub(super) fn daita_mode_item(app: Entity<WgApp>) -> SettingItem {
+    let get_handle = app.clone();
+    let set_handle = app;
+
+    SettingItem::new(
+        "DAITA",
+        SettingField::switch(
+            move |cx| get_handle.read(cx).ui_prefs.daita_mode == DaitaMode::On,
+            move |value, cx| {
+                let next = if value { DaitaMode::On } else { DaitaMode::Off };
+                set_handle.update(cx, |app, cx| {
+                    app.set_daita_mode_pref(next, cx);
+                });
+            },
+        ),
+    )
+    .description(
+        "Negotiate Mullvad DAITA settings for each tunnel start. Requires a Mullvad single-hop peer that advertises DAITA capability.",
+    )
+}
+
+pub(super) fn daita_resources_item(app: Entity<WgApp>) -> SettingItem {
+    SettingItem::new(
+        "DAITA Resources",
+        SettingField::render(move |_, _window, cx| {
+            let diagnostic = app.read(cx).ui.daita_resources.clone();
+            let action_handle = app.clone();
+            let action_label = if diagnostic.has_cache() {
+                "Refresh"
+            } else {
+                "Download"
+            };
+            let note = match diagnostic.health {
+                DaitaResourcesHealth::Ready => {
+                    "Used for strict DAITA startup validation. Start will fail if the selected peer is not present or not DAITA-capable in this cache."
+                }
+                DaitaResourcesHealth::Missing => {
+                    "If direct access to Mullvad's API is blocked on this network, first connect a regular Mullvad WireGuard tunnel, then download the resources here."
+                }
+                _ => {
+                    "This cache is stored by the backend and reused for later DAITA starts. No fallback to non-DAITA mode is performed."
+                }
+            };
+
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_3()
+                        .flex_wrap()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("Status: {}", diagnostic.summary())),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format_checked_label(diagnostic.checked_at)),
+                        )
+                        .child(
+                            Button::new("advanced-daita-resources-refresh")
+                                .label(action_label)
+                                .outline()
+                                .small()
+                                .compact()
+                                .loading(diagnostic.is_busy())
+                                .disabled(diagnostic.is_busy())
+                                .on_click(move |_, _, cx| {
+                                    action_handle.update(cx, |app, cx| {
+                                        app.refresh_daita_resources_cache(cx);
+                                    });
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().foreground)
+                        .child(diagnostic.detail.clone()),
+                )
+                .when_some(diagnostic.cache_path.clone(), |this, path| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("Cache path: {path}")),
+                    )
+                })
+                .when(diagnostic.has_cache(), |this| {
+                    let fetched = diagnostic
+                        .fetched_at
+                        .map(format_timestamp)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "Cached at: {fetched} · Relays: {} · DAITA-capable: {}",
+                                diagnostic.relay_count, diagnostic.daita_relay_count
+                            )),
+                    )
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(note),
+                )
+        }),
+    )
+    .layout(Axis::Vertical)
+    .description("Download or refresh the Mullvad relay inventory required for DAITA startup validation.")
+}
+
 pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Preferred Traffic Range",
@@ -269,4 +395,33 @@ pub(super) fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
         }),
     )
     .description("Controls which Inspector view opens first in Configs.")
+}
+
+fn format_checked_label(checked_at: Option<SystemTime>) -> String {
+    match checked_at {
+        Some(checked_at) => format!("Checked {}", format_age(checked_at)),
+        None => "Not checked yet".to_string(),
+    }
+}
+
+fn format_timestamp(time: SystemTime) -> String {
+    let absolute = DateTime::<Local>::from(time)
+        .format("%Y-%m-%d %H:%M:%S local")
+        .to_string();
+    format!("{absolute} ({})", format_age(time))
+}
+
+fn format_age(time: SystemTime) -> String {
+    let elapsed = SystemTime::now()
+        .duration_since(time)
+        .unwrap_or(Duration::from_secs(0));
+    let seconds = elapsed.as_secs();
+
+    match seconds {
+        0..=9 => "just now".to_string(),
+        10..=59 => format!("{seconds}s ago"),
+        60..=3_599 => format!("{} min ago", seconds / 60),
+        3_600..=86_399 => format!("{} hr ago", seconds / 3_600),
+        _ => format!("{} d ago", seconds / 86_400),
+    }
 }

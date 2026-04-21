@@ -48,9 +48,16 @@ pub fn probe_privileged_service() -> PrivilegedServiceStatus {
 
     match service.current_state() {
         Ok(state) if state == windows::Win32::System::Services::SERVICE_RUNNING => {
-            match Engine::new().info() {
+            let engine = Engine::new();
+            match engine.info() {
                 Ok(protocol_version) if protocol_version == IPC_PROTOCOL_VERSION => {
-                    PrivilegedServiceStatus::Running
+                    match engine.status() {
+                        Ok(_) => PrivilegedServiceStatus::Running,
+                        Err(EngineError::AccessDenied) => PrivilegedServiceStatus::AccessDenied,
+                        Err(err) => PrivilegedServiceStatus::Unreachable(format!(
+                            "Windows privileged backend service is running but its worker channel is unavailable: {err}"
+                        )),
+                    }
                 }
                 Ok(protocol_version) => PrivilegedServiceStatus::VersionMismatch {
                     expected: IPC_PROTOCOL_VERSION,

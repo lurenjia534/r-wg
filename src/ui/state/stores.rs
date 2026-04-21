@@ -7,9 +7,7 @@ use std::time::{Duration, Instant};
 use gpui::{Entity, SharedString};
 use gpui_component::input::InputState;
 use gpui_component::theme::ThemeMode;
-use r_wg::backend::wg::PeerStats;
-use r_wg::backend::wg::QuantumFailureKind;
-use r_wg::backend::wg::QuantumMode;
+use r_wg::backend::wg::{DaitaMode, EphemeralFailureKind, PeerStats, QuantumMode};
 use r_wg::core::route_plan::RouteApplyReport;
 use r_wg::dns::{DnsMode, DnsPreset};
 
@@ -18,9 +16,9 @@ use crate::ui::features::themes::AppearancePolicy;
 use crate::ui::persistence::{self, StoragePaths};
 
 use super::{
-    BackendDiagnostic, BackendHealth, ConfigInspectorTab, PendingStart, ProxiesViewMode,
-    ProxyRunningFilter, RouteFamilyFilter, RouteMapMode, SidebarItem, ToolsWorkspace,
-    TrafficPeriod, TrafficStore, TunnelConfig, DEFAULT_CONFIGS_INSPECTOR_WIDTH,
+    BackendDiagnostic, BackendHealth, ConfigInspectorTab, DaitaResourcesDiagnostic, PendingStart,
+    ProxiesViewMode, ProxyRunningFilter, RouteFamilyFilter, RouteMapMode, SidebarItem,
+    ToolsWorkspace, TrafficPeriod, TrafficStore, TunnelConfig, DEFAULT_CONFIGS_INSPECTOR_WIDTH,
     DEFAULT_CONFIGS_LIBRARY_WIDTH, DEFAULT_ROUTE_MAP_INSPECTOR_WIDTH,
     DEFAULT_ROUTE_MAP_INVENTORY_WIDTH, RESTART_COOLDOWN,
 };
@@ -216,7 +214,9 @@ pub(crate) struct RuntimeState {
     pub(crate) running_name: Option<String>,
     pub(crate) running_id: Option<u64>,
     pub(crate) quantum_protected: bool,
-    pub(crate) last_quantum_failure: Option<QuantumFailureKind>,
+    pub(crate) last_quantum_failure: Option<EphemeralFailureKind>,
+    pub(crate) daita_active: bool,
+    pub(crate) last_daita_failure: Option<EphemeralFailureKind>,
     pub(crate) last_apply_report: Option<RouteApplyReport>,
     pub(crate) runtime_revision: u64,
 }
@@ -251,6 +251,8 @@ impl RuntimeState {
             running_id: None,
             quantum_protected: false,
             last_quantum_failure: None,
+            daita_active: false,
+            last_daita_failure: None,
             last_apply_report: None,
             runtime_revision: 0,
         }
@@ -286,6 +288,8 @@ impl RuntimeState {
         self.running_id = None;
         self.quantum_protected = false;
         self.last_quantum_failure = None;
+        self.daita_active = false;
+        self.last_daita_failure = None;
         self.clear_last_apply_report();
         self.last_stop_at = Some(Instant::now());
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
@@ -301,6 +305,8 @@ impl RuntimeState {
         self.busy = true;
         self.quantum_protected = false;
         self.last_quantum_failure = None;
+        self.daita_active = false;
+        self.last_daita_failure = None;
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
@@ -319,10 +325,20 @@ impl RuntimeState {
     pub(crate) fn set_quantum_status(
         &mut self,
         protected: bool,
-        failure: Option<QuantumFailureKind>,
+        failure: Option<EphemeralFailureKind>,
     ) {
         self.quantum_protected = protected;
         self.last_quantum_failure = failure;
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
+    }
+
+    pub(crate) fn set_daita_status(
+        &mut self,
+        active: bool,
+        failure: Option<EphemeralFailureKind>,
+    ) {
+        self.daita_active = active;
+        self.last_daita_failure = failure;
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
@@ -459,6 +475,7 @@ pub(crate) struct UiPrefsState {
     pub(crate) dns_mode: DnsMode,
     pub(crate) dns_preset: DnsPreset,
     pub(crate) quantum_mode: QuantumMode,
+    pub(crate) daita_mode: DaitaMode,
 }
 
 impl UiPrefsState {
@@ -489,6 +506,7 @@ impl UiPrefsState {
             dns_mode: DnsMode::FollowConfig,
             dns_preset: DnsPreset::CloudflareStandard,
             quantum_mode: QuantumMode::Off,
+            daita_mode: DaitaMode::Off,
         }
     }
 
@@ -620,6 +638,7 @@ pub(crate) struct UiState {
     pub(crate) last_error: Option<SharedString>,
     pub(crate) backend: BackendDiagnostic,
     pub(crate) backend_last_error: Option<SharedString>,
+    pub(crate) daita_resources: DaitaResourcesDiagnostic,
     pub(crate) theme_appearance_observer_ready: bool,
 }
 
@@ -636,6 +655,7 @@ impl UiState {
             last_error: None,
             backend: BackendDiagnostic::default_for_platform(),
             backend_last_error: None,
+            daita_resources: DaitaResourcesDiagnostic::default_state(),
             theme_appearance_observer_ready: false,
         }
     }
@@ -678,5 +698,12 @@ impl UiState {
 
     pub(crate) fn set_backend_last_error(&mut self, message: impl Into<SharedString>) {
         self.backend_last_error = Some(message.into());
+    }
+
+    pub(crate) fn set_daita_resources_diagnostic(
+        &mut self,
+        diagnostic: DaitaResourcesDiagnostic,
+    ) {
+        self.daita_resources = diagnostic;
     }
 }

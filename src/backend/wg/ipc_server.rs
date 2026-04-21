@@ -1,7 +1,7 @@
 use super::engine::Engine as LocalEngine;
 use super::ipc::{
-    error_reply, option_reply, runtime_snapshot_reply, unit_reply, BackendCommand, BackendReply,
-    IPC_PROTOCOL_VERSION,
+    error_reply, option_reply, relay_inventory_status_reply, runtime_snapshot_reply, unit_reply,
+    BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
 };
 
 pub(crate) fn dispatch_command(engine: &LocalEngine, command: BackendCommand) -> BackendReply {
@@ -22,5 +22,11 @@ pub(crate) fn dispatch_command(engine: &LocalEngine, command: BackendCommand) ->
         },
         BackendCommand::ApplyReport => option_reply(engine.apply_report()),
         BackendCommand::RuntimeSnapshot => runtime_snapshot_reply(engine.runtime_snapshot()),
+        BackendCommand::RelayInventoryStatus => {
+            relay_inventory_status_reply(engine.relay_inventory_status())
+        }
+        BackendCommand::RefreshRelayInventory => {
+            relay_inventory_status_reply(engine.refresh_relay_inventory())
+        }
     }
 }

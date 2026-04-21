@@ -15,6 +15,9 @@
 //! - v3: 添加 ApplyReport 支持
 //! - v4: StartRequest 新增 quantum_mode
 //! - v5: RuntimeSnapshot 新增量子状态与失败分类
+//! - v6: StartRequest/RuntimeSnapshot 新增 DAITA 字段
+//! - v7: EngineStats::PeerStats 新增 DAITA 统计字段
+//! - v8: 新增 DAITA relay inventory 状态/刷新接口
 //!
 //! # 消息格式
 //!
@@ -34,13 +37,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::route_plan::RouteApplyReport;
 
-use super::engine::{EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, StartRequest};
+use super::engine::{
+    EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, RelayInventoryStatusSnapshot,
+    StartRequest,
+};
 
 /// 当前 IPC 协议版本
 ///
 /// 当 UI 和服务端的版本不匹配时，会返回 VersionMismatch 错误。
 /// 升级时需要确保双方都支持相同的版本。
-pub const IPC_PROTOCOL_VERSION: u32 = 5;
+pub const IPC_PROTOCOL_VERSION: u32 = 8;
 
 /// UI -> 特权后端的命令枚举
 ///
@@ -64,6 +70,10 @@ pub enum BackendCommand {
     ApplyReport,
     /// 查询完整运行时快照
     RuntimeSnapshot,
+    /// 查询缓存的 Mullvad relay inventory 状态
+    RelayInventoryStatus,
+    /// 下载并刷新缓存的 Mullvad relay inventory
+    RefreshRelayInventory,
 }
 
 /// 特权后端 -> UI 的响应枚举
@@ -84,6 +94,10 @@ pub enum BackendReply {
     ApplyReport { report: Option<RouteApplyReport> },
     /// 运行时快照响应：返回包含量子状态的完整运行态
     RuntimeSnapshot { snapshot: EngineRuntimeSnapshot },
+    /// DAITA 资源缓存状态
+    RelayInventoryStatus {
+        snapshot: RelayInventoryStatusSnapshot,
+    },
     /// 执行失败响应：包含错误分类和可读消息
     Error {
         kind: BackendErrorKind,
@@ -132,6 +146,15 @@ pub fn option_reply(result: Result<Option<RouteApplyReport>, EngineError>) -> Ba
 pub fn runtime_snapshot_reply(result: Result<EngineRuntimeSnapshot, EngineError>) -> BackendReply {
     match result {
         Ok(snapshot) => BackendReply::RuntimeSnapshot { snapshot },
+        Err(err) => error_reply(err),
+    }
+}
+
+pub fn relay_inventory_status_reply(
+    result: Result<RelayInventoryStatusSnapshot, EngineError>,
+) -> BackendReply {
+    match result {
+        Ok(snapshot) => BackendReply::RelayInventoryStatus { snapshot },
         Err(err) => error_reply(err),
     }
 }
@@ -187,7 +210,7 @@ pub fn protocol_mismatch(expected: u32, actual: u32) -> EngineError {
 /// 写入单行 JSON 消息
 ///
 /// # 格式
-/// ```
+/// ```text
 /// {"type":"command_name","field1":"value1",...}\n
 /// ```
 ///

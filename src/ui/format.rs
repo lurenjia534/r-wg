@@ -3,22 +3,64 @@ use std::time::Duration;
 use r_wg::backend::wg::PeerStats;
 use r_wg::core::config::{self, RouteTable};
 
+pub struct DaitaPeerSummary {
+    pub peer_count: usize,
+    pub tx_padding_bytes: u64,
+    pub rx_padding_bytes: u64,
+    pub tx_decoy_packet_bytes: u64,
+    pub rx_decoy_packet_bytes: u64,
+}
+
+impl DaitaPeerSummary {
+    pub fn is_active(&self) -> bool {
+        self.peer_count > 0
+    }
+}
+
 pub struct PeerSummary {
     pub peer_count: usize,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub last_handshake: Option<Duration>,
+    pub daita: DaitaPeerSummary,
 }
 
 pub fn summarize_peers(peers: &[PeerStats]) -> PeerSummary {
     let rx_bytes = peers.iter().map(|peer| peer.rx_bytes).sum();
     let tx_bytes = peers.iter().map(|peer| peer.tx_bytes).sum();
     let last_handshake = peers.iter().filter_map(|peer| peer.last_handshake).min();
+    let daita = peers.iter().filter_map(|peer| peer.daita.as_ref()).fold(
+        DaitaPeerSummary {
+            peer_count: 0,
+            tx_padding_bytes: 0,
+            rx_padding_bytes: 0,
+            tx_decoy_packet_bytes: 0,
+            rx_decoy_packet_bytes: 0,
+        },
+        |mut summary, stats| {
+            summary.peer_count = summary.peer_count.saturating_add(1);
+            summary.tx_padding_bytes = summary
+                .tx_padding_bytes
+                .saturating_add(stats.tx_padding_bytes);
+            summary.rx_padding_bytes = summary
+                .rx_padding_bytes
+                .saturating_add(stats.rx_padding_bytes);
+            summary.tx_decoy_packet_bytes = summary
+                .tx_decoy_packet_bytes
+                .saturating_add(stats.tx_decoy_packet_bytes);
+            summary.rx_decoy_packet_bytes = summary
+                .rx_decoy_packet_bytes
+                .saturating_add(stats.rx_decoy_packet_bytes);
+            summary
+        },
+    );
+
     PeerSummary {
         peer_count: peers.len(),
         rx_bytes,
         tx_bytes,
         last_handshake,
+        daita,
     }
 }
 

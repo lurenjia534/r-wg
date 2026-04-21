@@ -2,11 +2,14 @@
 //! - 在独立线程中创建 tokio runtime，避免占用 UI 线程或依赖外部运行时。
 //! - 通过 MPSC 命令通道驱动 gotatun 设备的生命周期，确保串行执行。
 //! - 对外提供同步 API（start/stop/status），内部异步执行并做清理回滚。
+use std::any::Any;
 use std::fmt;
 use std::net::SocketAddr;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::FutureExt;
 use gotatun::device::{self, DefaultDeviceTransports, Device};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
@@ -20,7 +23,8 @@ use crate::core::route_plan::{
 use crate::log::events::engine as log_engine;
 use crate::platform;
 
-use super::quantum::{self, QuantumFailureKind, QuantumMode};
+use super::ephemeral::{self, DaitaMode, EphemeralFailureKind, QuantumMode};
+use super::relay_inventory;
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn trim_allocator() {
@@ -50,6 +54,8 @@ pub struct StartRequest {
     pub dns: DnsSelection,
     /// 量子抗性隧道升级模式。
     pub quantum_mode: QuantumMode,
+    /// DAITA 模式。
+    pub daita_mode: DaitaMode,
 }
 
 impl StartRequest {
@@ -59,12 +65,14 @@ impl StartRequest {
         config_text: impl Into<String>,
         dns: DnsSelection,
         quantum_mode: QuantumMode,
+        daita_mode: DaitaMode,
     ) -> Self {
         Self {
             tun_name: tun_name.into(),
             config_text: config_text.into(),
             dns,
             quantum_mode,
+            daita_mode,
         }
     }
 }
@@ -83,13 +91,25 @@ pub enum EngineStatus {
 
 /// 引擎运行时快照。
 ///
-/// 用于 UI/IPC 恢复展示，包含基础运行态、最近一次路由应用结果，以及量子升级状态。
+/// 用于 UI/IPC 恢复展示，包含基础运行态、最近一次路由应用结果，以及 ephemeral 协商状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineRuntimeSnapshot {
     pub status: EngineStatus,
     pub apply_report: Option<RouteApplyReport>,
     pub quantum_protected: bool,
-    pub last_quantum_failure: Option<QuantumFailureKind>,
+    pub last_quantum_failure: Option<EphemeralFailureKind>,
+    pub daita_active: bool,
+    pub last_daita_failure: Option<EphemeralFailureKind>,
+}
+
+/// DAITA 资源缓存状态快照。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayInventoryStatusSnapshot {
+    pub cache_path: String,
+    pub present: bool,
+    pub relay_count: usize,
+    pub daita_relay_count: usize,
+    pub fetched_at_unix_secs: Option<u64>,
 }
 
 /// gotatun 设备的运行时统计信息。
@@ -97,6 +117,15 @@ pub struct EngineRuntimeSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineStats {
     pub peers: Vec<PeerStats>,
+}
+
+/// 单个 Peer 的 DAITA 统计快照。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaitaStats {
+    pub tx_padding_bytes: u64,
+    pub rx_padding_bytes: u64,
+    pub tx_decoy_packet_bytes: u64,
+    pub rx_decoy_packet_bytes: u64,
 }
 
 /// 单个 Peer 的状态快照。
@@ -108,6 +137,7 @@ pub struct PeerStats {
     pub last_handshake: Option<Duration>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
+    pub daita: Option<DaitaStats>,
 }
 
 /// 引擎错误类型。
@@ -128,8 +158,8 @@ pub enum EngineError {
     Config(ConfigError),
     /// 系统网络配置错误（地址/路由/DNS 应用失败）。
     Network(platform::NetworkError),
-    /// 量子抗性升级流程失败。
-    Quantum(String),
+    /// Ephemeral peer 协商或重配置失败。
+    Ephemeral(String),
     /// UI 与特权后端协议版本不一致。
     VersionMismatch { expected: u32, actual: u32 },
     /// Windows 提权 helper / IPC 层返回的文本错误。
@@ -147,7 +177,7 @@ impl fmt::Display for EngineError {
             EngineError::Device(err) => write!(f, "device error: {err}"),
             EngineError::Config(err) => write!(f, "config error: {err}"),
             EngineError::Network(err) => write!(f, "network error: {err}"),
-            EngineError::Quantum(message) => write!(f, "quantum upgrade error: {message}"),
+            EngineError::Ephemeral(message) => write!(f, "ephemeral negotiation error: {message}"),
             EngineError::VersionMismatch { expected, actual } => write!(
                 f,
                 "privileged backend protocol mismatch (expected v{expected}, got v{actual})"
@@ -207,6 +237,10 @@ enum Command {
     ApplyReport(oneshot::Sender<Option<RouteApplyReport>>),
     /// 查询包含量子状态的完整运行时快照。
     RuntimeSnapshot(oneshot::Sender<EngineRuntimeSnapshot>),
+    /// 查询缓存的 Mullvad relay inventory 状态。
+    RelayInventoryStatus(oneshot::Sender<Result<RelayInventoryStatusSnapshot, EngineError>>),
+    /// 下载并刷新缓存的 Mullvad relay inventory。
+    RefreshRelayInventory(oneshot::Sender<Result<RelayInventoryStatusSnapshot, EngineError>>),
 }
 
 impl Engine {
@@ -310,6 +344,28 @@ impl Engine {
             .blocking_recv()
             .map_err(|_| EngineError::ChannelClosed)
     }
+
+    pub fn relay_inventory_status(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.inner
+            .tx
+            .blocking_send(Command::RelayInventoryStatus(reply_tx))
+            .map_err(|_| EngineError::ChannelClosed)?;
+        reply_rx
+            .blocking_recv()
+            .map_err(|_| EngineError::ChannelClosed)?
+    }
+
+    pub fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.inner
+            .tx
+            .blocking_send(Command::RefreshRelayInventory(reply_tx))
+            .map_err(|_| EngineError::ChannelClosed)?;
+        reply_rx
+            .blocking_recv()
+            .map_err(|_| EngineError::ChannelClosed)?
+    }
 }
 
 /// 后台线程维护的运行态状态。
@@ -327,8 +383,14 @@ struct EngineState {
     running: bool,
     /// 当前运行态是否使用了量子升级后的临时本地密钥。
     quantum_active: bool,
+    /// 当前运行态是否启用了 DAITA。
+    daita_active: bool,
+    /// 当前运行态是否使用了 ephemeral 临时私钥。
+    ephemeral_key_active: bool,
     /// 最近一次量子升级失败分类。
-    last_quantum_failure: Option<QuantumFailureKind>,
+    last_quantum_failure: Option<EphemeralFailureKind>,
+    /// 最近一次 DAITA 协商失败分类。
+    last_daita_failure: Option<EphemeralFailureKind>,
 }
 
 /// 缓存的 gotatun 设备与其 TUN 名称。
@@ -349,7 +411,10 @@ impl EngineState {
         }
         self.route_apply_report = None;
         self.quantum_active = false;
+        self.daita_active = false;
+        self.ephemeral_key_active = false;
         self.last_quantum_failure = None;
+        self.last_daita_failure = None;
 
         log_engine::start(&request.tun_name, request.config_text.len());
 
@@ -359,6 +424,15 @@ impl EngineState {
         let parsed = normalize_config_for_runtime(parsed, request.dns);
         if inserted_fwmark {
             log_engine::auto_fwmark(DEFAULT_FULL_TUNNEL_FWMARK);
+        }
+        if request.daita_mode.is_enabled() {
+            match ephemeral::validate_daita_config(&parsed) {
+                Ok(()) => {}
+                Err(error) => {
+                    self.last_daita_failure = Some(error.kind());
+                    return Err(EngineError::Ephemeral(error.to_string()));
+                }
+            }
         }
         let route_plan = RoutePlan::build(RoutePlanPlatform::current(), &parsed);
         let settings = parsed.to_device_settings().await?;
@@ -437,15 +511,23 @@ impl EngineState {
         log_engine::network_configured();
         self.route_apply_report = Some(net_result.report.clone());
 
-        if request.quantum_mode.is_enabled() {
-            log_engine::quantum_upgrade_requested();
+        if request.quantum_mode.is_enabled() || request.daita_mode.is_enabled() {
+            log_engine::ephemeral_negotiation_requested(
+                request.quantum_mode.is_enabled(),
+                request.daita_mode.is_enabled(),
+            );
             let Some(base_peer) = settings.peers.first() else {
-                let error = quantum::Error::UnsupportedConfig(
-                    "quantum upgrade requires exactly one configured peer",
+                let error = ephemeral::Error::UnsupportedConfig(
+                    "ephemeral peer negotiation requires exactly one configured peer",
                 );
                 let message = error.to_string();
-                self.last_quantum_failure = Some(error.kind());
-                log_engine::quantum_upgrade_failed(&message);
+                if request.quantum_mode.is_enabled() {
+                    self.last_quantum_failure = Some(error.kind());
+                }
+                if request.daita_mode.is_enabled() {
+                    self.last_daita_failure = Some(error.kind());
+                }
+                log_engine::ephemeral_negotiation_failed(&message);
                 let cleanup_result = platform::cleanup_network_config(net_result.state)
                     .await
                     .map_err(EngineError::from);
@@ -455,12 +537,13 @@ impl EngineState {
                     let _ = device.clear_peers().await;
                 }
                 return match cleanup_result {
-                    Ok(()) => Err(EngineError::Quantum(message)),
+                    Ok(()) => Err(EngineError::Ephemeral(message)),
                     Err(err) => Err(err),
                 };
             };
-            if let Err(error) = quantum::upgrade_tunnel(
+            match ephemeral::upgrade_tunnel(
                 request.quantum_mode,
+                request.daita_mode,
                 device,
                 &request.tun_name,
                 &parsed,
@@ -468,25 +551,40 @@ impl EngineState {
             )
             .await
             {
-                self.last_quantum_failure = Some(error.kind());
-                let message = error.to_string();
-                log_engine::quantum_upgrade_failed(&message);
-                let cleanup_result = platform::cleanup_network_config(net_result.state)
-                    .await
-                    .map_err(EngineError::from);
-                if created_new {
-                    self.shutdown_device().await;
-                } else {
-                    let _ = device.clear_peers().await;
+                Ok(outcome) => {
+                    log_engine::ephemeral_negotiation_completed(
+                        outcome.quantum_applied,
+                        outcome.daita_applied,
+                    );
+                    self.quantum_active = outcome.quantum_applied;
+                    self.daita_active = outcome.daita_applied;
+                    self.ephemeral_key_active = outcome.quantum_applied || outcome.daita_applied;
+                    self.last_quantum_failure = None;
+                    self.last_daita_failure = None;
                 }
-                return match cleanup_result {
-                    Ok(()) => Err(EngineError::Quantum(message)),
-                    Err(err) => Err(err),
-                };
+                Err(error) => {
+                    if request.quantum_mode.is_enabled() {
+                        self.last_quantum_failure = Some(error.kind());
+                    }
+                    if request.daita_mode.is_enabled() {
+                        self.last_daita_failure = Some(error.kind());
+                    }
+                    let message = error.to_string();
+                    log_engine::ephemeral_negotiation_failed(&message);
+                    let cleanup_result = platform::cleanup_network_config(net_result.state)
+                        .await
+                        .map_err(EngineError::from);
+                    if created_new {
+                        self.shutdown_device().await;
+                    } else {
+                        let _ = device.clear_peers().await;
+                    }
+                    return match cleanup_result {
+                        Ok(()) => Err(EngineError::Ephemeral(message)),
+                        Err(err) => Err(err),
+                    };
+                }
             }
-            log_engine::quantum_upgrade_completed();
-            self.quantum_active = true;
-            self.last_quantum_failure = None;
         }
 
         // 保存运行态状态，便于后续 stop/cleanup。
@@ -515,8 +613,8 @@ impl EngineState {
             Ok(())
         };
 
-        // 量子升级后的本地临时私钥不复用，直接销毁整个 gotatun device。
-        if self.quantum_active {
+        // Ephemeral 协商后的本地临时私钥不复用，直接销毁整个 gotatun device。
+        if self.ephemeral_key_active {
             if let Some(slot) = self.device.take() {
                 slot.device.stop().await;
                 log_engine::device_stopped();
@@ -528,7 +626,10 @@ impl EngineState {
         self.route_apply_report = None;
         self.running = false;
         self.quantum_active = false;
+        self.daita_active = false;
+        self.ephemeral_key_active = false;
         self.last_quantum_failure = None;
+        self.last_daita_failure = None;
 
         trim_allocator();
 
@@ -544,7 +645,10 @@ impl EngineState {
         }
         self.running = false;
         self.quantum_active = false;
+        self.daita_active = false;
+        self.ephemeral_key_active = false;
         self.last_quantum_failure = None;
+        self.last_daita_failure = None;
         self.net_state = None;
         self.route_apply_report = None;
         trim_allocator();
@@ -579,6 +683,12 @@ impl EngineState {
                 last_handshake: peer.stats.last_handshake,
                 rx_bytes: peer.stats.rx_bytes as u64,
                 tx_bytes: peer.stats.tx_bytes as u64,
+                daita: peer.stats.daita.map(|stats| DaitaStats {
+                    tx_padding_bytes: stats.tx_padding_bytes as u64,
+                    rx_padding_bytes: stats.rx_padding_bytes as u64,
+                    tx_decoy_packet_bytes: stats.tx_decoy_packet_bytes as u64,
+                    rx_decoy_packet_bytes: stats.rx_decoy_packet_bytes as u64,
+                }),
             })
             .collect();
 
@@ -595,7 +705,34 @@ impl EngineState {
             apply_report: self.apply_report(),
             quantum_protected: self.running && self.quantum_active,
             last_quantum_failure: self.last_quantum_failure,
+            daita_active: self.running && self.daita_active,
+            last_daita_failure: self.last_daita_failure,
         }
+    }
+
+    fn relay_inventory_status(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        relay_inventory::status_snapshot()
+            .map(|snapshot| RelayInventoryStatusSnapshot {
+                cache_path: snapshot.cache_path,
+                present: snapshot.present,
+                relay_count: snapshot.relay_count,
+                daita_relay_count: snapshot.daita_relay_count,
+                fetched_at_unix_secs: snapshot.fetched_at_unix_secs,
+            })
+            .map_err(|error| EngineError::Remote(error.to_string()))
+    }
+
+    async fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        relay_inventory::refresh_cache()
+            .await
+            .map(|snapshot| RelayInventoryStatusSnapshot {
+                cache_path: snapshot.cache_path,
+                present: snapshot.present,
+                relay_count: snapshot.relay_count,
+                daita_relay_count: snapshot.daita_relay_count,
+                fetched_at_unix_secs: snapshot.fetched_at_unix_secs,
+            })
+            .map_err(|error| EngineError::Remote(error.to_string()))
     }
 }
 
@@ -620,8 +757,7 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
     while let Some(command) = rx.recv().await {
         match command {
             Command::Start(request, reply) => {
-                // 启动请求：返回 Ok/Err。
-                let result = state.start(request).await;
+                let result = catch_start_panic(&mut state, request).await;
                 let _ = reply.send(result);
             }
             Command::Stop(reply) => {
@@ -644,10 +780,55 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
             Command::RuntimeSnapshot(reply) => {
                 let _ = reply.send(state.runtime_snapshot());
             }
+            Command::RelayInventoryStatus(reply) => {
+                let _ = reply.send(state.relay_inventory_status());
+            }
+            Command::RefreshRelayInventory(reply) => {
+                let _ = reply.send(state.refresh_relay_inventory().await);
+            }
         }
     }
 
     // 通道关闭，尝试优雅停止设备。
     let _ = state.stop().await;
     state.shutdown_device().await;
+}
+
+async fn catch_start_panic(
+    state: &mut EngineState,
+    request: StartRequest,
+) -> Result<(), EngineError> {
+    match AssertUnwindSafe(state.start(request)).catch_unwind().await {
+        Ok(result) => result,
+        Err(payload) => {
+            let message = format!(
+                "backend worker panicked while starting tunnel: {}",
+                panic_payload_message(payload)
+            );
+            tracing::error!("{message}");
+            recover_after_worker_panic(state).await;
+            Err(EngineError::Remote(message))
+        }
+    }
+}
+
+async fn recover_after_worker_panic(state: &mut EngineState) {
+    let apply_report = state.apply_report();
+    if let Some(net_state) = state.net_state.take() {
+        if let Err(err) = platform::cleanup_network_config(net_state).await {
+            tracing::warn!("failed to clean up network state after backend panic: {err}");
+        }
+    }
+    state.shutdown_device().await;
+    state.route_apply_report = apply_report;
+}
+
+fn panic_payload_message(payload: Box<dyn Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "non-string panic payload".to_string()
+    }
 }

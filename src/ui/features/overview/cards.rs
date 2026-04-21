@@ -61,7 +61,10 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                                             .child("Quantum protected"),
                                     )
                                 },
-                            ))
+                            )
+                            .when(runtime.is_running && runtime.daita_active, |this| {
+                                this.child(Tag::secondary().rounded_full().small().child("DAITA"))
+                            }))
                             .child(
                                 div()
                                     .text_xl()
@@ -162,7 +165,66 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                     ),
                 ],
                 cx,
-            )),
+            ))
+            .when(runtime.is_running && runtime.daita_active && runtime.daita_stats_active, |this| {
+                this.child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().muted_foreground)
+                                .child("DAITA overhead"),
+                        )
+                        .child(
+                            div()
+                                .grid()
+                                .grid_cols(4)
+                                .gap_3()
+                                .child(
+                                    metric_cell(
+                                        IconName::ArrowUp,
+                                        "TX Padding",
+                                        &runtime.daita_tx_padding_text,
+                                        cx.theme().chart_1,
+                                        false,
+                                        cx,
+                                    ),
+                                )
+                                .child(
+                                    metric_cell(
+                                        IconName::ArrowUp,
+                                        "TX Decoy",
+                                        &runtime.daita_tx_decoy_text,
+                                        cx.theme().warning,
+                                        false,
+                                        cx,
+                                    ),
+                                )
+                                .child(
+                                    metric_cell(
+                                        IconName::ArrowDown,
+                                        "RX Padding",
+                                        &runtime.daita_rx_padding_text,
+                                        cx.theme().chart_2,
+                                        false,
+                                        cx,
+                                    ),
+                                )
+                                .child(
+                                    metric_cell(
+                                        IconName::ArrowDown,
+                                        "RX Decoy",
+                                        &runtime.daita_rx_decoy_text,
+                                        cx.theme().success,
+                                        false,
+                                        cx,
+                                    ),
+                                ),
+                        ),
+                )
+            }),
         cx,
     )
 }

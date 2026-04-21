@@ -29,6 +29,8 @@ pub(crate) struct ViewData {
     pub(crate) needs_restart: bool,
     /// 最近握手时间的可读文本。
     pub(crate) last_handshake: String,
+    /// 当前会话的 DAITA 额外开销概要。
+    pub(crate) daita_overhead: String,
 }
 
 impl ViewData {
@@ -60,6 +62,17 @@ impl ViewData {
             .last_handshake
             .map(format_duration)
             .unwrap_or_else(|| "never".to_string());
+        let daita_overhead = if peer_summary.daita.is_active() {
+            format!(
+                "TX {} pad / {} decoy · RX {} pad / {} decoy",
+                crate::ui::format::format_bytes(peer_summary.daita.tx_padding_bytes),
+                crate::ui::format::format_bytes(peer_summary.daita.tx_decoy_packet_bytes),
+                crate::ui::format::format_bytes(peer_summary.daita.rx_padding_bytes),
+                crate::ui::format::format_bytes(peer_summary.daita.rx_decoy_packet_bytes),
+            )
+        } else {
+            "Inactive".to_string()
+        };
 
         Self {
             parsed_config,
@@ -68,6 +81,7 @@ impl ViewData {
             has_saved_source: draft.source_id.is_some(),
             needs_restart: draft.needs_restart,
             last_handshake,
+            daita_overhead,
         }
     }
 }

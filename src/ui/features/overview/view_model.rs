@@ -24,6 +24,8 @@ pub(crate) struct OverviewData {
 pub(crate) struct OverviewRuntimeData {
     pub(crate) is_running: bool,
     pub(crate) quantum_protected: bool,
+    pub(crate) daita_active: bool,
+    pub(crate) daita_stats_active: bool,
     pub(crate) running_name_text: String,
     pub(crate) last_updated_text: String,
     pub(crate) uptime_text: String,
@@ -36,6 +38,10 @@ pub(crate) struct OverviewRuntimeData {
     pub(crate) download_speed_text: String,
     pub(crate) upload_total_text: String,
     pub(crate) download_total_text: String,
+    pub(crate) daita_tx_padding_text: String,
+    pub(crate) daita_tx_decoy_text: String,
+    pub(crate) daita_rx_padding_text: String,
+    pub(crate) daita_rx_decoy_text: String,
     pub(crate) upload_series: Vec<f32>,
     pub(crate) download_series: Vec<f32>,
 }
@@ -66,6 +72,8 @@ impl OverviewData {
             runtime: OverviewRuntimeData {
                 is_running: app.runtime.running,
                 quantum_protected: app.runtime.quantum_protected,
+                daita_active: app.runtime.daita_active,
+                daita_stats_active: peer_summary.daita.is_active(),
                 running_name_text: app
                     .runtime
                     .running_name
@@ -82,6 +90,10 @@ impl OverviewData {
                 download_speed_text: format_speed_text(app.runtime.running, app.stats.rx_rate_bps),
                 upload_total_text: format_bytes(peer_summary.tx_bytes),
                 download_total_text: format_bytes(peer_summary.rx_bytes),
+                daita_tx_padding_text: format_bytes(peer_summary.daita.tx_padding_bytes),
+                daita_tx_decoy_text: format_bytes(peer_summary.daita.tx_decoy_packet_bytes),
+                daita_rx_padding_text: format_bytes(peer_summary.daita.rx_padding_bytes),
+                daita_rx_decoy_text: format_bytes(peer_summary.daita.rx_decoy_packet_bytes),
                 upload_series: app.stats.tx_rate_history.iter().copied().collect(),
                 download_series: app.stats.rx_rate_history.iter().copied().collect(),
             },
@@ -127,6 +139,7 @@ fn build_overview_preview(app: &WgApp) -> OverviewPreviewData {
         has_saved_source: true,
         needs_restart: false,
         last_handshake: String::new(),
+        daita_overhead: "Inactive".to_string(),
     };
     let is_running_config = app.runtime.running_id == Some(selected.id)
         || app.runtime.running_name.as_deref() == Some(selected.name.as_str());

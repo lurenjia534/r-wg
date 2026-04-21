@@ -30,16 +30,26 @@ pub fn network_configured() {
     log_info!("engine", "network configured");
 }
 
-pub fn quantum_upgrade_requested() {
-    log_info!("engine", "quantum upgrade requested");
+pub fn ephemeral_negotiation_requested(quantum: bool, daita: bool) {
+    log_info!(
+        "engine",
+        "ephemeral negotiation requested: quantum={} daita={}",
+        quantum,
+        daita
+    );
 }
 
-pub fn quantum_upgrade_completed() {
-    log_info!("engine", "quantum upgrade completed");
+pub fn ephemeral_negotiation_completed(quantum: bool, daita: bool) {
+    log_info!(
+        "engine",
+        "ephemeral negotiation completed: quantum={} daita={}",
+        quantum,
+        daita
+    );
 }
 
-pub fn quantum_upgrade_failed(message: &str) {
-    log_info!("engine", "quantum upgrade failed: {}", message);
+pub fn ephemeral_negotiation_failed(message: &str) {
+    log_info!("engine", "ephemeral negotiation failed: {}", message);
 }
 
 pub fn stop_requested() {

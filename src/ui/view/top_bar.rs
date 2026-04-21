@@ -129,6 +129,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                             app.runtime.running && app.runtime.quantum_protected,
                             |this| this.child(render_quantum_chip(cx)),
                         )
+                        .when(app.runtime.running && app.runtime.daita_active, |this| {
+                            this.child(render_daita_chip(cx))
+                        })
                         .child(tunnel_toggle),
                 )
                 .child(toolbar_divider(cx))
@@ -209,6 +212,26 @@ fn render_quantum_chip(cx: &mut Context<WgApp>) -> Div {
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(cx.theme().sidebar_primary)
                 .child("Quantum"),
+        )
+}
+
+fn render_daita_chip(cx: &mut Context<WgApp>) -> Div {
+    h_flex()
+        .items_center()
+        .gap_1p5()
+        .px_2()
+        .py_1()
+        .rounded_full()
+        .border_1()
+        .border_color(cx.theme().chart_3.alpha(0.28))
+        .bg(cx.theme().chart_3.alpha(0.14))
+        .child(div().size(px(5.0)).rounded_full().bg(cx.theme().chart_3))
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().chart_3)
+                .child("DAITA"),
         )
 }
 

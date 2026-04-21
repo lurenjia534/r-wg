@@ -17,7 +17,10 @@ use super::ipc_client::{self, BackendTransport};
 use super::windows_pipe::PipeStream;
 use super::windows_service_host;
 use super::windows_service_manager;
-use super::{EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, StartRequest};
+use super::{
+    EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, RelayInventoryStatusSnapshot,
+    StartRequest,
+};
 
 pub(crate) const SERVICE_NAME: &str = "r-wg-service";
 pub(crate) const SERVICE_DISPLAY_NAME: &str = "r-wg Privileged Backend";
@@ -137,6 +140,14 @@ impl Engine {
     pub fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
         self.inner.runtime_snapshot()
     }
+
+    pub fn relay_inventory_status(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        self.inner.relay_inventory_status()
+    }
+
+    pub fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        self.inner.refresh_relay_inventory()
+    }
 }
 
 impl RemoteEngine {
@@ -168,6 +179,14 @@ impl RemoteEngine {
 
     fn runtime_snapshot(&self) -> Result<EngineRuntimeSnapshot, EngineError> {
         ipc_client::runtime_snapshot(self, EngineError::ChannelClosed)
+    }
+
+    fn relay_inventory_status(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        ipc_client::relay_inventory_status(self, EngineError::ChannelClosed)
+    }
+
+    fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+        ipc_client::refresh_relay_inventory(self, EngineError::ChannelClosed)
     }
 
     fn send_command_raw(&self, command: BackendCommand) -> Result<BackendReply, io::Error> {

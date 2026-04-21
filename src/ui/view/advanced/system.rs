@@ -532,7 +532,9 @@ pub(super) fn backend_recommended_action(diagnostic: &BackendDiagnostic) -> &'st
         BackendHealth::AccessDenied | BackendHealth::VersionMismatch { .. } => {
             "Repair the helper integration."
         }
-        BackendHealth::Unreachable => "Refresh first, then Repair if the helper stays unreachable.",
+        BackendHealth::Unreachable => {
+            "Refresh first, then Repair or Remove if the helper stays unreachable."
+        }
         BackendHealth::Checking => "Wait for the current probe to finish.",
         BackendHealth::Working { .. } => "Wait for the current action to finish.",
         BackendHealth::Unknown => "Refresh to probe the helper state.",
@@ -597,7 +599,7 @@ pub(super) fn backend_recovery_note(diagnostic: &BackendDiagnostic) -> Option<Sh
             "Repair is the recommended next step when the installed helper protocol does not match this GUI build."
         }
         BackendHealth::Unreachable => {
-            "Refresh re-checks the current state. Repair is the next step if the helper path or socket still looks stale."
+            "Refresh re-checks the current state. Repair tries to recover the helper; Remove uninstalls stale integration when recovery is not worth it."
         }
         _ => return None,
     };

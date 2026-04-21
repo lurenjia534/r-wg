@@ -222,7 +222,7 @@ fn graceful_stop_active_backend() -> Result<(), EngineError> {
         return Ok(());
     }
     match RemoteEngine::new().stop() {
-        Ok(()) | Err(EngineError::NotRunning) => Ok(()),
+        Ok(()) | Err(EngineError::NotRunning) | Err(EngineError::ChannelClosed) => Ok(()),
         Err(err) => Err(err),
     }
 }

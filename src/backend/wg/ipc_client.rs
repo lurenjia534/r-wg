@@ -4,7 +4,10 @@ use super::ipc::{
     map_backend_error, protocol_mismatch, unexpected_reply, BackendCommand, BackendReply,
     IPC_PROTOCOL_VERSION,
 };
-use super::{EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, StartRequest};
+use super::{
+    EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, RelayInventoryStatusSnapshot,
+    StartRequest,
+};
 use crate::core::route_plan::RouteApplyReport;
 
 pub(crate) trait BackendTransport {
@@ -108,6 +111,32 @@ pub(crate) fn runtime_snapshot<T: BackendTransport>(
     }
 }
 
+pub(crate) fn relay_inventory_status<T: BackendTransport>(
+    transport: &T,
+    missing_error: EngineError,
+) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+    check_protocol(transport)?;
+    match transport.send_command_raw(BackendCommand::RelayInventoryStatus) {
+        Ok(BackendReply::RelayInventoryStatus { snapshot }) => Ok(snapshot),
+        Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
+        Ok(other) => Err(unexpected_reply(other)),
+        Err(err) => Err(map_transport_error(transport, err, Some(missing_error))),
+    }
+}
+
+pub(crate) fn refresh_relay_inventory<T: BackendTransport>(
+    transport: &T,
+    missing_error: EngineError,
+) -> Result<RelayInventoryStatusSnapshot, EngineError> {
+    check_protocol(transport)?;
+    match transport.send_command_raw(BackendCommand::RefreshRelayInventory) {
+        Ok(BackendReply::RelayInventoryStatus { snapshot }) => Ok(snapshot),
+        Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
+        Ok(other) => Err(unexpected_reply(other)),
+        Err(err) => Err(map_transport_error(transport, err, Some(missing_error))),
+    }
+}
+
 fn check_protocol<T: BackendTransport>(transport: &T) -> Result<(), EngineError> {
     let protocol_version = info(transport)?;
     if protocol_version == IPC_PROTOCOL_VERSION {
@@ -156,7 +185,7 @@ mod tests {
     use std::io;
 
     use super::*;
-    use crate::backend::wg::QuantumMode;
+    use crate::backend::wg::{DaitaMode, QuantumMode};
     use crate::core::dns::{DnsMode, DnsPreset, DnsSelection};
 
     #[derive(Default)]
@@ -208,6 +237,7 @@ mod tests {
                 "[Interface]\n",
                 DnsSelection::new(DnsMode::FollowConfig, DnsPreset::CloudflareStandard),
                 QuantumMode::Off,
+                DaitaMode::Off,
             ),
         );
 

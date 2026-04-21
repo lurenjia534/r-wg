@@ -1,5 +1,6 @@
 pub(crate) mod backend_admin;
 pub(crate) mod configs;
+pub(crate) mod daita_resources;
 pub(crate) mod overview;
 pub(crate) mod proxies;
 pub(crate) mod route_map;

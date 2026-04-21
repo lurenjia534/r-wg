@@ -8,8 +8,9 @@ use crate::ui::state::WgApp;
 use crate::ui::view::widgets::{PageShell, PageShellHeader};
 
 use super::preferences::{
-    connect_password_item, dns_mode_item, dns_preset_item, inspector_tab_item,
-    log_auto_follow_item, quantum_mode_item, traffic_period_item,
+    connect_password_item, daita_mode_item, daita_resources_item, dns_mode_item,
+    dns_preset_item, inspector_tab_item, log_auto_follow_item, quantum_mode_item,
+    traffic_period_item,
 };
 use super::system::{privileged_backend_item, troubleshooting_item};
 
@@ -46,7 +47,9 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
                     "Require local approval and control upcoming tunnel hardening behavior.",
                 )
                 .item(connect_password_item(app_handle.clone()))
-                .item(quantum_mode_item(app_handle.clone())),
+                .item(quantum_mode_item(app_handle.clone()))
+                .item(daita_mode_item(app_handle.clone()))
+                .item(daita_resources_item(app_handle.clone())),
         );
 
     let monitoring_page = SettingPage::new("Monitoring")

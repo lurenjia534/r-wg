@@ -154,6 +154,7 @@ pub fn run(primary: PrimaryInstance) {
                     // 刷新特权后端状态
                     view.update(cx, |this, cx| {
                         this.refresh_privileged_backend_status(cx);
+                        this.refresh_daita_resources_status(cx);
                     });
 
                     // 弱引用：窗口关闭后不会阻止资源释放
