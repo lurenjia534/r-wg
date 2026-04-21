@@ -8,7 +8,7 @@ build = "build.rs"
 gpui = "0.2.2"
 gpui-component = { version = "0.5.1", features = ["tree-sitter-languages"] }
 gpui-component-assets = "0.5.1"
-gotatun = { version = "0.4.1", features = ["device", "tun"] }
+gotatun = { git = "https://github.com/mullvad/gotatun", branch = "main", version = "0.5.1", features = ["device", "tun"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process", "time"] }
 base64 = "0.22.1"
 chrono = "0.4.43"
@@ -77,6 +77,3 @@ embed-resource = "3.0.6"
 prost-build = "0.13.5"
 protoc-bin-vendored = "3.2.0"
 tonic-build = { version = "0.12.3", default-features = false, features = ["prost", "transport"] }
-
-[patch.crates-io]
-gotatun = { path = "vendor/gotatun" }
