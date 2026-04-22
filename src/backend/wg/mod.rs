@@ -5,12 +5,12 @@
 /// - Other platforms: fall back to the local engine.
 pub mod config;
 mod engine;
+mod ephemeral;
 mod ipc;
 mod ipc_client;
 mod ipc_server;
 #[cfg(target_os = "linux")]
 mod linux_service;
-mod ephemeral;
 mod relay_inventory;
 pub mod route_plan;
 pub mod tools;

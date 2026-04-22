@@ -318,11 +318,11 @@ fn start_with_config(
                         this.runtime.set_quantum_status(false, None);
                         this.runtime.set_daita_status(false, None);
                     }
-                    let negotiation_failure = runtime_snapshot
-                        .as_ref()
-                        .and_then(|snapshot| {
-                            snapshot.last_quantum_failure.or(snapshot.last_daita_failure)
-                        });
+                    let negotiation_failure = runtime_snapshot.as_ref().and_then(|snapshot| {
+                        snapshot
+                            .last_quantum_failure
+                            .or(snapshot.last_daita_failure)
+                    });
                     let message = format_start_failure(&err, negotiation_failure);
                     this.set_error(message.clone());
                     tray::notify_system("r-wg", &message, true);

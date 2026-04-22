@@ -41,13 +41,22 @@ impl std::fmt::Display for Error {
                 "failed to create the DAITA relay inventory cache directory: {reason}"
             ),
             Self::ReadCache(reason) => {
-                write!(f, "failed to read the cached DAITA relay inventory: {reason}")
+                write!(
+                    f,
+                    "failed to read the cached DAITA relay inventory: {reason}"
+                )
             }
             Self::WriteCache(reason) => {
-                write!(f, "failed to write the cached DAITA relay inventory: {reason}")
+                write!(
+                    f,
+                    "failed to write the cached DAITA relay inventory: {reason}"
+                )
             }
             Self::ParseCache(reason) => {
-                write!(f, "failed to parse the cached DAITA relay inventory: {reason}")
+                write!(
+                    f,
+                    "failed to parse the cached DAITA relay inventory: {reason}"
+                )
             }
             Self::FetchTimeout => write!(
                 f,
@@ -61,7 +70,10 @@ impl std::fmt::Display for Error {
                 "Mullvad relay inventory returned unexpected HTTP status {status}"
             ),
             Self::ParseRemote(reason) => {
-                write!(f, "failed to parse Mullvad relay inventory response: {reason}")
+                write!(
+                    f,
+                    "failed to parse Mullvad relay inventory response: {reason}"
+                )
             }
         }
     }
@@ -189,7 +201,9 @@ pub(crate) fn status_snapshot() -> Result<RelayInventoryStatusSnapshot, Error> {
     let Some(cached) = read_cached_inventory_file(cache_path.as_path())? else {
         return Ok(RelayInventoryStatusSnapshot::missing(cache_path));
     };
-    Ok(RelayInventoryStatusSnapshot::from_cached(cache_path, &cached))
+    Ok(RelayInventoryStatusSnapshot::from_cached(
+        cache_path, &cached,
+    ))
 }
 
 pub(crate) async fn refresh_cache() -> Result<RelayInventoryStatusSnapshot, Error> {
@@ -208,7 +222,9 @@ pub(crate) async fn refresh_cache() -> Result<RelayInventoryStatusSnapshot, Erro
         inventory,
     };
     write_cached_inventory_file(cache_path.as_path(), &cached)?;
-    Ok(RelayInventoryStatusSnapshot::from_cached(cache_path, &cached))
+    Ok(RelayInventoryStatusSnapshot::from_cached(
+        cache_path, &cached,
+    ))
 }
 
 #[cfg(test)]
@@ -262,7 +278,8 @@ fn read_cached_inventory_file(path: &Path) -> Result<Option<CachedRelayInventory
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(Error::ReadCache(error.to_string())),
     };
-    let cached = serde_json::from_str(&text).map_err(|error| Error::ParseCache(error.to_string()))?;
+    let cached =
+        serde_json::from_str(&text).map_err(|error| Error::ParseCache(error.to_string()))?;
     Ok(Some(cached))
 }
 

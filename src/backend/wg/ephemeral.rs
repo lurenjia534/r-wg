@@ -5,9 +5,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
-use gotatun::device::{
-    self, daita, DefaultDeviceTransports, Device, Peer as DevicePeer,
-};
+use gotatun::device::{self, daita, DefaultDeviceTransports, Device, Peer as DevicePeer};
 use gotatun::x25519::{PublicKey, StaticSecret};
 use hyper_util::rt::TokioIo;
 use ml_kem::array::typenum::marker_traits::Unsigned;
@@ -24,10 +22,10 @@ use tonic::transport::{Channel, Endpoint};
 use tower::service_fn;
 use zeroize::Zeroize;
 
+use super::relay_inventory::{self, MullvadRelayInventory};
 use crate::core::config::{InterfaceAddress, WireGuardConfig};
 #[cfg(target_os = "windows")]
 use crate::platform;
-use super::relay_inventory::{self, MullvadRelayInventory};
 
 #[expect(clippy::allow_attributes)]
 mod proto {
@@ -308,7 +306,10 @@ pub(crate) async fn upgrade_tunnel(
             .map_err(Error::Reconfigure);
 
         config_result?;
-        tracing::debug!(tun = tun_name, "Mullvad ephemeral peer configuration applied");
+        tracing::debug!(
+            tun = tun_name,
+            "Mullvad ephemeral peer configuration applied"
+        );
         Ok(UpgradeOutcome {
             quantum_applied: quantum_mode.is_enabled(),
             daita_applied: daita_mode.is_enabled(),
@@ -492,11 +493,9 @@ async fn negotiate_ephemeral_peer_inner(
             .ok_or(Error::MissingCiphertexts)?
             .ciphertexts;
 
-        let [ml_kem_ciphertext, hqc_ciphertext] =
-            <&[Vec<u8>; 2]>::try_from(ciphertexts.as_slice()).map_err(|_| {
-                Error::InvalidCiphertextCount {
-                    actual: ciphertexts.len(),
-                }
+        let [ml_kem_ciphertext, hqc_ciphertext] = <&[Vec<u8>; 2]>::try_from(ciphertexts.as_slice())
+            .map_err(|_| Error::InvalidCiphertextCount {
+                actual: ciphertexts.len(),
             })?;
 
         let mut psk = [0u8; 32];
@@ -720,11 +719,11 @@ mod tests {
     use crate::backend::wg::relay_inventory::inventory_from_json;
     use crate::core::config::parse_config;
 
+    use super::STANDARD;
     use super::{
         ensure_supported_ephemeral_config, negotiation_timeout_for_attempt,
         public_key_inventory_token, validate_daita_config_against_inventory,
     };
-    use super::STANDARD;
 
     const PRIVATE_KEY: &str = "0000000000000000000000000000000000000000000000000000000000000000";
     const PUBLIC_KEY_A: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -747,8 +746,8 @@ mod tests {
         ))
         .expect("config should parse");
 
-        let error = ensure_supported_ephemeral_config(&config)
-            .expect_err("config should be rejected");
+        let error =
+            ensure_supported_ephemeral_config(&config).expect_err("config should be rejected");
         assert!(error
             .to_string()
             .contains("currently supports only Mullvad tunnel addresses"));
@@ -761,8 +760,8 @@ mod tests {
         ))
         .expect("config should parse");
 
-        let error = ensure_supported_ephemeral_config(&config)
-            .expect_err("config should be rejected");
+        let error =
+            ensure_supported_ephemeral_config(&config).expect_err("config should be rejected");
         assert!(error
             .to_string()
             .contains("currently supports only Mullvad single-hop configs"));

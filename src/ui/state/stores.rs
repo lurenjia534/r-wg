@@ -332,11 +332,7 @@ impl RuntimeState {
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
-    pub(crate) fn set_daita_status(
-        &mut self,
-        active: bool,
-        failure: Option<EphemeralFailureKind>,
-    ) {
+    pub(crate) fn set_daita_status(&mut self, active: bool, failure: Option<EphemeralFailureKind>) {
         self.daita_active = active;
         self.last_daita_failure = failure;
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
@@ -700,10 +696,7 @@ impl UiState {
         self.backend_last_error = Some(message.into());
     }
 
-    pub(crate) fn set_daita_resources_diagnostic(
-        &mut self,
-        diagnostic: DaitaResourcesDiagnostic,
-    ) {
+    pub(crate) fn set_daita_resources_diagnostic(&mut self, diagnostic: DaitaResourcesDiagnostic) {
         self.daita_resources = diagnostic;
     }
 }

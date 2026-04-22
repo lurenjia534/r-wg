@@ -544,7 +544,8 @@ impl EngineState {
             match ephemeral::upgrade_tunnel(
                 request.quantum_mode,
                 request.daita_mode,
-                &self.device
+                &self
+                    .device
                     .as_ref()
                     .expect("device must exist during ephemeral negotiation")
                     .device,
@@ -728,9 +729,9 @@ impl EngineState {
     }
 
     fn relay_inventory_status(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
-        relay_inventory::status_snapshot().map(map_relay_inventory_status_snapshot).map_err(
-            |error| EngineError::Remote(error.to_string()),
-        )
+        relay_inventory::status_snapshot()
+            .map(map_relay_inventory_status_snapshot)
+            .map_err(|error| EngineError::Remote(error.to_string()))
     }
 }
 

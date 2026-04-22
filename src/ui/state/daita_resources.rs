@@ -123,7 +123,9 @@ impl DaitaResourcesDiagnostic {
     pub(crate) fn has_cache(&self) -> bool {
         matches!(
             self.health,
-            DaitaResourcesHealth::Ready | DaitaResourcesHealth::Refreshing | DaitaResourcesHealth::Error
+            DaitaResourcesHealth::Ready
+                | DaitaResourcesHealth::Refreshing
+                | DaitaResourcesHealth::Error
         ) && self.fetched_at.is_some()
     }
 

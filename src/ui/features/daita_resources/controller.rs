@@ -12,21 +12,23 @@ pub(crate) fn refresh_daita_resources_status(app: &mut WgApp, cx: &mut Context<W
     cx.notify();
 
     cx.spawn(async move |view, cx| {
-        let result = cx.background_spawn(async move { tunnel_session.relay_inventory_status() }).await;
+        let result = cx
+            .background_spawn(async move { tunnel_session.relay_inventory_status() })
+            .await;
         let _ = view.update(cx, |this, cx| {
             match result {
                 Ok(snapshot) => {
-                    this.ui
-                        .set_daita_resources_diagnostic(DaitaResourcesDiagnostic::from_snapshot(
-                            snapshot,
-                        ));
+                    this.ui.set_daita_resources_diagnostic(
+                        DaitaResourcesDiagnostic::from_snapshot(snapshot),
+                    );
                 }
                 Err(err) => {
                     let message = format!("DAITA resources check failed: {err}");
-                    this.ui.set_daita_resources_diagnostic(DaitaResourcesDiagnostic::error(
-                        message.clone(),
-                        Some(&previous),
-                    ));
+                    this.ui
+                        .set_daita_resources_diagnostic(DaitaResourcesDiagnostic::error(
+                            message.clone(),
+                            Some(&previous),
+                        ));
                 }
             }
             cx.notify();
@@ -44,22 +46,24 @@ pub(crate) fn refresh_daita_resources_cache(app: &mut WgApp, cx: &mut Context<Wg
     cx.notify();
 
     cx.spawn(async move |view, cx| {
-        let result = cx.background_spawn(async move { tunnel_session.refresh_relay_inventory() }).await;
+        let result = cx
+            .background_spawn(async move { tunnel_session.refresh_relay_inventory() })
+            .await;
         let _ = view.update(cx, |this, cx| {
             match result {
                 Ok(snapshot) => {
-                    this.ui
-                        .set_daita_resources_diagnostic(DaitaResourcesDiagnostic::from_snapshot(
-                            snapshot,
-                        ));
+                    this.ui.set_daita_resources_diagnostic(
+                        DaitaResourcesDiagnostic::from_snapshot(snapshot),
+                    );
                     this.set_status("DAITA resources refreshed");
                 }
                 Err(err) => {
                     let message = format!("DAITA resources refresh failed: {err}");
-                    this.ui.set_daita_resources_diagnostic(DaitaResourcesDiagnostic::error(
-                        message.clone(),
-                        Some(&previous),
-                    ));
+                    this.ui
+                        .set_daita_resources_diagnostic(DaitaResourcesDiagnostic::error(
+                            message.clone(),
+                            Some(&previous),
+                        ));
                     this.set_error(message);
                 }
             }

@@ -2,8 +2,8 @@ use gpui::{Context, SharedString};
 
 use r_wg::backend::wg::PrivilegedServiceAction;
 
-use super::super::features::daita_resources::controller as daita_resources_controller;
 use super::super::features::backend_admin::controller;
+use super::super::features::daita_resources::controller as daita_resources_controller;
 use super::super::state::WgApp;
 
 impl WgApp {

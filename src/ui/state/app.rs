@@ -320,11 +320,7 @@ impl WgApp {
         cx.notify();
     }
 
-    pub(crate) fn set_daita_mode_pref(
-        &mut self,
-        value: DaitaMode,
-        cx: &mut gpui::Context<Self>,
-    ) {
+    pub(crate) fn set_daita_mode_pref(&mut self, value: DaitaMode, cx: &mut gpui::Context<Self>) {
         if self.ui_prefs.daita_mode != value {
             self.ui_prefs.daita_mode = value;
             self.persist_state_async(cx);
