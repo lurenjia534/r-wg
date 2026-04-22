@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.1 - 2026-04-22
+
+- Upgraded `gotatun` to the upstream `0.5.1` git branch with DAITA enabled and removed the vendored copy from the repository, shrinking the tree while keeping the backend aligned with Mullvad's current WireGuard data-plane support.
+- Added a Mullvad-only DAITA tunnel upgrade path across the backend, privileged IPC, and desktop surfaces, including ephemeral-peer DAITA negotiation, relay-inventory-backed capability validation, DAITA runtime state, and padding/decoy statistics in the UI.
+- Added backend-managed Mullvad relay inventory caching plus a Settings flow to download or refresh DAITA resources ahead of time, so DAITA startup no longer depends on live API reachability at tunnel start and still fails closed when cache or relay capability checks are missing.
+- Hardened DAITA startup and refresh behavior after initial rollout: Windows-specific upgrade handling now matches the returned outcome type, applied network state is owned early enough for panic recovery to clean it up reliably, relay-inventory refresh no longer blocks the main VPN control worker, and negotiation now retries with timeout backoff up to 48 seconds on weaker links.
+- Installed the Rustls crypto provider explicitly before network use to avoid startup panics during relay inventory downloads, and finished a small UI cleanup pass across the touched DAITA/overview/settings surfaces.
+
 ## 0.3.0 - 2026-04-17
 
 - Added a dedicated Tools workspace with CIDR exclusion/normalization and reachability audit flows, including saved-config audits, cancellation/progress snapshots, virtualized result lists, and host-side endpoint probing without extending privileged IPC.
