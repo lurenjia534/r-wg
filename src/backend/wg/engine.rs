@@ -461,34 +461,35 @@ impl EngineState {
             log_engine::device_created();
         }
 
-        let device = &self
-            .device
-            .as_ref()
-            .expect("device must exist after creation/reuse")
-            .device;
-
         // 配置 gotatun 设备；失败则立即停止设备。
-        let config_result = device
-            .write(async |device| {
-                device.set_private_key(settings.private_key).await;
-                if let Some(port) = settings.listen_port {
-                    device.set_listen_port(port);
-                }
-                #[cfg(target_os = "linux")]
-                if let Some(fwmark) = settings.fwmark {
-                    device.set_fwmark(fwmark)?;
-                }
-                device.clear_peers();
-                device.add_peers(settings.peers.clone());
-                Ok::<_, device::Error>(())
-            })
-            .await
-            .and_then(|result| result);
+        let config_result = {
+            let device = &self
+                .device
+                .as_ref()
+                .expect("device must exist after creation/reuse")
+                .device;
+            device
+                .write(async |device| {
+                    device.set_private_key(settings.private_key).await;
+                    if let Some(port) = settings.listen_port {
+                        device.set_listen_port(port);
+                    }
+                    #[cfg(target_os = "linux")]
+                    if let Some(fwmark) = settings.fwmark {
+                        device.set_fwmark(fwmark)?;
+                    }
+                    device.clear_peers();
+                    device.add_peers(settings.peers.clone());
+                    Ok::<_, device::Error>(())
+                })
+                .await
+                .and_then(|result| result)
+        };
         if let Err(err) = config_result {
             if created_new {
                 self.shutdown_device().await;
             } else {
-                let _ = device.clear_peers().await;
+                let _ = self.clear_device_peers().await;
             }
             return Err(EngineError::Device(err));
         }
@@ -503,11 +504,12 @@ impl EngineState {
                     if created_new {
                         self.shutdown_device().await;
                     } else {
-                        let _ = device.clear_peers().await;
+                        let _ = self.clear_device_peers().await;
                     }
                     return Err(EngineError::Network(err.error));
                 }
             };
+        self.net_state = Some(net_result.state);
         log_engine::network_configured();
         self.route_apply_report = Some(net_result.report.clone());
 
@@ -528,13 +530,11 @@ impl EngineState {
                     self.last_daita_failure = Some(error.kind());
                 }
                 log_engine::ephemeral_negotiation_failed(&message);
-                let cleanup_result = platform::cleanup_network_config(net_result.state)
-                    .await
-                    .map_err(EngineError::from);
+                let cleanup_result = self.cleanup_active_network_state().await;
                 if created_new {
                     self.shutdown_device().await;
                 } else {
-                    let _ = device.clear_peers().await;
+                    let _ = self.clear_device_peers().await;
                 }
                 return match cleanup_result {
                     Ok(()) => Err(EngineError::Ephemeral(message)),
@@ -544,7 +544,10 @@ impl EngineState {
             match ephemeral::upgrade_tunnel(
                 request.quantum_mode,
                 request.daita_mode,
-                device,
+                &self.device
+                    .as_ref()
+                    .expect("device must exist during ephemeral negotiation")
+                    .device,
                 &request.tun_name,
                 &parsed,
                 base_peer,
@@ -571,13 +574,11 @@ impl EngineState {
                     }
                     let message = error.to_string();
                     log_engine::ephemeral_negotiation_failed(&message);
-                    let cleanup_result = platform::cleanup_network_config(net_result.state)
-                        .await
-                        .map_err(EngineError::from);
+                    let cleanup_result = self.cleanup_active_network_state().await;
                     if created_new {
                         self.shutdown_device().await;
                     } else {
-                        let _ = device.clear_peers().await;
+                        let _ = self.clear_device_peers().await;
                     }
                     return match cleanup_result {
                         Ok(()) => Err(EngineError::Ephemeral(message)),
@@ -588,9 +589,25 @@ impl EngineState {
         }
 
         // 保存运行态状态，便于后续 stop/cleanup。
-        self.net_state = Some(net_result.state);
         self.running = true;
 
+        Ok(())
+    }
+
+    async fn cleanup_active_network_state(&mut self) -> Result<(), EngineError> {
+        match self.net_state.take() {
+            Some(state) => platform::cleanup_network_config(state)
+                .await
+                .map_err(EngineError::from),
+            None => Ok(()),
+        }
+    }
+
+    async fn clear_device_peers(&self) -> Result<(), device::Error> {
+        let Some(device) = self.device.as_ref().map(|slot| &slot.device) else {
+            return Ok(());
+        };
+        let _ = device.clear_peers().await?;
         Ok(())
     }
 
@@ -711,28 +728,9 @@ impl EngineState {
     }
 
     fn relay_inventory_status(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
-        relay_inventory::status_snapshot()
-            .map(|snapshot| RelayInventoryStatusSnapshot {
-                cache_path: snapshot.cache_path,
-                present: snapshot.present,
-                relay_count: snapshot.relay_count,
-                daita_relay_count: snapshot.daita_relay_count,
-                fetched_at_unix_secs: snapshot.fetched_at_unix_secs,
-            })
-            .map_err(|error| EngineError::Remote(error.to_string()))
-    }
-
-    async fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
-        relay_inventory::refresh_cache()
-            .await
-            .map(|snapshot| RelayInventoryStatusSnapshot {
-                cache_path: snapshot.cache_path,
-                present: snapshot.present,
-                relay_count: snapshot.relay_count,
-                daita_relay_count: snapshot.daita_relay_count,
-                fetched_at_unix_secs: snapshot.fetched_at_unix_secs,
-            })
-            .map_err(|error| EngineError::Remote(error.to_string()))
+        relay_inventory::status_snapshot().map(map_relay_inventory_status_snapshot).map_err(
+            |error| EngineError::Remote(error.to_string()),
+        )
     }
 }
 
@@ -784,7 +782,13 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
                 let _ = reply.send(state.relay_inventory_status());
             }
             Command::RefreshRelayInventory(reply) => {
-                let _ = reply.send(state.refresh_relay_inventory().await);
+                tokio::spawn(async move {
+                    let result = relay_inventory::refresh_cache()
+                        .await
+                        .map(map_relay_inventory_status_snapshot)
+                        .map_err(|error| EngineError::Remote(error.to_string()));
+                    let _ = reply.send(result);
+                });
             }
         }
     }
@@ -814,13 +818,23 @@ async fn catch_start_panic(
 
 async fn recover_after_worker_panic(state: &mut EngineState) {
     let apply_report = state.apply_report();
-    if let Some(net_state) = state.net_state.take() {
-        if let Err(err) = platform::cleanup_network_config(net_state).await {
-            tracing::warn!("failed to clean up network state after backend panic: {err}");
-        }
+    if let Err(err) = state.cleanup_active_network_state().await {
+        tracing::warn!("failed to clean up network state after backend panic: {err}");
     }
     state.shutdown_device().await;
     state.route_apply_report = apply_report;
+}
+
+fn map_relay_inventory_status_snapshot(
+    snapshot: relay_inventory::RelayInventoryStatusSnapshot,
+) -> RelayInventoryStatusSnapshot {
+    RelayInventoryStatusSnapshot {
+        cache_path: snapshot.cache_path,
+        present: snapshot.present,
+        relay_count: snapshot.relay_count,
+        daita_relay_count: snapshot.daita_relay_count,
+        fetched_at_unix_secs: snapshot.fetched_at_unix_secs,
+    }
 }
 
 fn panic_payload_message(payload: Box<dyn Any + Send>) -> String {

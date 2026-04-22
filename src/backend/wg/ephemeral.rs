@@ -36,7 +36,10 @@ mod proto {
 
 const CONFIG_SERVICE_PORT: u16 = 1337;
 const CONFIG_SERVICE_GATEWAY: Ipv4Addr = Ipv4Addr::new(10, 64, 0, 1);
-const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(8);
+const INITIAL_NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(8);
+const MAX_NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(48);
+const NEGOTIATION_TIMEOUT_MULTIPLIER: u32 = 2;
+const NEGOTIATION_RETRY_ATTEMPTS: u32 = 3;
 const ML_KEM_ALGORITHM_NAME: &str = "ML-KEM-1024";
 const HQC_ALGORITHM_NAME: &str = "HQC-256";
 const DAITA_VERSION: u32 = 2;
@@ -320,7 +323,7 @@ pub(crate) async fn upgrade_tunnel(
     {
         match (upgrade_result, restore_result) {
             (Err(error), _) => Err(error),
-            (Ok(()), Err(error)) => Err(error),
+            (Ok(_outcome), Err(error)) => Err(error),
             (Ok(outcome), Ok(())) => Ok(outcome),
         }
     }
@@ -363,6 +366,7 @@ fn is_mullvad_tunnel_address(address: &InterfaceAddress) -> bool {
 }
 
 pub(crate) fn validate_daita_config(parsed: &WireGuardConfig) -> Result<(), Error> {
+    ensure_supported_ephemeral_config(parsed)?;
     let inventory = relay_inventory::load_cached_inventory()
         .map_err(Error::RelayInventoryCache)?
         .ok_or(Error::MissingRelayInventoryCache)?;
@@ -373,9 +377,7 @@ fn validate_daita_config_against_inventory(
     parsed: &WireGuardConfig,
     inventory: &MullvadRelayInventory,
 ) -> Result<(), Error> {
-    let peer = parsed.peers.first().ok_or(Error::UnsupportedConfig(
-        "DAITA startup validation requires exactly one configured Mullvad peer",
-    ))?;
+    let peer = supported_ephemeral_peer(parsed)?;
 
     peer.endpoint.as_ref().ok_or(Error::UnsupportedConfig(
         "DAITA startup validation requires a configured Mullvad relay endpoint",
@@ -401,6 +403,15 @@ fn validate_daita_config_against_inventory(
     Ok(())
 }
 
+fn supported_ephemeral_peer(
+    parsed: &WireGuardConfig,
+) -> Result<&crate::core::config::PeerConfig, Error> {
+    ensure_supported_ephemeral_config(parsed)?;
+    parsed.peers.first().ok_or(Error::UnsupportedConfig(
+        "ephemeral peer negotiation requires exactly one configured peer",
+    ))
+}
+
 fn public_key_inventory_token(peer: &crate::core::config::PeerConfig) -> String {
     STANDARD.encode(peer.public_key.as_bytes())
 }
@@ -411,17 +422,42 @@ async fn negotiate_ephemeral_peer(
     enable_post_quantum: bool,
     enable_daita: bool,
 ) -> Result<EphemeralNegotiation, Error> {
-    timeout(
-        NEGOTIATION_TIMEOUT,
-        negotiate_ephemeral_peer_inner(
-            parent_public_key,
-            ephemeral_public_key,
-            enable_post_quantum,
-            enable_daita,
-        ),
+    for retry_attempt in 0..=NEGOTIATION_RETRY_ATTEMPTS {
+        let timeout_window = negotiation_timeout_for_attempt(retry_attempt);
+        match timeout(
+            timeout_window,
+            negotiate_ephemeral_peer_inner(
+                parent_public_key,
+                ephemeral_public_key,
+                enable_post_quantum,
+                enable_daita,
+            ),
+        )
+        .await
+        {
+            Ok(result) => return result,
+            Err(_) if retry_attempt < NEGOTIATION_RETRY_ATTEMPTS => {
+                tracing::warn!(
+                    attempt = retry_attempt + 1,
+                    timeout_secs = timeout_window.as_secs(),
+                    quantum = enable_post_quantum,
+                    daita = enable_daita,
+                    "timed out negotiating Mullvad ephemeral peer, retrying"
+                );
+            }
+            Err(_) => return Err(Error::Timeout),
+        }
+    }
+
+    Err(Error::Timeout)
+}
+
+fn negotiation_timeout_for_attempt(retry_attempt: u32) -> Duration {
+    std::cmp::min(
+        MAX_NEGOTIATION_TIMEOUT,
+        INITIAL_NEGOTIATION_TIMEOUT
+            .saturating_mul(NEGOTIATION_TIMEOUT_MULTIPLIER.saturating_pow(retry_attempt)),
     )
-    .await
-    .map_err(|_| Error::Timeout)?
 }
 
 async fn negotiate_ephemeral_peer_inner(
@@ -677,14 +713,16 @@ impl HqcKeypair {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use base64::Engine as _;
 
     use crate::backend::wg::relay_inventory::inventory_from_json;
     use crate::core::config::parse_config;
 
     use super::{
-        ensure_supported_ephemeral_config, public_key_inventory_token,
-        validate_daita_config_against_inventory,
+        ensure_supported_ephemeral_config, negotiation_timeout_for_attempt,
+        public_key_inventory_token, validate_daita_config_against_inventory,
     };
     use super::STANDARD;
 
@@ -724,6 +762,29 @@ mod tests {
         .expect("config should parse");
 
         let error = ensure_supported_ephemeral_config(&config)
+            .expect_err("config should be rejected");
+        assert!(error
+            .to_string()
+            .contains("currently supports only Mullvad single-hop configs"));
+    }
+
+    #[test]
+    fn daita_validation_rejects_multipeer_configs_before_inventory_lookup() {
+        let config = parse_config(&format!(
+            "[Interface]\nPrivateKey = {PRIVATE_KEY}\nAddress = 10.64.12.34/32\n\n[Peer]\nPublicKey = {PUBLIC_KEY_A}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.10:51820\n\n[Peer]\nPublicKey = {PUBLIC_KEY_B}\nAllowedIPs = ::/0\nEndpoint = [2001:db8::1]:51820\n"
+        ))
+        .expect("config should parse");
+
+        let relay_inventory = inventory_from_json(
+            r#"{
+                "wireguard": {
+                    "relays": []
+                }
+            }"#,
+        )
+        .expect("inventory should parse");
+
+        let error = validate_daita_config_against_inventory(&config, &relay_inventory)
             .expect_err("config should be rejected");
         assert!(error
             .to_string()
@@ -882,5 +943,14 @@ mod tests {
         assert!(legacy.daita);
         assert!(feature.daita);
         assert!(!plain.daita);
+    }
+
+    #[test]
+    fn negotiation_timeout_backoff_caps_at_48_seconds() {
+        assert_eq!(negotiation_timeout_for_attempt(0), Duration::from_secs(8));
+        assert_eq!(negotiation_timeout_for_attempt(1), Duration::from_secs(16));
+        assert_eq!(negotiation_timeout_for_attempt(2), Duration::from_secs(32));
+        assert_eq!(negotiation_timeout_for_attempt(3), Duration::from_secs(48));
+        assert_eq!(negotiation_timeout_for_attempt(4), Duration::from_secs(48));
     }
 }

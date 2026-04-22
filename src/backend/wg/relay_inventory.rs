@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use http_body_util::{BodyExt as _, Empty};
@@ -17,6 +18,8 @@ use std::env;
 const RELAY_INVENTORY_TIMEOUT: Duration = Duration::from_secs(15);
 const RELAY_INVENTORY_URL: &str = "https://api.mullvad.net/app/v1/relays";
 const RELAY_INVENTORY_FILE_NAME: &str = "mullvad-relays.json";
+
+static REFRESH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 #[derive(Debug)]
 pub(crate) enum Error {
@@ -190,6 +193,10 @@ pub(crate) fn status_snapshot() -> Result<RelayInventoryStatusSnapshot, Error> {
 }
 
 pub(crate) async fn refresh_cache() -> Result<RelayInventoryStatusSnapshot, Error> {
+    let _guard = REFRESH_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let inventory = fetch_remote_inventory().await?;
     let cache_path = relay_inventory_cache_path();
     let fetched_at_unix_secs = SystemTime::now()
@@ -223,26 +230,30 @@ async fn fetch_remote_inventory() -> Result<MullvadRelayInventory, Error> {
         .body(Empty::<Bytes>::new())
         .expect("static relay inventory request must be valid");
 
-    let response = timeout(RELAY_INVENTORY_TIMEOUT, client.request(request))
-        .await
-        .map_err(|_| Error::FetchTimeout)?
-        .map_err(|error| Error::FetchTransport(error.to_string()))?;
+    timeout(RELAY_INVENTORY_TIMEOUT, async {
+        let response = client
+            .request(request)
+            .await
+            .map_err(|error| Error::FetchTransport(error.to_string()))?;
 
-    if response.status() != StatusCode::OK {
-        return Err(Error::FetchStatus(response.status()));
-    }
+        if response.status() != StatusCode::OK {
+            return Err(Error::FetchStatus(response.status()));
+        }
 
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .map_err(|error| Error::FetchTransport(error.to_string()))?
-        .to_bytes();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .map_err(|error| Error::FetchTransport(error.to_string()))?
+            .to_bytes();
 
-    let response: RelayInventoryResponse =
-        serde_json::from_slice(&body).map_err(|error| Error::ParseRemote(error.to_string()))?;
+        let response: RelayInventoryResponse =
+            serde_json::from_slice(&body).map_err(|error| Error::ParseRemote(error.to_string()))?;
 
-    Ok(response.into())
+        Ok::<_, Error>(response.into())
+    })
+    .await
+    .map_err(|_| Error::FetchTimeout)?
 }
 
 fn read_cached_inventory_file(path: &Path) -> Result<Option<CachedRelayInventoryFile>, Error> {
