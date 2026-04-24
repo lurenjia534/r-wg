@@ -51,6 +51,7 @@ pub enum RouteApplyKind {
     Dns,
     Nrpt,
     DnsGuard,
+    KillSwitch,
 }
 
 impl RouteApplyKind {
@@ -67,6 +68,7 @@ impl RouteApplyKind {
             Self::Dns => "DNS",
             Self::Nrpt => "NRPT",
             Self::DnsGuard => "DNS guard",
+            Self::KillSwitch => "Kill switch",
         }
     }
 }
@@ -244,6 +246,8 @@ fn infer_apply_kind(item_id: &str) -> Option<RouteApplyKind> {
         Some(RouteApplyKind::Nrpt)
     } else if item_id == "apply:dns_guard" {
         Some(RouteApplyKind::DnsGuard)
+    } else if item_id.starts_with("apply:linux:kill_switch") {
+        Some(RouteApplyKind::KillSwitch)
     } else if item_id == "apply:recovery" || item_id == "apply:recovery_init" {
         Some(RouteApplyKind::RecoveryJournal)
     } else {

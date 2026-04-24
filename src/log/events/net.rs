@@ -157,6 +157,21 @@ pub fn nrpt_cleanup_failed(err: &impl fmt::Display) {
     log_info!("net", "nrpt cleanup failed: {err}");
 }
 
+pub fn kill_switch_apply(tun_name: &str, backend: &str, ipv4: bool, ipv6: bool) {
+    log_info!(
+        "net",
+        "kill switch applied: tun={} backend={} ipv4={} ipv6={}",
+        tun_name,
+        backend,
+        ipv4,
+        ipv6
+    );
+}
+
+pub fn kill_switch_cleanup_failed(err: &impl fmt::Display) {
+    log_info!("net", "kill switch cleanup failed: {err}");
+}
+
 pub fn bypass_route_add_failed(dest: IpAddr, err: &impl fmt::Display) {
     log_info!("net", "bypass route add failed for {}: {err}", dest);
 }

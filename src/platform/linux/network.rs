@@ -18,6 +18,7 @@
 //! 配置失败会立即回滚所有已应用的更改，确保系统状态不会停留在不一致状态。
 
 mod dns;
+mod killswitch;
 mod logging;
 mod netlink;
 mod policy;
@@ -34,6 +35,7 @@ use crate::core::route_plan::{
 use crate::platform::{NetworkApplyError, NetworkApplyResult};
 
 use dns::{apply_dns, cleanup_dns, DnsState};
+use killswitch::{apply_kill_switch, KillSwitchState};
 use logging::{log_default_routes, log_privileges};
 use netlink::{build_route_message, delete_address, delete_route, link_index, netlink_handle};
 use policy::{
@@ -59,6 +61,7 @@ pub struct AppliedNetworkState {
     table: Option<RouteTable>,
     dns: Option<DnsState>,
     policy: Option<PolicyRoutingState>,
+    kill_switch: Option<KillSwitchState>,
 }
 
 #[derive(Debug)]
@@ -74,6 +77,7 @@ pub enum NetworkError {
     DnsNotSupported,
     LinkNotFound(String),
     MissingFwmark,
+    KillSwitchUnavailable(String),
 }
 
 impl std::fmt::Display for NetworkError {
@@ -92,6 +96,9 @@ impl std::fmt::Display for NetworkError {
             NetworkError::Netlink(err) => write!(f, "netlink error: {err}"),
             NetworkError::LinkNotFound(name) => write!(f, "link not found: {name}"),
             NetworkError::MissingFwmark => write!(f, "missing fwmark for policy routing"),
+            NetworkError::KillSwitchUnavailable(message) => {
+                write!(f, "kill switch unavailable: {message}")
+            }
         }
     }
 }
@@ -117,6 +124,7 @@ pub async fn apply_network_config(
     tun_name: &str,
     config: &WireGuardConfig,
     route_plan: &RoutePlan,
+    kill_switch_enabled: bool,
 ) -> Result<NetworkApplyResult, NetworkApplyError> {
     debug_assert_eq!(route_plan.platform, RoutePlanPlatform::Linux);
 
@@ -182,6 +190,7 @@ pub async fn apply_network_config(
         table: interface.table,
         dns: None,
         policy,
+        kill_switch: None,
     };
 
     let netlink = netlink_handle().map_err(|error| {
@@ -200,23 +209,28 @@ pub async fn apply_network_config(
         }
     })?;
     let handle = netlink.handle();
-    persist_applying_recovery_state(tun_name, route_plan, state.policy.as_ref(), &report).map_err(
-        |error| {
-            report.push_failed_kind(
-                "apply:linux:journal",
-                RouteApplyKind::RecoveryJournal,
-                Some(RouteApplyFailureKind::Persistence),
-                vec![format!(
-                    "Failed to persist Linux apply journal before any route operation: {error}"
-                )],
-            );
-            report.mark_failed();
-            NetworkApplyError {
-                error,
-                report: report.clone(),
-            }
-        },
-    )?;
+    persist_applying_recovery_state(
+        tun_name,
+        route_plan,
+        state.policy.as_ref(),
+        state.kill_switch.as_ref(),
+        &report,
+    )
+    .map_err(|error| {
+        report.push_failed_kind(
+            "apply:linux:journal",
+            RouteApplyKind::RecoveryJournal,
+            Some(RouteApplyFailureKind::Persistence),
+            vec![format!(
+                "Failed to persist Linux apply journal before any route operation: {error}"
+            )],
+        );
+        report.mark_failed();
+        NetworkApplyError {
+            error,
+            report: report.clone(),
+        }
+    })?;
 
     let result: Result<NetworkApplyResult, NetworkError> = async {
         // 建立 netlink 连接并查询接口索引，后续所有操作都基于 ifindex。
@@ -328,6 +342,7 @@ pub async fn apply_network_config(
                         tun_name,
                         route_plan,
                         state.policy.as_ref(),
+                        state.kill_switch.as_ref(),
                         &report,
                     )
                 {
@@ -405,6 +420,7 @@ pub async fn apply_network_config(
                         tun_name,
                         route_plan,
                         state.policy.as_ref(),
+                        state.kill_switch.as_ref(),
                         &report,
                     )
                 {
@@ -419,6 +435,91 @@ pub async fn apply_network_config(
                     );
                     report.mark_failed();
                     return abort_apply(tun_name, route_plan, state, &report, err).await;
+                }
+            }
+        }
+
+        if let Some((kill_switch_fwmark, kill_switch_v4, kill_switch_v6)) = state
+            .policy
+            .as_ref()
+            .map(|policy_state| (policy_state.fwmark, policy_state.v4, policy_state.v6))
+        {
+            let kill_switch_item_ids = [
+                (kill_switch_v4, "apply:linux:kill_switch_ipv4", "IPv4"),
+                (kill_switch_v6, "apply:linux:kill_switch_ipv6", "IPv6"),
+            ];
+
+            if kill_switch_enabled {
+                match apply_kill_switch(tun_name, kill_switch_fwmark, kill_switch_v4, kill_switch_v6)
+                    .await
+                {
+                    Ok(kill_switch_state) => {
+                        for (enabled, item_id, family_label) in kill_switch_item_ids {
+                            if !enabled {
+                                continue;
+                            }
+                            report.push_applied_kind(
+                                item_id,
+                                RouteApplyKind::KillSwitch,
+                                vec![format!(
+                                    "Applied Linux kill switch for {family_label} traffic using fwmark 0x{:x}.",
+                                    kill_switch_fwmark
+                                )],
+                            );
+                        }
+                        state.kill_switch = Some(kill_switch_state);
+                        if let Err(err) =
+                            persist_applying_recovery_state(
+                                tun_name,
+                                route_plan,
+                                state.policy.as_ref(),
+                                state.kill_switch.as_ref(),
+                                &report,
+                            )
+                        {
+                            report.push_failed_kind(
+                                "apply:linux:journal",
+                                RouteApplyKind::RecoveryJournal,
+                                Some(RouteApplyFailureKind::Persistence),
+                                vec![format!(
+                                    "Failed to persist Linux apply journal after kill switch setup: {err}"
+                                )],
+                            );
+                            report.mark_failed();
+                            return abort_apply(tun_name, route_plan, state, &report, err).await;
+                        }
+                    }
+                    Err(err) => {
+                        for (enabled, item_id, family_label) in kill_switch_item_ids {
+                            if !enabled {
+                                continue;
+                            }
+                            report.push_failed_kind(
+                                item_id,
+                                RouteApplyKind::KillSwitch,
+                                Some(RouteApplyFailureKind::System),
+                                vec![format!(
+                                    "Failed to apply Linux kill switch for {family_label} traffic with fwmark 0x{:x}: {err}",
+                                    kill_switch_fwmark
+                                )],
+                            );
+                        }
+                        report.mark_failed();
+                        return abort_apply(tun_name, route_plan, state, &report, err).await;
+                    }
+                }
+            } else {
+                for (enabled, item_id, family_label) in kill_switch_item_ids {
+                    if !enabled {
+                        continue;
+                    }
+                    report.push_skipped_kind(
+                        item_id,
+                        RouteApplyKind::KillSwitch,
+                        vec![format!(
+                            "Linux kill switch is disabled in Settings, so {family_label} traffic is not blocked outside the tunnel."
+                        )],
+                    );
                 }
             }
         }
@@ -461,6 +562,7 @@ pub async fn apply_network_config(
             tun_name,
             &route_ops,
             state.policy.as_ref(),
+            state.kill_switch.as_ref(),
             state.dns.as_ref(),
             &report,
         )
@@ -493,7 +595,13 @@ async fn abort_apply(
     report: &RouteApplyReport,
     error: NetworkError,
 ) -> Result<NetworkApplyResult, NetworkError> {
-    let _ = persist_applying_recovery_state(tun_name, route_plan, state.policy.as_ref(), report);
+    let _ = persist_applying_recovery_state(
+        tun_name,
+        route_plan,
+        state.policy.as_ref(),
+        state.kill_switch.as_ref(),
+        report,
+    );
     let _ = cleanup_network_config_impl(state, false).await;
     Err(error)
 }
@@ -502,21 +610,23 @@ fn persist_applying_recovery_state(
     tun_name: &str,
     route_plan: &RoutePlan,
     policy: Option<&PolicyRoutingState>,
+    kill_switch: Option<&KillSwitchState>,
     report: &RouteApplyReport,
 ) -> Result<(), NetworkError> {
     write_persisted_apply_report(report)?;
-    write_applying_journal(tun_name, route_plan, policy)
+    write_applying_journal(tun_name, route_plan, policy, kill_switch)
 }
 
 fn persist_running_recovery_state(
     tun_name: &str,
     route_ops: &[RoutePlanRouteOp],
     policy: Option<&PolicyRoutingState>,
+    kill_switch: Option<&KillSwitchState>,
     dns: Option<&DnsState>,
     report: &RouteApplyReport,
 ) -> Result<(), NetworkError> {
     write_persisted_apply_report(report)?;
-    write_running_journal(tun_name, route_ops, policy, dns)
+    write_running_journal(tun_name, route_ops, policy, kill_switch, dns)
 }
 
 /// 清理之前应用的网络配置。
@@ -528,74 +638,107 @@ async fn cleanup_network_config_impl(
     state: AppliedNetworkState,
     clear_journal: bool,
 ) -> Result<(), NetworkError> {
+    let AppliedNetworkState {
+        tun_name,
+        addresses,
+        routes,
+        table,
+        dns,
+        policy,
+        kill_switch,
+    } = state;
+
     log_net::cleanup_linux(
-        &state.tun_name,
-        state.addresses.len(),
-        state.routes.len(),
-        state.table,
-        state.dns.is_some(),
+        &tun_name,
+        addresses.len(),
+        routes.len(),
+        table,
+        dns.is_some(),
     );
-    // 清理阶段同样需要 netlink handle。
-    let netlink = netlink_handle()?;
-    let handle = netlink.handle();
+    let result = match netlink_handle() {
+        Ok(netlink) => {
+            let handle = netlink.handle();
+            let result = async {
+                let link_index = match link_index(handle, &tun_name).await {
+                    Ok(index) => index,
+                    Err(err) => {
+                        log_net::link_lookup_failed(&err);
+                        return Ok(());
+                    }
+                };
 
-    let result = async {
-        let link_index = match link_index(handle, &state.tun_name).await {
-            Ok(index) => index,
-            Err(err) => {
-                log_net::link_lookup_failed(&err);
-                return Ok(());
-            }
-        };
-
-        // 先删除接口地址，避免残留地址影响后续路由决策。
-        for address in &state.addresses {
-            log_net::address_del(address.addr, address.cidr);
-            if let Err(err) = delete_address(handle, link_index, address).await {
-                log_net::address_del_failed(&err);
-            }
-        }
-
-        // 删除该隧道添加的路由（包含策略表或主表路由）。
-        if state.table != Some(RouteTable::Off) {
-            for route_op in &state.routes {
-                if !matches!(route_op.kind, RoutePlanRouteKind::Allowed) {
-                    continue;
+                // 先删除接口地址，避免残留地址影响后续路由决策。
+                for address in &addresses {
+                    log_net::address_del(address.addr, address.cidr);
+                    if let Err(err) = delete_address(handle, link_index, address).await {
+                        log_net::address_del_failed(&err);
+                    }
                 }
-                let table = route_op.table_id;
-                log_net::route_del(route_op.route.addr, route_op.route.cidr, table);
-                if let Err(err) = delete_route(handle, link_index, &route_op.route, table).await {
-                    log_net::route_del_failed(&err);
+
+                // 删除该隧道添加的路由（包含策略表或主表路由）。
+                if table != Some(RouteTable::Off) {
+                    for route_op in &routes {
+                        if !matches!(route_op.kind, RoutePlanRouteKind::Allowed) {
+                            continue;
+                        }
+                        let table = route_op.table_id;
+                        log_net::route_del(route_op.route.addr, route_op.route.cidr, table);
+                        if let Err(err) =
+                            delete_route(handle, link_index, &route_op.route, table).await
+                        {
+                            log_net::route_del_failed(&err);
+                        }
+                    }
                 }
+
+                // 按记录的 DNS 状态回滚。
+                let dns_cleanup_result = if let Some(dns) = dns {
+                    log_dns::revert_start();
+                    cleanup_dns(tun_name.as_str(), dns).await
+                } else {
+                    Ok(())
+                };
+
+                // 清理 policy rule，恢复系统默认路由策略。
+                if let Some(policy) = policy.as_ref() {
+                    if let Err(err) = cleanup_policy_state(handle, policy).await {
+                        log_net::policy_rule_cleanup_failed(&err);
+                    }
+                }
+
+                dns_cleanup_result
             }
+            .await;
+
+            netlink.shutdown().await;
+            result
         }
+        Err(err) => Err(err),
+    };
 
-        // 按记录的 DNS 状态回滚。
-        let dns_cleanup_result = if let Some(dns) = state.dns {
-            log_dns::revert_start();
-            cleanup_dns(state.tun_name.as_str(), dns).await
-        } else {
-            Ok(())
-        };
+    let kill_switch_result = if let Some(kill_switch) = kill_switch {
+        kill_switch.cleanup().await.map_err(|err| {
+            log_net::kill_switch_cleanup_failed(&err);
+            err
+        })
+    } else {
+        Ok(())
+    };
 
-        // 清理 policy rule，恢复系统默认路由策略。
-        if let Some(policy) = state.policy.as_ref() {
-            if let Err(err) = cleanup_policy_state(handle, policy).await {
-                log_net::policy_rule_cleanup_failed(&err);
-            }
-        }
-
-        dns_cleanup_result
-    }
-    .await;
-
-    netlink.shutdown().await;
-    result?;
+    merge_cleanup_results(result, kill_switch_result)?;
     if clear_journal {
         clear_recovery_journal()?;
         clear_persisted_apply_report()?;
     }
     Ok(())
+}
+
+fn merge_cleanup_results(
+    link_dependent_result: Result<(), NetworkError>,
+    kill_switch_result: Result<(), NetworkError>,
+) -> Result<(), NetworkError> {
+    link_dependent_result?;
+    kill_switch_result
 }
 
 pub fn attempt_startup_repair() -> Result<(), NetworkError> {
@@ -616,10 +759,26 @@ fn classify_linux_failure(error: &NetworkError) -> RouteApplyFailureKind {
     match error {
         NetworkError::MissingFwmark => RouteApplyFailureKind::Precondition,
         NetworkError::DnsVerifyFailed(_) => RouteApplyFailureKind::Verification,
-        NetworkError::CommandFailed { .. } | NetworkError::DnsNotSupported => {
-            RouteApplyFailureKind::System
-        }
+        NetworkError::CommandFailed { .. }
+        | NetworkError::DnsNotSupported
+        | NetworkError::KillSwitchUnavailable(_) => RouteApplyFailureKind::System,
         NetworkError::Io(_) => RouteApplyFailureKind::Persistence,
         NetworkError::Netlink(_) | NetworkError::LinkNotFound(_) => RouteApplyFailureKind::Lookup,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_result_propagates_kill_switch_failure() {
+        let error = merge_cleanup_results(
+            Ok(()),
+            Err(NetworkError::KillSwitchUnavailable("boom".to_string())),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, NetworkError::KillSwitchUnavailable(message) if message == "boom"));
     }
 }

@@ -56,6 +56,8 @@ pub struct StartRequest {
     pub quantum_mode: QuantumMode,
     /// DAITA 模式。
     pub daita_mode: DaitaMode,
+    /// 是否启用 Kill switch。
+    pub kill_switch_enabled: bool,
 }
 
 impl StartRequest {
@@ -66,6 +68,7 @@ impl StartRequest {
         dns: DnsSelection,
         quantum_mode: QuantumMode,
         daita_mode: DaitaMode,
+        kill_switch_enabled: bool,
     ) -> Self {
         Self {
             tun_name: tun_name.into(),
@@ -73,6 +76,7 @@ impl StartRequest {
             dns,
             quantum_mode,
             daita_mode,
+            kill_switch_enabled,
         }
     }
 }
@@ -496,19 +500,25 @@ impl EngineState {
         log_engine::device_configured();
 
         // 应用系统网络配置；失败时回滚 gotatun 设备。
-        let net_result =
-            match platform::apply_network_config(&request.tun_name, &parsed, &route_plan).await {
-                Ok(result) => result,
-                Err(err) => {
-                    self.route_apply_report = Some(err.report);
-                    if created_new {
-                        self.shutdown_device().await;
-                    } else {
-                        let _ = self.clear_device_peers().await;
-                    }
-                    return Err(EngineError::Network(err.error));
+        let net_result = match platform::apply_network_config(
+            &request.tun_name,
+            &parsed,
+            &route_plan,
+            request.kill_switch_enabled,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                self.route_apply_report = Some(err.report);
+                if created_new {
+                    self.shutdown_device().await;
+                } else {
+                    let _ = self.clear_device_peers().await;
                 }
-            };
+                return Err(EngineError::Network(err.error));
+            }
+        };
         self.net_state = Some(net_result.state);
         log_engine::network_configured();
         self.route_apply_report = Some(net_result.report.clone());

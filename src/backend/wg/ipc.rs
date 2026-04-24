@@ -18,6 +18,7 @@
 //! - v6: StartRequest/RuntimeSnapshot 新增 DAITA 字段
 //! - v7: EngineStats::PeerStats 新增 DAITA 统计字段
 //! - v8: 新增 DAITA relay inventory 状态/刷新接口
+//! - v9: StartRequest 新增 kill_switch_enabled
 //!
 //! # 消息格式
 //!
@@ -46,7 +47,7 @@ use super::engine::{
 ///
 /// 当 UI 和服务端的版本不匹配时，会返回 VersionMismatch 错误。
 /// 升级时需要确保双方都支持相同的版本。
-pub const IPC_PROTOCOL_VERSION: u32 = 8;
+pub const IPC_PROTOCOL_VERSION: u32 = 9;
 
 /// UI -> 特权后端的命令枚举
 ///

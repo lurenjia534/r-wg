@@ -2,6 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::super::dns::{cleanup_dns, DnsState};
+use super::super::killswitch::KillSwitchState;
 use super::super::netlink::{link_index, netlink_handle, NetlinkConnection};
 use super::super::policy::{cleanup_policy_rules_once, cleanup_stale_default_routes_once};
 use super::super::NetworkError;
@@ -51,6 +52,10 @@ pub(crate) async fn attempt_startup_repair_with_backend<B: StartupRepairBackend>
 
     backend.close_session(session).await;
 
+    if let Some(kill_switch) = journal.kill_switch {
+        backend.cleanup_kill_switch(kill_switch).await?;
+    }
+
     if let Some(dns) = journal.dns {
         backend.cleanup_dns(&journal.tun_name, dns).await?;
     }
@@ -90,6 +95,10 @@ pub(crate) trait StartupRepairBackend {
         &'a self,
         tun_name: &'a str,
         dns: DnsState,
+    ) -> LocalBoxFuture<'a, Result<(), NetworkError>>;
+    fn cleanup_kill_switch<'a>(
+        &'a self,
+        kill_switch: KillSwitchState,
     ) -> LocalBoxFuture<'a, Result<(), NetworkError>>;
 }
 
@@ -157,5 +166,12 @@ impl StartupRepairBackend for SystemStartupRepairBackend {
         dns: DnsState,
     ) -> LocalBoxFuture<'a, Result<(), NetworkError>> {
         Box::pin(async move { cleanup_dns(tun_name, dns).await })
+    }
+
+    fn cleanup_kill_switch<'a>(
+        &'a self,
+        kill_switch: KillSwitchState,
+    ) -> LocalBoxFuture<'a, Result<(), NetworkError>> {
+        Box::pin(async move { kill_switch.cleanup().await })
     }
 }

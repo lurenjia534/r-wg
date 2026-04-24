@@ -31,6 +31,7 @@ pub(super) struct RouteMapPresentedPlan {
 pub(super) fn build_plan_presentation(
     route_plan: &OperationalRoutePlan,
     parsed: &WireGuardConfig,
+    kill_switch_enabled: bool,
 ) -> RouteMapPresentedPlan {
     let full_tunnel_active = route_plan.full_tunnel.any();
     let table_off = parsed.interface.table == Some(RouteTable::Off);
@@ -39,7 +40,7 @@ pub(super) fn build_plan_presentation(
         full_tunnel_active,
         parsed.interface.dns_servers.is_empty(),
     );
-    let inventory_groups = build_inventory_groups(route_plan, parsed);
+    let inventory_groups = build_inventory_groups(route_plan, parsed, kill_switch_enabled);
     let warning_count = inventory_groups
         .iter()
         .find(|group| group.id.as_ref() == "group-warnings")
@@ -77,6 +78,20 @@ pub(super) fn build_plan_presentation(
             if parsed.interface.dns_servers.is_empty() {
                 RouteMapTone::Warning
             } else if full_tunnel_active {
+                RouteMapTone::Info
+            } else {
+                RouteMapTone::Secondary
+            },
+        ),
+        chip(
+            if kill_switch_enabled {
+                "Kill Switch On"
+            } else {
+                "Kill Switch Off"
+            },
+            if full_tunnel_active && !kill_switch_enabled {
+                RouteMapTone::Warning
+            } else if kill_switch_enabled {
                 RouteMapTone::Info
             } else {
                 RouteMapTone::Secondary
@@ -211,6 +226,7 @@ pub(super) fn build_plan_explain(
 fn build_inventory_groups(
     route_plan: &OperationalRoutePlan,
     parsed: &WireGuardConfig,
+    kill_switch_enabled: bool,
 ) -> Vec<RouteMapInventoryGroup> {
     let table_off = parsed.interface.table == Some(RouteTable::Off);
     let interface_label = interface_label(parsed);
@@ -339,7 +355,7 @@ fn build_inventory_groups(
     let endpoint_bypass_items = build_endpoint_bypass_items(route_plan, parsed, &interface_label);
     let dns_route_items = build_dns_route_items(route_plan, parsed, &interface_label);
     let policy_items = build_policy_items(route_plan, parsed, table_off);
-    let warning_items = build_warning_items(route_plan, parsed);
+    let warning_items = build_warning_items(route_plan, parsed, kill_switch_enabled);
 
     vec![
         group(
@@ -805,6 +821,7 @@ fn build_policy_items(
 fn build_warning_items(
     route_plan: &OperationalRoutePlan,
     parsed: &WireGuardConfig,
+    kill_switch_enabled: bool,
 ) -> Vec<RouteMapInventoryItem> {
     let mut items = Vec::new();
 
@@ -841,6 +858,18 @@ fn build_warning_items(
             vec![
                 "No DNS servers are configured inside the tunnel.".into(),
                 "Users should verify whether system DNS is acceptable for this profile.".into(),
+            ],
+        ));
+    }
+
+    if route_plan.full_tunnel.any() && !kill_switch_enabled {
+        items.push(warning_item(
+            "warning-kill-switch-disabled",
+            "Kill switch is disabled",
+            "Full-tunnel routing stays active, but off-tunnel leak blocking is intentionally turned off.",
+            vec![
+                "If the tunnel drops, traffic may escape through the normal network path until the session is fully torn down.".into(),
+                "Use this only when you explicitly want looser behavior for testing or debugging.".into(),
             ],
         ));
     }

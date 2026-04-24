@@ -206,7 +206,8 @@ impl RouteMapData {
             DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset),
         );
         let route_plan = OperationalRoutePlan::build(RoutePlanPlatform::current(), &normalized);
-        let presented = build_plan_presentation(&route_plan, &normalized);
+        let presented =
+            build_plan_presentation(&route_plan, &normalized, app.ui_prefs.kill_switch_enabled);
 
         EffectiveRoutePlan {
             cache_key,
@@ -485,6 +486,7 @@ fn plan_cache_key(
     app.selection.selected_id.hash(&mut hasher);
     std::mem::discriminant(&app.ui_prefs.dns_mode).hash(&mut hasher);
     std::mem::discriminant(&app.ui_prefs.dns_preset).hash(&mut hasher);
+    app.ui_prefs.kill_switch_enabled.hash(&mut hasher);
 
     if let Some(parsed) = data.parsed_config.as_ref() {
         match parsed.interface.table {
@@ -567,6 +569,7 @@ fn evidence_cache_key(
                 BackendRouteApplyKind::Dns => 8u8.hash(&mut hasher),
                 BackendRouteApplyKind::Nrpt => 9u8.hash(&mut hasher),
                 BackendRouteApplyKind::DnsGuard => 10u8.hash(&mut hasher),
+                BackendRouteApplyKind::KillSwitch => 11u8.hash(&mut hasher),
             }
             match entry.failure_kind {
                 Some(BackendRouteApplyFailureKind::Precondition) => 0u8.hash(&mut hasher),

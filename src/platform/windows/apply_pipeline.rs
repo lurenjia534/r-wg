@@ -159,6 +159,7 @@ pub async fn apply_network_config(
     tun_name: &str,
     config: &WireGuardConfig,
     route_plan: &RoutePlan,
+    kill_switch_enabled: bool,
 ) -> Result<NetworkApplyResult, NetworkApplyError> {
     log_apply_prelude(tun_name, config);
 
@@ -174,7 +175,7 @@ pub async fn apply_network_config(
     let ctx = apply_bypass_routes(ctx, resolved_bypass_ops).await?;
     let ctx = apply_route_entries(ctx).await?;
     let ctx = apply_dns_stage(ctx).await?;
-    let ctx = apply_guard_stages(ctx).await?;
+    let ctx = apply_guard_stages(ctx, kill_switch_enabled).await?;
     let ctx = mark_recovery_running(ctx).await?;
 
     finish_with_report(ctx.state, ctx.report)
@@ -782,6 +783,7 @@ async fn apply_dns_stage<'a>(
 
 async fn apply_guard_stages<'a>(
     mut ctx: ApplyContext<'a>,
+    kill_switch_enabled: bool,
 ) -> Result<ApplyContext<'a>, NetworkApplyError> {
     let metric_count = ctx.route_plan.metric_ops.len();
     let bypass_count = ctx.route_plan.bypass_ops.len();
@@ -791,6 +793,26 @@ async fn apply_guard_stages<'a>(
         || ctx.config.interface.table == Some(RouteTable::Off)
         || (!ctx.full_v4 && !ctx.full_v6)
     {
+        return Ok(ctx);
+    }
+
+    if !kill_switch_enabled {
+        ctx.report.push_skipped_kind(
+            "apply:nrpt",
+            RouteApplyKind::Nrpt,
+            vec![
+                "Kill switch is disabled in Settings, so the Windows NRPT guard is skipped."
+                    .to_string(),
+            ],
+        );
+        ctx.report.push_skipped_kind(
+            "apply:dns_guard",
+            RouteApplyKind::DnsGuard,
+            vec![
+                "Kill switch is disabled in Settings, so the Windows DNS guard is skipped."
+                    .to_string(),
+            ],
+        );
         return Ok(ctx);
     }
 

@@ -238,6 +238,7 @@ mod tests {
                 DnsSelection::new(DnsMode::FollowConfig, DnsPreset::CloudflareStandard),
                 QuantumMode::Off,
                 DaitaMode::Off,
+                true,
             ),
         );
 

@@ -2,12 +2,13 @@ use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Local};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, Axis, Entity, ParentElement, Styled};
-use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui::{div, Axis, Entity, ParentElement, Styled, Window};
+use gpui_component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _};
+use gpui_component::dialog::DialogButtonProps;
 use gpui_component::setting::{SettingField, SettingItem};
 use gpui_component::switch::Switch;
 use gpui_component::{
-    h_flex, v_flex, ActiveTheme as _, Disableable as _, Selectable, Sizable, Size,
+    h_flex, v_flex, ActiveTheme as _, Disableable as _, Selectable, Sizable, Size, WindowExt,
 };
 use r_wg::backend::wg::{DaitaMode, QuantumMode};
 
@@ -114,6 +115,60 @@ pub(super) fn connect_password_item(app: Entity<WgApp>) -> SettingItem {
     .description("Require a local password before starting a WireGuard tunnel.")
 }
 
+pub(super) fn kill_switch_item(app: Entity<WgApp>) -> SettingItem {
+    SettingItem::new(
+        "Kill Switch",
+        SettingField::render(move |_, _window, cx| {
+            let enabled = app.read(cx).ui_prefs.kill_switch_enabled;
+            let enable_handle = app.clone();
+            let disable_dialog_handle = app.clone();
+
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    Switch::new("advanced-kill-switch")
+                        .label("Block traffic outside the tunnel during protected sessions")
+                        .checked(enabled)
+                        .with_size(Size::Small)
+                        .on_click(move |checked, window, cx| {
+                            if *checked {
+                                enable_handle.update(cx, |app, cx| {
+                                    app.set_kill_switch_enabled_pref(true, cx);
+                                });
+                            } else {
+                                open_kill_switch_disable_dialog(
+                                    disable_dialog_handle.clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }),
+                )
+                .when(!enabled, |this| {
+                    this.child(
+                        div()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().warning.alpha(0.42))
+                            .bg(cx.theme().warning.alpha(0.08))
+                            .px_3()
+                            .py_2()
+                            .text_sm()
+                            .text_color(cx.theme().warning)
+                            .child(
+                                "Warning: turning this off may allow traffic or DNS requests to escape outside the VPN if the tunnel drops.",
+                            ),
+                    )
+                })
+        }),
+    )
+    .layout(Axis::Vertical)
+    .description(
+        "Enabled by default. Full-tunnel sessions keep extra platform guardrails active to reduce leak risk.",
+    )
+}
+
 pub(super) fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
     let options = dns_mode_options();
     let get_handle = app.clone();
@@ -133,6 +188,44 @@ pub(super) fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
         ),
     )
     .description("Choose whether config DNS, system DNS, or presets take precedence.")
+}
+
+fn open_kill_switch_disable_dialog(
+    app_handle: Entity<WgApp>,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    window.open_dialog(cx, move |dialog, _window, cx| {
+        let disable_handle = app_handle.clone();
+        dialog
+            .title(div().text_lg().child("Turn off Kill Switch?"))
+            .confirm()
+            .button_props(
+                DialogButtonProps::default()
+                    .ok_text("Turn Off")
+                    .ok_variant(ButtonVariant::Danger)
+                    .cancel_text("Keep Enabled"),
+            )
+            .child(
+                div().text_sm().child(
+                    "Disabling Kill Switch can let traffic leave outside the VPN during tunnel loss or teardown.",
+                ),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Recommended for testing only. By default this stays enabled to preserve full-tunnel leak protection.",
+                    ),
+            )
+            .on_ok(move |_, _window, cx| {
+                disable_handle.update(cx, |app, cx| {
+                    app.set_kill_switch_enabled_pref(false, cx);
+                });
+                true
+            })
+    });
 }
 
 pub(super) fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {

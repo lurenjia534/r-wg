@@ -292,6 +292,18 @@ impl WgApp {
         cx.notify();
     }
 
+    pub(crate) fn set_kill_switch_enabled_pref(
+        &mut self,
+        value: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.kill_switch_enabled != value {
+            self.ui_prefs.kill_switch_enabled = value;
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn set_dns_mode_pref(&mut self, value: DnsMode, cx: &mut gpui::Context<Self>) {
         if self.ui_prefs.dns_mode != value {
             self.ui_prefs.dns_mode = value;

@@ -58,6 +58,7 @@ mod tests {
             phase: RecoveryPhase::Applying,
             routes,
             policy,
+            kill_switch: None,
             dns: None,
         }
     }
@@ -203,6 +204,14 @@ mod tests {
                 None => Ok(()),
             };
             Box::pin(async move { result })
+        }
+
+        fn cleanup_kill_switch<'a>(
+            &'a self,
+            _kill_switch: crate::platform::linux::network::killswitch::KillSwitchState,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), NetworkError>> + 'a>>
+        {
+            Box::pin(async { Ok(()) })
         }
     }
 

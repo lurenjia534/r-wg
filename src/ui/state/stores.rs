@@ -455,6 +455,7 @@ impl StatsState {
 pub(crate) struct UiPrefsState {
     pub(crate) log_auto_follow: bool,
     pub(crate) require_connect_password: bool,
+    pub(crate) kill_switch_enabled: bool,
     pub(crate) preferred_inspector_tab: ConfigInspectorTab,
     pub(crate) preferred_traffic_period: TrafficPeriod,
     pub(crate) configs_library_width: f32,
@@ -486,6 +487,7 @@ impl UiPrefsState {
         Self {
             log_auto_follow: true,
             require_connect_password: false,
+            kill_switch_enabled: true,
             preferred_inspector_tab: ConfigInspectorTab::Preview,
             preferred_traffic_period: TrafficPeriod::Today,
             configs_library_width: DEFAULT_CONFIGS_LIBRARY_WIDTH,

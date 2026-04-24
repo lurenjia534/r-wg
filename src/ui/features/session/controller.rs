@@ -217,6 +217,7 @@ fn start_with_config(
     let dns_selection = DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset);
     let quantum_mode = app.ui_prefs.quantum_mode;
     let daita_mode = app.ui_prefs.daita_mode;
+    let kill_switch_enabled = app.ui_prefs.kill_switch_enabled;
 
     cx.spawn(async move |view, cx| {
         // 如果指定了延迟，先等待
@@ -266,6 +267,7 @@ fn start_with_config(
             dns_selection,
             quantum_mode,
             daita_mode,
+            kill_switch_enabled,
         );
         let start_task = cx.background_spawn(async move {
             let outcome = tunnel_session.start(request);

@@ -9,7 +9,8 @@ use crate::ui::view::widgets::{PageShell, PageShellHeader};
 
 use super::preferences::{
     connect_password_item, daita_mode_item, daita_resources_item, dns_mode_item, dns_preset_item,
-    inspector_tab_item, log_auto_follow_item, quantum_mode_item, traffic_period_item,
+    inspector_tab_item, kill_switch_item, log_auto_follow_item, quantum_mode_item,
+    traffic_period_item,
 };
 use super::system::{privileged_backend_item, troubleshooting_item};
 
@@ -45,6 +46,7 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
                 .description(
                     "Require local approval and control upcoming tunnel hardening behavior.",
                 )
+                .item(kill_switch_item(app_handle.clone()))
                 .item(connect_password_item(app_handle.clone()))
                 .item(quantum_mode_item(app_handle.clone()))
                 .item(daita_mode_item(app_handle.clone()))

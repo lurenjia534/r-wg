@@ -75,8 +75,9 @@ pub async fn apply_network_config(
     tun_name: &str,
     config: &WireGuardConfig,
     route_plan: &RoutePlan,
+    kill_switch_enabled: bool,
 ) -> Result<NetworkApplyResult, NetworkApplyError> {
-    linux::apply_network_config(tun_name, config, route_plan).await
+    linux::apply_network_config(tun_name, config, route_plan, kill_switch_enabled).await
 }
 
 /// Windows 平台的网络配置入口。
@@ -85,8 +86,9 @@ pub async fn apply_network_config(
     tun_name: &str,
     config: &WireGuardConfig,
     route_plan: &RoutePlan,
+    kill_switch_enabled: bool,
 ) -> Result<NetworkApplyResult, NetworkApplyError> {
-    windows::apply_network_config(tun_name, config, route_plan).await
+    windows::apply_network_config(tun_name, config, route_plan, kill_switch_enabled).await
 }
 
 /// 其他平台：占位实现。
@@ -95,6 +97,7 @@ pub async fn apply_network_config(
     _tun_name: &str,
     _config: &WireGuardConfig,
     _route_plan: &RoutePlan,
+    _kill_switch_enabled: bool,
 ) -> Result<NetworkApplyResult, NetworkApplyError> {
     Ok(NetworkApplyResult {
         state: NetworkState,

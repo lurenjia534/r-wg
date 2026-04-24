@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::super::dns::DnsState;
+use super::super::killswitch::KillSwitchState;
 use super::super::policy::PolicyRoutingState;
 use super::super::NetworkError;
 use super::snapshot::{policy_snapshot, route_snapshots, route_snapshots_from_ops};
@@ -24,6 +25,8 @@ pub(crate) struct RecoveryJournal {
     pub(crate) phase: RecoveryPhase,
     pub(crate) routes: Vec<super::RecoveryRouteSnapshot>,
     pub(crate) policy: Option<super::RecoveryPolicySnapshot>,
+    #[serde(default)]
+    pub(crate) kill_switch: Option<KillSwitchState>,
     pub(crate) dns: Option<DnsState>,
 }
 
@@ -31,12 +34,14 @@ pub(crate) fn write_applying_journal(
     tun_name: &str,
     route_plan: &RoutePlan,
     policy: Option<&PolicyRoutingState>,
+    kill_switch: Option<&KillSwitchState>,
 ) -> Result<(), NetworkError> {
     write_recovery_journal(&RecoveryJournal {
         tun_name: tun_name.to_string(),
         phase: RecoveryPhase::Applying,
         routes: route_snapshots(route_plan),
         policy: policy.map(policy_snapshot),
+        kill_switch: kill_switch.cloned(),
         dns: None,
     })
 }
@@ -45,6 +50,7 @@ pub(crate) fn write_running_journal(
     tun_name: &str,
     routes: &[RoutePlanRouteOp],
     policy: Option<&PolicyRoutingState>,
+    kill_switch: Option<&KillSwitchState>,
     dns: Option<&DnsState>,
 ) -> Result<(), NetworkError> {
     write_recovery_journal(&RecoveryJournal {
@@ -52,6 +58,7 @@ pub(crate) fn write_running_journal(
         phase: RecoveryPhase::Running,
         routes: route_snapshots_from_ops(routes),
         policy: policy.map(policy_snapshot),
+        kill_switch: kill_switch.cloned(),
         dns: dns.cloned(),
     })
 }
@@ -79,7 +86,7 @@ pub(crate) fn clear_recovery_journal() -> Result<(), NetworkError> {
 }
 
 pub(crate) fn journal_requires_exact_cleanup(journal: &RecoveryJournal) -> bool {
-    !journal.routes.is_empty() || journal.policy.is_some()
+    !journal.routes.is_empty() || journal.policy.is_some() || journal.kill_switch.is_some()
 }
 
 fn write_recovery_journal(journal: &RecoveryJournal) -> Result<(), NetworkError> {

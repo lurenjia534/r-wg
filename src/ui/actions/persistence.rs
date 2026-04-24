@@ -239,6 +239,7 @@ impl<'a> PersistedStateSnapshot<'a> {
                 .map(ToString::to_string),
             log_auto_follow: Some(self.ui_prefs.log_auto_follow),
             require_connect_password: Some(self.ui_prefs.require_connect_password),
+            kill_switch_enabled: Some(self.ui_prefs.kill_switch_enabled),
             preferred_inspector_tab: Some(self.ui_prefs.preferred_inspector_tab),
             preferred_traffic_period: Some(self.ui_prefs.preferred_traffic_period),
             configs_library_width: Some(self.ui_prefs.configs_library_width),
@@ -322,6 +323,7 @@ struct PersistedStateRestore {
     theme_dark_name: Option<SharedString>,
     log_auto_follow: Option<bool>,
     require_connect_password: Option<bool>,
+    kill_switch_enabled: Option<bool>,
     preferred_inspector_tab: Option<super::super::state::ConfigInspectorTab>,
     preferred_traffic_period: Option<super::super::state::TrafficPeriod>,
     configs_library_width: Option<f32>,
@@ -425,6 +427,7 @@ impl PersistedStateRestore {
             theme_dark_name: Some(dark.entry.name.clone()),
             log_auto_follow: state.log_auto_follow,
             require_connect_password: state.require_connect_password,
+            kill_switch_enabled: state.kill_switch_enabled,
             preferred_inspector_tab: state.preferred_inspector_tab,
             preferred_traffic_period: state.preferred_traffic_period,
             configs_library_width: state.configs_library_width,
@@ -484,6 +487,9 @@ impl PersistedStateRestore {
         }
         if let Some(require_connect_password) = self.require_connect_password {
             ui_prefs.require_connect_password = require_connect_password;
+        }
+        if let Some(kill_switch_enabled) = self.kill_switch_enabled {
+            ui_prefs.kill_switch_enabled = kill_switch_enabled;
         }
         if let Some(preferred_inspector_tab) = self.preferred_inspector_tab {
             ui_prefs.preferred_inspector_tab = preferred_inspector_tab;

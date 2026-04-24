@@ -42,6 +42,8 @@ pub(crate) struct PersistedState {
     pub(crate) log_auto_follow: Option<bool>,
     #[serde(default)]
     pub(crate) require_connect_password: Option<bool>,
+    #[serde(default)]
+    pub(crate) kill_switch_enabled: Option<bool>,
     #[serde(default, alias = "preferred_right_tab")]
     pub(crate) preferred_inspector_tab: Option<ConfigInspectorTab>,
     #[serde(default)]
@@ -230,6 +232,7 @@ mod tests {
             theme_dark_name: Some("Network Dark".to_string()),
             log_auto_follow: Some(true),
             require_connect_password: Some(true),
+            kill_switch_enabled: Some(true),
             preferred_inspector_tab: Some(ConfigInspectorTab::Preview),
             preferred_traffic_period: Some(TrafficPeriod::Today),
             configs_library_width: Some(296.0),
@@ -304,6 +307,7 @@ mod tests {
             loaded.require_connect_password,
             state.require_connect_password
         );
+        assert_eq!(loaded.kill_switch_enabled, state.kill_switch_enabled);
         assert_eq!(
             loaded.preferred_inspector_tab,
             state.preferred_inspector_tab
@@ -355,6 +359,7 @@ mod tests {
 
         assert_eq!(state.version, STATE_VERSION);
         assert_eq!(state.require_connect_password, None);
+        assert_eq!(state.kill_switch_enabled, None);
         assert_eq!(state.quantum_mode, None);
         assert_eq!(state.daita_mode, None);
         assert!(state.configs.is_empty());

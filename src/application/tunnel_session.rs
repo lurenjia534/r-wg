@@ -51,6 +51,7 @@ impl TunnelSessionService {
             request.dns_selection,
             request.quantum_mode,
             request.daita_mode,
+            request.kill_switch_enabled,
         ));
         let runtime_snapshot = self
             .engine
@@ -117,6 +118,8 @@ pub struct StartTunnelRequest {
     pub quantum_mode: QuantumMode,
     /// DAITA 模式
     pub daita_mode: DaitaMode,
+    /// 是否启用 Kill switch
+    pub kill_switch_enabled: bool,
 }
 
 impl StartTunnelRequest {
@@ -127,6 +130,7 @@ impl StartTunnelRequest {
         dns_selection: DnsSelection,
         quantum_mode: QuantumMode,
         daita_mode: DaitaMode,
+        kill_switch_enabled: bool,
     ) -> Self {
         Self {
             tun_name: tun_name.into(),
@@ -134,6 +138,7 @@ impl StartTunnelRequest {
             dns_selection,
             quantum_mode,
             daita_mode,
+            kill_switch_enabled,
         }
     }
 }

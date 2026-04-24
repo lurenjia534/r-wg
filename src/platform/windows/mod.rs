@@ -38,8 +38,9 @@ pub async fn apply_network_config(
     tun_name: &str,
     config: &WireGuardConfig,
     route_plan: &RoutePlan,
+    kill_switch_enabled: bool,
 ) -> Result<crate::platform::NetworkApplyResult, crate::platform::NetworkApplyError> {
-    apply_pipeline::apply_network_config(tun_name, config, route_plan).await
+    apply_pipeline::apply_network_config(tun_name, config, route_plan, kill_switch_enabled).await
 }
 
 pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), NetworkError> {
