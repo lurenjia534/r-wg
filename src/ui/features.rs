@@ -1,3 +1,4 @@
+pub(crate) mod app_update;
 pub(crate) mod backend_admin;
 pub(crate) mod configs;
 pub(crate) mod daita_resources;

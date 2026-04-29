@@ -43,6 +43,7 @@ use std::sync::Arc;
 
 use super::actions::app as app_actions;
 use super::features::{
+    app_update,
     session::lifecycle,
     themes::{self, AppearancePolicy},
 };
@@ -236,7 +237,9 @@ pub fn run(primary: PrimaryInstance) {
                         }
                     });
 
-                    cx.new(|cx| Root::new(view, window, cx))
+                    let root = cx.new(|cx| Root::new(view, window, cx));
+                    app_update::check_for_updates_on_startup(window.window_handle(), cx);
+                    root
                 },
             )
             .unwrap();
