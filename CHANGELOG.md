@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.2 - 2026-04-29
+
+- Added kill switch protection with persisted preferences, Linux network-enforcement plumbing, recovery integration, route-map reporting, and advanced-preferences controls so tunnel traffic can fail closed when the tunnel is unavailable.
+- Added a startup update check against the GitHub latest-release API, showing a native update dialog with the new version, release title, changelog excerpt, and a direct release link when a newer version is available.
+- Expanded the README with a full architecture overview and component diagrams covering process boundaries, UI feature slices, privileged backend flows, route planning, config parsing, and release packaging.
+
 ## 0.3.1 - 2026-04-22
 
 - Upgraded `gotatun` to the upstream `0.5.1` git branch with DAITA enabled and removed the vendored copy from the repository, shrinking the tree while keeping the backend aligned with Mullvad's current WireGuard data-plane support.
