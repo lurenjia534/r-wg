@@ -24,6 +24,8 @@ use crate::log::events::engine as log_engine;
 use crate::platform;
 
 use super::ephemeral::{self, DaitaMode, EphemeralFailureKind, QuantumMode};
+#[cfg(target_os = "linux")]
+use super::linux_kernel::{self, KernelWireGuardDevice, KernelWireGuardError};
 use super::relay_inventory;
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -58,6 +60,9 @@ pub struct StartRequest {
     pub daita_mode: DaitaMode,
     /// 是否启用 Kill switch。
     pub kill_switch_enabled: bool,
+    /// WireGuard 数据面实现偏好。
+    #[serde(default)]
+    pub wireguard_backend_preference: WireGuardBackendPreference,
 }
 
 impl StartRequest {
@@ -69,6 +74,7 @@ impl StartRequest {
         quantum_mode: QuantumMode,
         daita_mode: DaitaMode,
         kill_switch_enabled: bool,
+        wireguard_backend_preference: WireGuardBackendPreference,
     ) -> Self {
         Self {
             tun_name: tun_name.into(),
@@ -77,6 +83,61 @@ impl StartRequest {
             quantum_mode,
             daita_mode,
             kill_switch_enabled,
+            wireguard_backend_preference,
+        }
+    }
+}
+
+/// WireGuard 数据面实现偏好。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WireGuardBackendPreference {
+    /// 自动选择；Linux 后续优先 kernel，不可用时回退 GotaTun。
+    Auto,
+    /// 明确要求 Linux kernel WireGuard。
+    Kernel,
+    /// 明确要求用户态 GotaTun。
+    Userspace,
+}
+
+impl Default for WireGuardBackendPreference {
+    fn default() -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            Self::Auto
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Self::Userspace
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KernelCapability {
+    Unavailable,
+    Available,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackendDecision {
+    UserspaceGotaTun,
+    LinuxKernel,
+}
+
+#[cfg(target_os = "linux")]
+enum KernelStartError {
+    Kernel(KernelWireGuardError),
+    Engine(EngineError),
+}
+
+#[cfg(target_os = "linux")]
+impl KernelStartError {
+    fn into_engine_error(self) -> EngineError {
+        match self {
+            Self::Kernel(error) => EngineError::KernelWireGuard(error.to_string()),
+            Self::Engine(error) => error,
         }
     }
 }
@@ -93,12 +154,33 @@ pub enum EngineStatus {
     Running,
 }
 
+/// 当前运行中的 WireGuard 数据面实现。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActiveBackendStatus {
+    /// Linux kernel WireGuard interface.
+    LinuxKernel,
+    /// GotaTun userspace WireGuard device.
+    UserspaceGotaTun,
+}
+
+impl ActiveBackendStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LinuxKernel => "Linux Kernel",
+            Self::UserspaceGotaTun => "GotaTun",
+        }
+    }
+}
+
 /// 引擎运行时快照。
 ///
 /// 用于 UI/IPC 恢复展示，包含基础运行态、最近一次路由应用结果，以及 ephemeral 协商状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineRuntimeSnapshot {
     pub status: EngineStatus,
+    #[serde(default)]
+    pub active_backend: Option<ActiveBackendStatus>,
     pub apply_report: Option<RouteApplyReport>,
     pub quantum_protected: bool,
     pub last_quantum_failure: Option<EphemeralFailureKind>,
@@ -162,6 +244,10 @@ pub enum EngineError {
     Config(ConfigError),
     /// 系统网络配置错误（地址/路由/DNS 应用失败）。
     Network(platform::NetworkError),
+    /// Linux kernel WireGuard 控制面错误。
+    KernelWireGuard(String),
+    /// 请求的 WireGuard backend 当前不可用或与所选功能冲突。
+    UnsupportedBackend(String),
     /// Ephemeral peer 协商或重配置失败。
     Ephemeral(String),
     /// UI 与特权后端协议版本不一致。
@@ -181,6 +267,12 @@ impl fmt::Display for EngineError {
             EngineError::Device(err) => write!(f, "device error: {err}"),
             EngineError::Config(err) => write!(f, "config error: {err}"),
             EngineError::Network(err) => write!(f, "network error: {err}"),
+            EngineError::KernelWireGuard(message) => {
+                write!(f, "kernel WireGuard error: {message}")
+            }
+            EngineError::UnsupportedBackend(message) => {
+                write!(f, "unsupported WireGuard backend: {message}")
+            }
             EngineError::Ephemeral(message) => write!(f, "ephemeral negotiation error: {message}"),
             EngineError::VersionMismatch { expected, actual } => write!(
                 f,
@@ -377,8 +469,10 @@ impl Engine {
 /// 该状态只在后台线程内访问，保证串行一致性。
 #[derive(Default)]
 struct EngineState {
-    /// gotatun 设备句柄；可能处于“运行中”或“暂停复用”状态。
-    device: Option<DeviceSlot>,
+    /// 暂停复用的 GotaTun 设备；只在未运行时缓存。
+    cached_userspace_device: Option<DeviceSlot>,
+    /// 当前运行中的 WireGuard 数据面实现。
+    active_backend: Option<ActiveWireGuardBackend>,
     /// 系统网络配置状态，用于停止时回滚。
     net_state: Option<platform::NetworkState>,
     /// 最近一次成功应用的结构化报告。
@@ -403,6 +497,23 @@ struct DeviceSlot {
     tun_name: String,
 }
 
+/// 当前运行中的后端，确保运行态只由一个具体数据面持有。
+enum ActiveWireGuardBackend {
+    Userspace(DeviceSlot),
+    #[cfg(target_os = "linux")]
+    LinuxKernel(KernelWireGuardDevice),
+}
+
+impl ActiveWireGuardBackend {
+    fn status(&self) -> ActiveBackendStatus {
+        match self {
+            Self::Userspace(_) => ActiveBackendStatus::UserspaceGotaTun,
+            #[cfg(target_os = "linux")]
+            Self::LinuxKernel(_) => ActiveBackendStatus::LinuxKernel,
+        }
+    }
+}
+
 impl EngineState {
     /// 启动设备：
     /// - 解析配置并转换为 gotatun Set 请求。
@@ -414,6 +525,7 @@ impl EngineState {
             return Err(EngineError::AlreadyRunning);
         }
         self.route_apply_report = None;
+        self.active_backend = None;
         self.quantum_active = false;
         self.daita_active = false;
         self.ephemeral_key_active = false;
@@ -421,6 +533,14 @@ impl EngineState {
         self.last_daita_failure = None;
 
         log_engine::start(&request.tun_name, request.config_text.len());
+        log_engine::wireguard_backend_preference(request.wireguard_backend_preference.as_str());
+        let backend_decision = resolve_backend(
+            request.wireguard_backend_preference,
+            request.daita_mode,
+            request.quantum_mode,
+            current_kernel_capability(),
+        )?;
+        log_engine::wireguard_backend_resolved(backend_decision.as_str());
 
         // 解析配置并映射为 gotatun 的 DeviceSettings。
         let parsed = config::parse_config(&request.config_text)?;
@@ -442,68 +562,81 @@ impl EngineState {
         let settings = parsed.to_device_settings().await?;
         log_engine::config_parsed();
 
-        // 如已有设备但 TUN 名称不同，则先彻底停止旧设备。
-        if let Some(slot) = &self.device {
-            if slot.tun_name != request.tun_name {
-                self.shutdown_device().await;
+        if matches!(backend_decision, BackendDecision::LinuxKernel) {
+            #[cfg(target_os = "linux")]
+            match self
+                .start_linux_kernel(&request.tun_name, &parsed, &route_plan, &settings, &request)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(KernelStartError::Kernel(error))
+                    if request.wireguard_backend_preference == WireGuardBackendPreference::Auto
+                        && error.is_unavailable() =>
+                {
+                    log_engine::wireguard_backend_fallback(&error.to_string());
+                }
+                Err(error) => return Err(error.into_engine_error()),
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            return Err(EngineError::UnsupportedBackend(
+                "kernel WireGuard backend is only supported on Linux".to_string(),
+            ));
+        }
+
+        self.start_userspace_gotatun(&request.tun_name, &parsed, &route_plan, &settings, &request)
+            .await
+    }
+
+    async fn start_userspace_gotatun(
+        &mut self,
+        tun_name: &str,
+        parsed: &config::WireGuardConfig,
+        route_plan: &RoutePlan,
+        settings: &config::DeviceSettings,
+        request: &StartRequest,
+    ) -> Result<(), EngineError> {
+        if self.active_backend.is_some() {
+            self.shutdown_active_backend().await;
+        }
+        if let Some(slot) = &self.cached_userspace_device {
+            if slot.tun_name != tun_name {
+                self.shutdown_cached_userspace_device().await;
             }
         }
 
         let mut created_new = false;
-        if self.device.is_none() {
-            // 使用 DeviceBuilder 创建 gotatun 设备。
-            let handle = device::build()
-                .with_default_udp()
-                .create_tun(&request.tun_name)?
-                .build()
-                .await?;
-            self.device = Some(DeviceSlot {
-                device: handle,
-                tun_name: request.tun_name.clone(),
-            });
-            created_new = true;
-            log_engine::device_created();
-        }
-
-        // 配置 gotatun 设备；失败则立即停止设备。
-        let config_result = {
-            let device = &self
-                .device
-                .as_ref()
-                .expect("device must exist after creation/reuse")
-                .device;
-            device
-                .write(async |device| {
-                    device.set_private_key(settings.private_key).await;
-                    if let Some(port) = settings.listen_port {
-                        device.set_listen_port(port);
-                    }
-                    #[cfg(target_os = "linux")]
-                    if let Some(fwmark) = settings.fwmark {
-                        device.set_fwmark(fwmark)?;
-                    }
-                    device.clear_peers();
-                    device.add_peers(settings.peers.clone());
-                    Ok::<_, device::Error>(())
-                })
-                .await
-                .and_then(|result| result)
-        };
-        if let Err(err) = config_result {
-            if created_new {
-                self.shutdown_device().await;
-            } else {
-                let _ = self.clear_device_peers().await;
+        let slot = match self.cached_userspace_device.take() {
+            Some(slot) => slot,
+            None => {
+                let handle = device::build()
+                    .with_default_udp()
+                    .create_tun(tun_name)?
+                    .build()
+                    .await?;
+                created_new = true;
+                log_engine::device_created();
+                DeviceSlot {
+                    device: handle,
+                    tun_name: tun_name.to_string(),
+                }
             }
-            return Err(EngineError::Device(err));
-        }
+        };
+
+        let slot = match self.configure_userspace_device(slot, settings).await {
+            Ok(slot) => slot,
+            Err((slot, err)) => {
+                self.recover_userspace_slot_after_start_failure(slot, created_new)
+                    .await;
+                return Err(EngineError::Device(err));
+            }
+        };
         log_engine::device_configured();
 
-        // 应用系统网络配置；失败时回滚 gotatun 设备。
         let net_result = match platform::apply_network_config(
-            &request.tun_name,
-            &parsed,
-            &route_plan,
+            tun_name,
+            parsed,
+            route_plan,
             request.kill_switch_enabled,
         )
         .await
@@ -511,11 +644,8 @@ impl EngineState {
             Ok(result) => result,
             Err(err) => {
                 self.route_apply_report = Some(err.report);
-                if created_new {
-                    self.shutdown_device().await;
-                } else {
-                    let _ = self.clear_device_peers().await;
-                }
+                self.recover_userspace_slot_after_start_failure(slot, created_new)
+                    .await;
                 return Err(EngineError::Network(err.error));
             }
         };
@@ -524,84 +654,169 @@ impl EngineState {
         self.route_apply_report = Some(net_result.report.clone());
 
         if request.quantum_mode.is_enabled() || request.daita_mode.is_enabled() {
-            log_engine::ephemeral_negotiation_requested(
-                request.quantum_mode.is_enabled(),
-                request.daita_mode.is_enabled(),
+            if let Err(error) = self
+                .upgrade_userspace_ephemeral(tun_name, parsed, settings, &slot, request)
+                .await
+            {
+                let cleanup_result = self.cleanup_active_network_state().await;
+                self.recover_userspace_slot_after_start_failure(slot, created_new)
+                    .await;
+                return match cleanup_result {
+                    Ok(()) => Err(error),
+                    Err(err) => Err(err),
+                };
+            }
+        }
+
+        self.active_backend = Some(ActiveWireGuardBackend::Userspace(slot));
+        self.running = true;
+        Ok(())
+    }
+
+    async fn configure_userspace_device(
+        &self,
+        slot: DeviceSlot,
+        settings: &config::DeviceSettings,
+    ) -> Result<DeviceSlot, (DeviceSlot, device::Error)> {
+        let result = slot
+            .device
+            .write(async |device| {
+                device.set_private_key(settings.private_key.clone()).await;
+                if let Some(port) = settings.listen_port {
+                    device.set_listen_port(port);
+                }
+                #[cfg(target_os = "linux")]
+                if let Some(fwmark) = settings.fwmark {
+                    device.set_fwmark(fwmark)?;
+                }
+                device.clear_peers();
+                device.add_peers(settings.peers.clone());
+                Ok::<_, device::Error>(())
+            })
+            .await
+            .and_then(|result| result);
+
+        match result {
+            Ok(()) => Ok(slot),
+            Err(error) => Err((slot, error)),
+        }
+    }
+
+    async fn upgrade_userspace_ephemeral(
+        &mut self,
+        tun_name: &str,
+        parsed: &config::WireGuardConfig,
+        settings: &config::DeviceSettings,
+        slot: &DeviceSlot,
+        request: &StartRequest,
+    ) -> Result<(), EngineError> {
+        log_engine::ephemeral_negotiation_requested(
+            request.quantum_mode.is_enabled(),
+            request.daita_mode.is_enabled(),
+        );
+        let Some(base_peer) = settings.peers.first() else {
+            let error = ephemeral::Error::UnsupportedConfig(
+                "ephemeral peer negotiation requires exactly one configured peer",
             );
-            let Some(base_peer) = settings.peers.first() else {
-                let error = ephemeral::Error::UnsupportedConfig(
-                    "ephemeral peer negotiation requires exactly one configured peer",
+            if request.quantum_mode.is_enabled() {
+                self.last_quantum_failure = Some(error.kind());
+            }
+            if request.daita_mode.is_enabled() {
+                self.last_daita_failure = Some(error.kind());
+            }
+            let message = error.to_string();
+            log_engine::ephemeral_negotiation_failed(&message);
+            return Err(EngineError::Ephemeral(message));
+        };
+
+        match ephemeral::upgrade_tunnel(
+            request.quantum_mode,
+            request.daita_mode,
+            &slot.device,
+            tun_name,
+            parsed,
+            base_peer,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                log_engine::ephemeral_negotiation_completed(
+                    outcome.quantum_applied,
+                    outcome.daita_applied,
                 );
-                let message = error.to_string();
+                self.quantum_active = outcome.quantum_applied;
+                self.daita_active = outcome.daita_applied;
+                self.ephemeral_key_active = outcome.quantum_applied || outcome.daita_applied;
+                self.last_quantum_failure = None;
+                self.last_daita_failure = None;
+                Ok(())
+            }
+            Err(error) => {
                 if request.quantum_mode.is_enabled() {
                     self.last_quantum_failure = Some(error.kind());
                 }
                 if request.daita_mode.is_enabled() {
                     self.last_daita_failure = Some(error.kind());
                 }
+                let message = error.to_string();
                 log_engine::ephemeral_negotiation_failed(&message);
-                let cleanup_result = self.cleanup_active_network_state().await;
-                if created_new {
-                    self.shutdown_device().await;
-                } else {
-                    let _ = self.clear_device_peers().await;
-                }
-                return match cleanup_result {
-                    Ok(()) => Err(EngineError::Ephemeral(message)),
-                    Err(err) => Err(err),
-                };
-            };
-            match ephemeral::upgrade_tunnel(
-                request.quantum_mode,
-                request.daita_mode,
-                &self
-                    .device
-                    .as_ref()
-                    .expect("device must exist during ephemeral negotiation")
-                    .device,
-                &request.tun_name,
-                &parsed,
-                base_peer,
-            )
-            .await
-            {
-                Ok(outcome) => {
-                    log_engine::ephemeral_negotiation_completed(
-                        outcome.quantum_applied,
-                        outcome.daita_applied,
-                    );
-                    self.quantum_active = outcome.quantum_applied;
-                    self.daita_active = outcome.daita_applied;
-                    self.ephemeral_key_active = outcome.quantum_applied || outcome.daita_applied;
-                    self.last_quantum_failure = None;
-                    self.last_daita_failure = None;
-                }
-                Err(error) => {
-                    if request.quantum_mode.is_enabled() {
-                        self.last_quantum_failure = Some(error.kind());
-                    }
-                    if request.daita_mode.is_enabled() {
-                        self.last_daita_failure = Some(error.kind());
-                    }
-                    let message = error.to_string();
-                    log_engine::ephemeral_negotiation_failed(&message);
-                    let cleanup_result = self.cleanup_active_network_state().await;
-                    if created_new {
-                        self.shutdown_device().await;
-                    } else {
-                        let _ = self.clear_device_peers().await;
-                    }
-                    return match cleanup_result {
-                        Ok(()) => Err(EngineError::Ephemeral(message)),
-                        Err(err) => Err(err),
-                    };
-                }
+                Err(EngineError::Ephemeral(message))
             }
         }
+    }
 
-        // 保存运行态状态，便于后续 stop/cleanup。
+    async fn recover_userspace_slot_after_start_failure(
+        &mut self,
+        slot: DeviceSlot,
+        created_new: bool,
+    ) {
+        if created_new {
+            stop_userspace_slot(slot).await;
+        } else {
+            cache_cleared_userspace_slot(&mut self.cached_userspace_device, slot).await;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn start_linux_kernel(
+        &mut self,
+        tun_name: &str,
+        parsed: &config::WireGuardConfig,
+        route_plan: &RoutePlan,
+        settings: &config::DeviceSettings,
+        request: &StartRequest,
+    ) -> Result<(), KernelStartError> {
+        if self.active_backend.is_some() {
+            self.shutdown_active_backend().await;
+        }
+        self.shutdown_cached_userspace_device().await;
+
+        let kernel_device = linux_kernel::start_kernel_device(tun_name, settings)
+            .await
+            .map_err(KernelStartError::Kernel)?;
+        log_engine::kernel_device_created(tun_name);
+
+        let net_result = match platform::apply_network_config(
+            tun_name,
+            parsed,
+            route_plan,
+            request.kill_switch_enabled,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                self.route_apply_report = Some(err.report);
+                let _ = linux_kernel::delete_kernel_device(kernel_device.tun_name()).await;
+                return Err(KernelStartError::Engine(EngineError::Network(err.error)));
+            }
+        };
+
+        self.net_state = Some(net_result.state);
+        log_engine::network_configured();
+        self.route_apply_report = Some(net_result.report.clone());
+        self.active_backend = Some(ActiveWireGuardBackend::LinuxKernel(kernel_device));
         self.running = true;
-
         Ok(())
     }
 
@@ -614,17 +829,9 @@ impl EngineState {
         }
     }
 
-    async fn clear_device_peers(&self) -> Result<(), device::Error> {
-        let Some(device) = self.device.as_ref().map(|slot| &slot.device) else {
-            return Ok(());
-        };
-        let _ = device.clear_peers().await?;
-        Ok(())
-    }
-
     /// 停止设备：
     /// - 先回滚系统网络配置（若存在）。
-    /// - 再清空 peers（保留 gotatun 设备以便复用）。
+    /// - 再按当前 active backend 清理数据面。
     async fn stop(&mut self) -> Result<(), EngineError> {
         if !self.running {
             return Err(EngineError::NotRunning);
@@ -641,16 +848,7 @@ impl EngineState {
             Ok(())
         };
 
-        // Ephemeral 协商后的本地临时私钥不复用，直接销毁整个 gotatun device。
-        if self.ephemeral_key_active {
-            if let Some(slot) = self.device.take() {
-                slot.device.stop().await;
-                log_engine::device_stopped();
-            }
-        } else if let Some(slot) = &self.device {
-            // 普通隧道保留 gotatun 设备，只清空 peers。
-            slot.device.clear_peers().await?;
-        }
+        self.stop_active_backend().await?;
         self.route_apply_report = None;
         self.running = false;
         self.quantum_active = false;
@@ -665,11 +863,46 @@ impl EngineState {
         cleanup_result
     }
 
-    /// 彻底停止并释放 gotatun 设备（用于后台线程退出或强制清理）。
-    async fn shutdown_device(&mut self) {
-        if let Some(slot) = self.device.take() {
-            slot.device.stop().await;
-            log_engine::device_stopped();
+    async fn stop_active_backend(&mut self) -> Result<(), EngineError> {
+        let Some(active_backend) = self.active_backend.take() else {
+            return Ok(());
+        };
+
+        match active_backend {
+            ActiveWireGuardBackend::Userspace(slot) => {
+                if self.ephemeral_key_active {
+                    stop_userspace_slot(slot).await;
+                } else {
+                    clear_userspace_slot_peers(&slot).await?;
+                    self.cached_userspace_device = Some(slot);
+                }
+            }
+            #[cfg(target_os = "linux")]
+            ActiveWireGuardBackend::LinuxKernel(kernel_device) => {
+                if let Err(error) =
+                    linux_kernel::delete_kernel_device(kernel_device.tun_name()).await
+                {
+                    tracing::warn!("failed to delete kernel WireGuard interface: {error}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 彻底停止并释放当前 active backend 与缓存的 userspace device。
+    async fn shutdown_active_backend(&mut self) {
+        if let Some(active_backend) = self.active_backend.take() {
+            match active_backend {
+                ActiveWireGuardBackend::Userspace(slot) => stop_userspace_slot(slot).await,
+                #[cfg(target_os = "linux")]
+                ActiveWireGuardBackend::LinuxKernel(kernel_device) => {
+                    if let Err(error) =
+                        linux_kernel::delete_kernel_device(kernel_device.tun_name()).await
+                    {
+                        tracing::warn!("failed to delete kernel WireGuard interface: {error}");
+                    }
+                }
+            }
         }
         self.running = false;
         self.quantum_active = false;
@@ -680,6 +913,12 @@ impl EngineState {
         self.net_state = None;
         self.route_apply_report = None;
         trim_allocator();
+    }
+
+    async fn shutdown_cached_userspace_device(&mut self) {
+        if let Some(slot) = self.cached_userspace_device.take() {
+            stop_userspace_slot(slot).await;
+        }
     }
 
     /// 查询状态。
@@ -696,31 +935,18 @@ impl EngineState {
         if !self.running {
             return Err(EngineError::NotRunning);
         }
-        let Some(device) = self.device.as_ref() else {
+        let Some(active_backend) = self.active_backend.as_ref() else {
             return Err(EngineError::NotRunning);
         };
-
-        let peers = device
-            .device
-            .read(async |device| device.peers().await)
-            .await
-            .into_iter()
-            .map(|peer| PeerStats {
-                public_key: peer.peer.public_key.to_bytes(),
-                endpoint: peer.peer.endpoint,
-                last_handshake: peer.stats.last_handshake,
-                rx_bytes: peer.stats.rx_bytes as u64,
-                tx_bytes: peer.stats.tx_bytes as u64,
-                daita: peer.stats.daita.map(|stats| DaitaStats {
-                    tx_padding_bytes: stats.tx_padding_bytes as u64,
-                    rx_padding_bytes: stats.rx_padding_bytes as u64,
-                    tx_decoy_packet_bytes: stats.tx_decoy_packet_bytes as u64,
-                    rx_decoy_packet_bytes: stats.rx_decoy_packet_bytes as u64,
-                }),
-            })
-            .collect();
-
-        Ok(EngineStats { peers })
+        match active_backend {
+            ActiveWireGuardBackend::Userspace(slot) => read_userspace_stats(slot).await,
+            #[cfg(target_os = "linux")]
+            ActiveWireGuardBackend::LinuxKernel(kernel_device) => {
+                linux_kernel::read_kernel_stats(kernel_device.tun_name())
+                    .await
+                    .map_err(|error| EngineError::KernelWireGuard(error.to_string()))
+            }
+        }
     }
 
     fn apply_report(&self) -> Option<RouteApplyReport> {
@@ -730,6 +956,10 @@ impl EngineState {
     fn runtime_snapshot(&self) -> EngineRuntimeSnapshot {
         EngineRuntimeSnapshot {
             status: self.status(),
+            active_backend: self
+                .active_backend
+                .as_ref()
+                .map(ActiveWireGuardBackend::status),
             apply_report: self.apply_report(),
             quantum_protected: self.running && self.quantum_active,
             last_quantum_failure: self.last_quantum_failure,
@@ -751,6 +981,123 @@ fn wants_full_tunnel(peers: &[config::PeerConfig]) -> bool {
             .iter()
             .any(|allowed| allowed.addr.is_unspecified() && allowed.cidr == 0)
     })
+}
+
+async fn read_userspace_stats(slot: &DeviceSlot) -> Result<EngineStats, EngineError> {
+    let peers = slot
+        .device
+        .read(async |device| device.peers().await)
+        .await
+        .into_iter()
+        .map(|peer| PeerStats {
+            public_key: peer.peer.public_key.to_bytes(),
+            endpoint: peer.peer.endpoint,
+            last_handshake: peer.stats.last_handshake,
+            rx_bytes: peer.stats.rx_bytes as u64,
+            tx_bytes: peer.stats.tx_bytes as u64,
+            daita: peer.stats.daita.map(|stats| DaitaStats {
+                tx_padding_bytes: stats.tx_padding_bytes as u64,
+                rx_padding_bytes: stats.rx_padding_bytes as u64,
+                tx_decoy_packet_bytes: stats.tx_decoy_packet_bytes as u64,
+                rx_decoy_packet_bytes: stats.rx_decoy_packet_bytes as u64,
+            }),
+        })
+        .collect();
+
+    Ok(EngineStats { peers })
+}
+
+async fn clear_userspace_slot_peers(slot: &DeviceSlot) -> Result<(), device::Error> {
+    let _ = slot.device.clear_peers().await?;
+    Ok(())
+}
+
+async fn cache_cleared_userspace_slot(cache: &mut Option<DeviceSlot>, slot: DeviceSlot) {
+    if let Err(error) = clear_userspace_slot_peers(&slot).await {
+        tracing::warn!("failed to clear cached GotaTun peers: {error}");
+        stop_userspace_slot(slot).await;
+        return;
+    }
+    *cache = Some(slot);
+}
+
+async fn stop_userspace_slot(slot: DeviceSlot) {
+    slot.device.stop().await;
+    log_engine::device_stopped();
+}
+
+impl WireGuardBackendPreference {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Kernel => "Kernel",
+            Self::Userspace => "UserspaceGotaTun",
+        }
+    }
+}
+
+impl BackendDecision {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UserspaceGotaTun => "UserspaceGotaTun",
+            Self::LinuxKernel => "LinuxKernel",
+        }
+    }
+}
+
+fn current_kernel_capability() -> KernelCapability {
+    #[cfg(target_os = "linux")]
+    {
+        KernelCapability::Available
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        KernelCapability::Unavailable
+    }
+}
+
+fn resolve_backend(
+    preference: WireGuardBackendPreference,
+    daita_mode: DaitaMode,
+    quantum_mode: QuantumMode,
+    kernel_capability: KernelCapability,
+) -> Result<BackendDecision, EngineError> {
+    if daita_mode.is_enabled() {
+        return match preference {
+            WireGuardBackendPreference::Kernel => Err(EngineError::UnsupportedBackend(
+                "DAITA currently requires GotaTun; switch WireGuard implementation to Userspace"
+                    .to_string(),
+            )),
+            WireGuardBackendPreference::Auto | WireGuardBackendPreference::Userspace => {
+                Ok(BackendDecision::UserspaceGotaTun)
+            }
+        };
+    }
+
+    if quantum_mode.is_enabled() {
+        return match preference {
+            WireGuardBackendPreference::Kernel => Err(EngineError::UnsupportedBackend(
+                "quantum-resistant mode is not yet supported with the kernel backend".to_string(),
+            )),
+            WireGuardBackendPreference::Auto | WireGuardBackendPreference::Userspace => {
+                Ok(BackendDecision::UserspaceGotaTun)
+            }
+        };
+    }
+
+    match preference {
+        WireGuardBackendPreference::Userspace => Ok(BackendDecision::UserspaceGotaTun),
+        WireGuardBackendPreference::Kernel => match kernel_capability {
+            KernelCapability::Available => Ok(BackendDecision::LinuxKernel),
+            KernelCapability::Unavailable => Err(EngineError::UnsupportedBackend(
+                "Linux kernel WireGuard backend is not available".to_string(),
+            )),
+        },
+        WireGuardBackendPreference::Auto => match kernel_capability {
+            KernelCapability::Available => Ok(BackendDecision::LinuxKernel),
+            KernelCapability::Unavailable => Ok(BackendDecision::UserspaceGotaTun),
+        },
+    }
 }
 
 /// 后台线程的主事件循环：
@@ -806,7 +1153,8 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
 
     // 通道关闭，尝试优雅停止设备。
     let _ = state.stop().await;
-    state.shutdown_device().await;
+    state.shutdown_active_backend().await;
+    state.shutdown_cached_userspace_device().await;
 }
 
 async fn catch_start_panic(
@@ -832,7 +1180,8 @@ async fn recover_after_worker_panic(state: &mut EngineState) {
     if let Err(err) = state.cleanup_active_network_state().await {
         tracing::warn!("failed to clean up network state after backend panic: {err}");
     }
-    state.shutdown_device().await;
+    state.shutdown_active_backend().await;
+    state.shutdown_cached_userspace_device().await;
     state.route_apply_report = apply_report;
 }
 
@@ -855,5 +1204,139 @@ fn panic_payload_message(payload: Box<dyn Any + Send>) -> String {
         message.clone()
     } else {
         "non-string panic payload".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dns::{DnsMode, DnsPreset};
+
+    use super::*;
+
+    #[test]
+    fn wireguard_backend_preference_defaults_by_platform() {
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            WireGuardBackendPreference::default(),
+            WireGuardBackendPreference::Auto
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(
+            WireGuardBackendPreference::default(),
+            WireGuardBackendPreference::Userspace
+        );
+    }
+
+    #[test]
+    fn start_request_deserializes_missing_backend_preference() {
+        let json = r#"{
+            "tun_name": "wg0",
+            "config_text": "[Interface]\n",
+            "dns": {"mode": "FollowConfig", "preset": "CloudflareStandard"},
+            "quantum_mode": "off",
+            "daita_mode": "off",
+            "kill_switch_enabled": true
+        }"#;
+
+        let request: StartRequest =
+            serde_json::from_str(json).expect("legacy request should deserialize");
+
+        assert_eq!(
+            request.wireguard_backend_preference,
+            WireGuardBackendPreference::default()
+        );
+    }
+
+    #[test]
+    fn backend_resolution_handles_userspace_features_and_kernel_conflicts() {
+        assert_eq!(
+            resolve_backend(
+                WireGuardBackendPreference::Auto,
+                DaitaMode::On,
+                QuantumMode::Off,
+                KernelCapability::Available,
+            )
+            .expect("auto daita should choose userspace"),
+            BackendDecision::UserspaceGotaTun
+        );
+        assert_eq!(
+            resolve_backend(
+                WireGuardBackendPreference::Auto,
+                DaitaMode::Off,
+                QuantumMode::On,
+                KernelCapability::Available,
+            )
+            .expect("auto quantum phase 1 should choose userspace"),
+            BackendDecision::UserspaceGotaTun
+        );
+        assert!(matches!(
+            resolve_backend(
+                WireGuardBackendPreference::Kernel,
+                DaitaMode::On,
+                QuantumMode::Off,
+                KernelCapability::Available,
+            ),
+            Err(EngineError::UnsupportedBackend(message)) if message.contains("DAITA")
+        ));
+        assert!(matches!(
+            resolve_backend(
+                WireGuardBackendPreference::Kernel,
+                DaitaMode::Off,
+                QuantumMode::On,
+                KernelCapability::Available,
+            ),
+            Err(EngineError::UnsupportedBackend(message)) if message.contains("quantum-resistant")
+        ));
+    }
+
+    #[test]
+    fn backend_resolution_auto_falls_back_but_kernel_does_not() {
+        assert_eq!(
+            resolve_backend(
+                WireGuardBackendPreference::Auto,
+                DaitaMode::Off,
+                QuantumMode::Off,
+                KernelCapability::Unavailable,
+            )
+            .expect("auto should fall back to userspace"),
+            BackendDecision::UserspaceGotaTun
+        );
+        assert!(matches!(
+            resolve_backend(
+                WireGuardBackendPreference::Kernel,
+                DaitaMode::Off,
+                QuantumMode::Off,
+                KernelCapability::Unavailable,
+            ),
+            Err(EngineError::UnsupportedBackend(message)) if message.contains("not available")
+        ));
+        assert_eq!(
+            resolve_backend(
+                WireGuardBackendPreference::Kernel,
+                DaitaMode::Off,
+                QuantumMode::Off,
+                KernelCapability::Available,
+            )
+            .expect("kernel should be selected when capability is available"),
+            BackendDecision::LinuxKernel
+        );
+    }
+
+    #[test]
+    fn start_request_constructor_carries_backend_preference() {
+        let request = StartRequest::new(
+            "wg0",
+            "[Interface]\n",
+            DnsSelection::new(DnsMode::FollowConfig, DnsPreset::CloudflareStandard),
+            QuantumMode::Off,
+            DaitaMode::Off,
+            true,
+            WireGuardBackendPreference::Kernel,
+        );
+
+        assert_eq!(
+            request.wireguard_backend_preference,
+            WireGuardBackendPreference::Kernel
+        );
     }
 }

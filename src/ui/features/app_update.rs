@@ -16,6 +16,7 @@ use hyper::{Request, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use serde::Deserialize;
+use tokio::runtime::Builder;
 use tokio::time::timeout;
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -68,7 +69,7 @@ struct VersionParts {
 pub(crate) fn check_for_updates_on_startup(window_handle: AnyWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let result = cx
-            .background_spawn(async move { latest_update(CURRENT_VERSION).await })
+            .background_spawn(async move { latest_update_blocking(CURRENT_VERSION) })
             .await;
 
         match result {
@@ -82,6 +83,15 @@ pub(crate) fn check_for_updates_on_startup(window_handle: AnyWindowHandle, cx: &
         }
     })
     .detach();
+}
+
+fn latest_update_blocking(current_version: &str) -> Result<Option<UpdateInfo>, UpdateCheckError> {
+    let runtime = Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|error| UpdateCheckError::Transport(error.to_string()))?;
+    runtime.block_on(latest_update(current_version))
 }
 
 async fn latest_update(current_version: &str) -> Result<Option<UpdateInfo>, UpdateCheckError> {

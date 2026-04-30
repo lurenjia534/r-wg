@@ -10,6 +10,8 @@ mod ipc;
 mod ipc_client;
 mod ipc_server;
 #[cfg(target_os = "linux")]
+mod linux_kernel;
+#[cfg(target_os = "linux")]
 mod linux_service;
 mod relay_inventory;
 pub mod route_plan;
@@ -26,8 +28,8 @@ mod windows_service_manager;
 #[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
 pub use engine::Engine;
 pub use engine::{
-    DaitaStats, EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus, PeerStats,
-    RelayInventoryStatusSnapshot, StartRequest,
+    ActiveBackendStatus, DaitaStats, EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus,
+    PeerStats, RelayInventoryStatusSnapshot, StartRequest, WireGuardBackendPreference,
 };
 pub use ephemeral::{DaitaFailureKind, DaitaMode, EphemeralFailureKind, QuantumMode};
 pub use route_plan::{

@@ -239,6 +239,7 @@ mod tests {
                 QuantumMode::Off,
                 DaitaMode::Off,
                 true,
+                crate::backend::wg::WireGuardBackendPreference::Userspace,
             ),
         );
 

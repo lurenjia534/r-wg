@@ -18,8 +18,27 @@ pub fn config_parsed() {
     log_info!("engine", "config parsed");
 }
 
+pub fn wireguard_backend_preference(preference: &str) {
+    log_info!("engine", "WireGuard backend preference: {preference}");
+}
+
+pub fn wireguard_backend_resolved(backend: &str) {
+    log_info!("engine", "Resolved WireGuard backend: {backend}");
+}
+
+pub fn wireguard_backend_fallback(reason: &str) {
+    log_info!(
+        "engine",
+        "Kernel WireGuard unavailable: {reason}; falling back to userspace GotaTun"
+    );
+}
+
 pub fn device_created() {
     log_info!("engine", "device created");
+}
+
+pub fn kernel_device_created(tun_name: &str) {
+    log_info!("engine", "Created kernel WireGuard interface: {tun_name}");
 }
 
 pub fn device_configured() {

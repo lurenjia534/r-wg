@@ -1,4 +1,5 @@
 use chrono::Local;
+use r_wg::backend::wg::ActiveBackendStatus;
 use r_wg::core::config;
 
 use crate::ui::format::{format_bytes, format_duration, format_route_table, summarize_peers};
@@ -27,6 +28,7 @@ pub(crate) struct OverviewRuntimeData {
     pub(crate) daita_active: bool,
     pub(crate) daita_stats_active: bool,
     pub(crate) running_name_text: String,
+    pub(crate) backend_text: String,
     pub(crate) last_updated_text: String,
     pub(crate) uptime_text: String,
     pub(crate) memory_text: String,
@@ -79,6 +81,10 @@ impl OverviewData {
                     .running_name
                     .clone()
                     .unwrap_or_else(|| "-".to_string()),
+                backend_text: format_active_backend(
+                    app.runtime.running,
+                    app.runtime.active_backend,
+                ),
                 last_updated_text: format_last_updated(app.stats.last_stats_at),
                 uptime_text: format_uptime(app.stats.started_at),
                 memory_text: format_process_memory(app.stats.process_rss_bytes),
@@ -201,6 +207,15 @@ fn format_speed_text(is_running: bool, bytes_per_sec: f64) -> String {
     format_speed(bytes_per_sec)
 }
 
+fn format_active_backend(is_running: bool, backend: Option<ActiveBackendStatus>) -> String {
+    if !is_running {
+        return "-".to_string();
+    }
+    backend
+        .map(|backend| backend.label().to_string())
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
 fn format_speed(bytes_per_sec: f64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * KB;
@@ -252,7 +267,7 @@ mod tests {
     use std::path::PathBuf;
 
     use gpui_component::theme::ThemeMode;
-    use r_wg::application::TunnelSessionService;
+    use r_wg::{application::TunnelSessionService, backend::wg::ActiveBackendStatus};
 
     use super::OverviewData;
     use crate::ui::features::themes::AppearancePolicy;
@@ -300,11 +315,13 @@ mod tests {
         app.runtime.running = true;
         app.runtime.running_id = Some(9);
         app.runtime.running_name = Some("beta".to_string());
+        app.runtime.active_backend = Some(ActiveBackendStatus::LinuxKernel);
 
         let overview = OverviewData::new(&app);
 
         assert!(overview.runtime.is_running);
         assert_eq!(overview.runtime.running_name_text, "beta");
+        assert_eq!(overview.runtime.backend_text, "Linux Kernel");
         assert!(overview.preview.has_selection);
         assert_eq!(overview.preview.selected_name_text, "alpha");
         assert_eq!(overview.preview.local_ip_text, "10.0.0.2/32");

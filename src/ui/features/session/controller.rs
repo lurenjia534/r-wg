@@ -218,6 +218,7 @@ fn start_with_config(
     let quantum_mode = app.ui_prefs.quantum_mode;
     let daita_mode = app.ui_prefs.daita_mode;
     let kill_switch_enabled = app.ui_prefs.kill_switch_enabled;
+    let wireguard_backend_preference = app.ui_prefs.wireguard_backend_preference;
 
     cx.spawn(async move |view, cx| {
         // 如果指定了延迟，先等待
@@ -268,6 +269,7 @@ fn start_with_config(
             quantum_mode,
             daita_mode,
             kill_switch_enabled,
+            wireguard_backend_preference,
         );
         let start_task = cx.background_spawn(async move {
             let outcome = tunnel_session.start(request);
@@ -286,6 +288,7 @@ fn start_with_config(
                 Ok(()) => {
                     this.runtime.mark_started(&selected);
                     if let Some(snapshot) = runtime_snapshot.as_ref() {
+                        this.runtime.set_active_backend(snapshot.active_backend);
                         this.runtime
                             .set_last_apply_report(snapshot.apply_report.clone());
                         this.runtime.set_quantum_status(
@@ -295,13 +298,19 @@ fn start_with_config(
                         this.runtime
                             .set_daita_status(snapshot.daita_active, snapshot.last_daita_failure);
                     } else {
+                        this.runtime.set_active_backend(None);
                         this.runtime.set_last_apply_report(apply_report);
                         this.runtime.set_quantum_status(false, None);
                         this.runtime.set_daita_status(false, None);
                     }
                     this.refresh_configs_workspace_row_flags(cx);
                     this.stats.reset_for_start();
-                    let status = format!("Running {}", selected.name);
+                    let status = match this.runtime.active_backend {
+                        Some(backend) => {
+                            format!("Running {} via {}", selected.name, backend.label())
+                        }
+                        None => format!("Running {}", selected.name),
+                    };
                     let notification = format!("Tunnel connected: {}", selected.name);
                     this.set_status(status);
                     tray::notify_system("r-wg", &notification, false);
@@ -309,6 +318,7 @@ fn start_with_config(
                 }
                 Err(err) => {
                     if let Some(snapshot) = runtime_snapshot.as_ref() {
+                        this.runtime.set_active_backend(snapshot.active_backend);
                         this.runtime
                             .set_last_apply_report(snapshot.apply_report.clone());
                         this.runtime
@@ -316,6 +326,7 @@ fn start_with_config(
                         this.runtime
                             .set_daita_status(false, snapshot.last_daita_failure);
                     } else {
+                        this.runtime.set_active_backend(None);
                         this.runtime.set_last_apply_report(apply_report);
                         this.runtime.set_quantum_status(false, None);
                         this.runtime.set_daita_status(false, None);

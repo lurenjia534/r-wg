@@ -30,6 +30,7 @@ pub(crate) fn sync_engine_status(
             this.runtime.busy = false;
             this.runtime
                 .set_last_apply_report(snapshot.apply_report.clone());
+            this.runtime.set_active_backend(snapshot.active_backend);
             this.runtime
                 .set_quantum_status(snapshot.quantum_protected, snapshot.last_quantum_failure);
             this.runtime
@@ -39,11 +40,15 @@ pub(crate) fn sync_engine_status(
                 this.runtime.running_name = Some("Tunnel".to_string());
             }
             // 这里只恢复运行态与统计轮询，不推断具体配置来源。
+            let base_status = match snapshot.active_backend {
+                Some(backend) => format!("Tunnel running via {}", backend.label()),
+                None => "Tunnel running".to_string(),
+            };
             let status = match (snapshot.quantum_protected, snapshot.daita_active) {
-                (true, true) => "Tunnel running (quantum protected, DAITA active)",
-                (true, false) => "Tunnel running (quantum protected)",
-                (false, true) => "Tunnel running (DAITA active)",
-                (false, false) => "Tunnel running",
+                (true, true) => format!("{base_status} (quantum protected, DAITA active)"),
+                (true, false) => format!("{base_status} (quantum protected)"),
+                (false, true) => format!("{base_status} (DAITA active)"),
+                (false, false) => base_status,
             };
             this.set_status(status);
             this.stats.reset_for_start();

@@ -2,14 +2,14 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use gpui_component::theme::ThemeMode;
-use r_wg::backend::wg::{DaitaMode, QuantumMode};
+use r_wg::backend::wg::{DaitaMode, QuantumMode, WireGuardBackendPreference};
 use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
 use super::features::themes::AppearancePolicy;
 use super::state::{ConfigInspectorTab, ConfigSource, ProxiesViewMode, TrafficPeriod};
 
-pub(crate) const STATE_VERSION: u32 = 3;
+pub(crate) const STATE_VERSION: u32 = 4;
 const STATE_FILE_NAME: &str = "state.json";
 const CONFIGS_DIR_NAME: &str = "configs";
 
@@ -66,6 +66,8 @@ pub(crate) struct PersistedState {
     pub(crate) quantum_mode: Option<QuantumMode>,
     #[serde(default)]
     pub(crate) daita_mode: Option<DaitaMode>,
+    #[serde(default)]
+    pub(crate) wireguard_backend_preference: Option<WireGuardBackendPreference>,
     #[serde(default)]
     pub(crate) traffic_global_days: Vec<PersistedTrafficDayBucket>,
     #[serde(default)]
@@ -244,6 +246,7 @@ mod tests {
             dns_preset: Some(DnsPreset::CloudflareStandard),
             quantum_mode: Some(QuantumMode::On),
             daita_mode: Some(DaitaMode::On),
+            wireguard_backend_preference: Some(WireGuardBackendPreference::Userspace),
             traffic_global_days: vec![PersistedTrafficDayBucket {
                 day_key: 20513,
                 rx_bytes: 400,
@@ -321,6 +324,10 @@ mod tests {
         assert_eq!(loaded.dns_preset, state.dns_preset);
         assert_eq!(loaded.quantum_mode, state.quantum_mode);
         assert_eq!(loaded.daita_mode, state.daita_mode);
+        assert_eq!(
+            loaded.wireguard_backend_preference,
+            state.wireguard_backend_preference
+        );
         assert_eq!(loaded.traffic_global_days.len(), 1);
         assert_eq!(loaded.traffic_global_days[0].rx_bytes, 400);
         assert_eq!(loaded.traffic_global_days[0].tx_bytes, 624);
@@ -351,17 +358,18 @@ mod tests {
   "selected_id": null,
   "configs": []
 }}"#,
-            version = STATE_VERSION
+            version = STATE_VERSION - 1
         );
 
         let state: PersistedState =
             serde_json::from_str(&legacy).expect("legacy state should deserialize");
 
-        assert_eq!(state.version, STATE_VERSION);
+        assert_eq!(state.version, STATE_VERSION - 1);
         assert_eq!(state.require_connect_password, None);
         assert_eq!(state.kill_switch_enabled, None);
         assert_eq!(state.quantum_mode, None);
         assert_eq!(state.daita_mode, None);
+        assert_eq!(state.wireguard_backend_preference, None);
         assert!(state.configs.is_empty());
     }
 }

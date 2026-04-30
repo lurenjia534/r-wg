@@ -7,7 +7,10 @@ use std::time::{Duration, Instant};
 use gpui::{Entity, SharedString};
 use gpui_component::input::InputState;
 use gpui_component::theme::ThemeMode;
-use r_wg::backend::wg::{DaitaMode, EphemeralFailureKind, PeerStats, QuantumMode};
+use r_wg::backend::wg::{
+    ActiveBackendStatus, DaitaMode, EphemeralFailureKind, PeerStats, QuantumMode,
+    WireGuardBackendPreference,
+};
 use r_wg::core::route_plan::RouteApplyReport;
 use r_wg::dns::{DnsMode, DnsPreset};
 
@@ -213,6 +216,7 @@ pub(crate) struct RuntimeState {
     pub(crate) last_stop_at: Option<Instant>,
     pub(crate) running_name: Option<String>,
     pub(crate) running_id: Option<u64>,
+    pub(crate) active_backend: Option<ActiveBackendStatus>,
     pub(crate) quantum_protected: bool,
     pub(crate) last_quantum_failure: Option<EphemeralFailureKind>,
     pub(crate) daita_active: bool,
@@ -249,6 +253,7 @@ impl RuntimeState {
             last_stop_at: None,
             running_name: None,
             running_id: None,
+            active_backend: None,
             quantum_protected: false,
             last_quantum_failure: None,
             daita_active: false,
@@ -286,6 +291,7 @@ impl RuntimeState {
         self.running = false;
         self.running_name = None;
         self.running_id = None;
+        self.active_backend = None;
         self.quantum_protected = false;
         self.last_quantum_failure = None;
         self.daita_active = false;
@@ -304,6 +310,7 @@ impl RuntimeState {
     pub(crate) fn begin_start(&mut self) {
         self.busy = true;
         self.quantum_protected = false;
+        self.active_backend = None;
         self.last_quantum_failure = None;
         self.daita_active = false;
         self.last_daita_failure = None;
@@ -319,6 +326,11 @@ impl RuntimeState {
         self.running = true;
         self.running_name = Some(selected.name.clone());
         self.running_id = Some(selected.id);
+        self.runtime_revision = self.runtime_revision.wrapping_add(1);
+    }
+
+    pub(crate) fn set_active_backend(&mut self, backend: Option<ActiveBackendStatus>) {
+        self.active_backend = backend;
         self.runtime_revision = self.runtime_revision.wrapping_add(1);
     }
 
@@ -473,6 +485,7 @@ pub(crate) struct UiPrefsState {
     pub(crate) dns_preset: DnsPreset,
     pub(crate) quantum_mode: QuantumMode,
     pub(crate) daita_mode: DaitaMode,
+    pub(crate) wireguard_backend_preference: WireGuardBackendPreference,
 }
 
 impl UiPrefsState {
@@ -505,6 +518,7 @@ impl UiPrefsState {
             dns_preset: DnsPreset::CloudflareStandard,
             quantum_mode: QuantumMode::Off,
             daita_mode: DaitaMode::Off,
+            wireguard_backend_preference: WireGuardBackendPreference::default(),
         }
     }
 

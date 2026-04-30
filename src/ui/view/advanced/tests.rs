@@ -1,10 +1,19 @@
 // Focused regression tests for backend action guidance.
 
 use super::system::{
-    backend_recommended_action, backend_recovery_note, should_show_remove_action,
-    should_show_repair_action,
+    active_wireguard_backend_label, backend_recommended_action, backend_recovery_note,
+    should_show_remove_action, should_show_repair_action,
 };
-use crate::ui::state::{BackendDiagnostic, BackendHealth};
+use gpui_component::theme::ThemeMode;
+use r_wg::{
+    application::TunnelSessionService,
+    backend::wg::{ActiveBackendStatus, Engine},
+};
+
+use crate::ui::{
+    features::themes::AppearancePolicy,
+    state::{BackendDiagnostic, BackendHealth, WgApp},
+};
 
 fn diagnostic(health: BackendHealth) -> BackendDiagnostic {
     BackendDiagnostic {
@@ -12,6 +21,18 @@ fn diagnostic(health: BackendHealth) -> BackendDiagnostic {
         detail: "".into(),
         checked_at: None,
     }
+}
+
+fn make_app() -> WgApp {
+    WgApp::new(
+        TunnelSessionService::new(Engine::new()),
+        AppearancePolicy::Dark,
+        ThemeMode::Dark,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 #[test]
@@ -37,4 +58,19 @@ fn running_backend_explains_recovery_actions() {
             "Repair or Remove can stop the running helper first when you need to recover or uninstall it."
         )
     );
+}
+
+#[test]
+fn diagnostics_label_reports_active_wireguard_backend() {
+    let mut app = make_app();
+    assert_eq!(active_wireguard_backend_label(&app), "Not running");
+
+    app.runtime.running = true;
+    assert_eq!(active_wireguard_backend_label(&app), "Unknown");
+
+    app.runtime.active_backend = Some(ActiveBackendStatus::LinuxKernel);
+    assert_eq!(active_wireguard_backend_label(&app), "Linux Kernel");
+
+    app.runtime.active_backend = Some(ActiveBackendStatus::UserspaceGotaTun);
+    assert_eq!(active_wireguard_backend_label(&app), "GotaTun");
 }

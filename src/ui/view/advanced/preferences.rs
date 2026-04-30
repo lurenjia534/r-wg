@@ -2,15 +2,16 @@ use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Local};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, Axis, Entity, ParentElement, Styled, Window};
+use gpui::{div, Axis, Entity, ParentElement, SharedString, Styled, Window};
 use gpui_component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _};
 use gpui_component::dialog::DialogButtonProps;
+use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::setting::{SettingField, SettingItem};
 use gpui_component::switch::Switch;
 use gpui_component::{
     h_flex, v_flex, ActiveTheme as _, Disableable as _, Selectable, Sizable, Size, WindowExt,
 };
-use r_wg::backend::wg::{DaitaMode, QuantumMode};
+use r_wg::backend::wg::{DaitaMode, QuantumMode, WireGuardBackendPreference};
 
 use crate::ui::features::session::password_gate;
 use crate::ui::state::{ConfigInspectorTab, DaitaResourcesHealth, TrafficPeriod, WgApp};
@@ -234,6 +235,138 @@ pub(super) fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {
         SettingField::render(move |_, _window, cx| render_dns_preset_field(app.clone(), cx)),
     )
     .description("Only used when DNS mode fills or overrides resolver records.")
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn wireguard_backend_item(app: Entity<WgApp>) -> SettingItem {
+    SettingItem::new(
+        "WireGuard Implementation",
+        SettingField::render(move |_, _window, cx| {
+            let current = app.read(cx).ui_prefs.wireguard_backend_preference;
+            let daita_mode = app.read(cx).ui_prefs.daita_mode;
+            let quantum_mode = app.read(cx).ui_prefs.quantum_mode;
+            let set_handle = app.clone();
+            let current_label = wireguard_backend_label(current);
+
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    Button::new("advanced-wireguard-backend")
+                        .label(current_label)
+                        .outline()
+                        .small()
+                        .compact()
+                        .dropdown_caret(true)
+                        .dropdown_menu_with_anchor(
+                            gpui::Corner::TopRight,
+                            move |menu: PopupMenu, _, _| {
+                                wireguard_backend_options().iter().fold(
+                                    menu,
+                                    |menu, (value, label)| {
+                                        let checked = *value == wireguard_backend_value(current);
+                                        menu.item(
+                                            PopupMenuItem::new(label.clone())
+                                                .checked(checked)
+                                                .on_click({
+                                                    let set_handle = set_handle.clone();
+                                                    let value = value.clone();
+                                                    move |_, _, cx| {
+                                                        let next =
+                                                            wireguard_backend_from_value(&value);
+                                                        set_handle.update(cx, |app, cx| {
+                                                            app.set_wireguard_backend_preference(
+                                                                next, cx,
+                                                            );
+                                                        });
+                                                    }
+                                                }),
+                                        )
+                                    },
+                                )
+                            },
+                        ),
+                )
+                .when(
+                    current == WireGuardBackendPreference::Kernel && daita_mode.is_enabled(),
+                    |this| {
+                        this.child(
+                            div()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().warning.alpha(0.42))
+                                .bg(cx.theme().warning.alpha(0.08))
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .text_color(cx.theme().warning)
+                                .child(
+                                    "DAITA currently requires GotaTun. Switch WireGuard implementation to Userspace to use DAITA.",
+                                ),
+                        )
+                    },
+                )
+                .when(
+                    current == WireGuardBackendPreference::Kernel && quantum_mode.is_enabled(),
+                    |this| {
+                        this.child(
+                            div()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().warning.alpha(0.42))
+                                .bg(cx.theme().warning.alpha(0.08))
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .text_color(cx.theme().warning)
+                                .child(
+                                    "Quantum-resistant mode is not yet supported with the kernel backend.",
+                                ),
+                        )
+                    },
+                )
+        }),
+    )
+    .layout(Axis::Vertical)
+    .description(
+        "Auto prefers Linux kernel WireGuard and falls back to GotaTun when kernel support is unavailable. DAITA currently requires GotaTun.",
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn wireguard_backend_options() -> Vec<(SharedString, SharedString)> {
+    vec![
+        ("auto".into(), "Auto".into()),
+        ("kernel".into(), "Kernel".into()),
+        ("userspace".into(), "Userspace / GotaTun".into()),
+    ]
+}
+
+#[cfg(target_os = "linux")]
+fn wireguard_backend_value(value: WireGuardBackendPreference) -> SharedString {
+    match value {
+        WireGuardBackendPreference::Auto => "auto".into(),
+        WireGuardBackendPreference::Kernel => "kernel".into(),
+        WireGuardBackendPreference::Userspace => "userspace".into(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wireguard_backend_from_value(value: &SharedString) -> WireGuardBackendPreference {
+    match value.as_ref() {
+        "kernel" => WireGuardBackendPreference::Kernel,
+        "userspace" => WireGuardBackendPreference::Userspace,
+        _ => WireGuardBackendPreference::Auto,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wireguard_backend_label(value: WireGuardBackendPreference) -> SharedString {
+    wireguard_backend_options()
+        .into_iter()
+        .find(|(option, _)| *option == wireguard_backend_value(value))
+        .map(|(_, label)| label)
+        .unwrap_or_else(|| "Auto".into())
 }
 
 pub(super) fn quantum_mode_item(app: Entity<WgApp>) -> SettingItem {

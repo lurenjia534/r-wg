@@ -17,8 +17,9 @@
 use std::time::Duration;
 
 use crate::backend::wg::{
-    DaitaMode, Engine, EngineError, EngineRuntimeSnapshot, EngineStats, EngineStatus,
-    EphemeralFailureKind, QuantumMode, RelayInventoryStatusSnapshot, StartRequest,
+    ActiveBackendStatus, DaitaMode, Engine, EngineError, EngineRuntimeSnapshot, EngineStats,
+    EngineStatus, EphemeralFailureKind, QuantumMode, RelayInventoryStatusSnapshot, StartRequest,
+    WireGuardBackendPreference,
 };
 use crate::core::dns::DnsSelection;
 use crate::core::route_plan::RouteApplyReport;
@@ -52,6 +53,7 @@ impl TunnelSessionService {
             request.quantum_mode,
             request.daita_mode,
             request.kill_switch_enabled,
+            request.wireguard_backend_preference,
         ));
         let runtime_snapshot = self
             .engine
@@ -120,6 +122,8 @@ pub struct StartTunnelRequest {
     pub daita_mode: DaitaMode,
     /// 是否启用 Kill switch
     pub kill_switch_enabled: bool,
+    /// WireGuard 数据面实现偏好
+    pub wireguard_backend_preference: WireGuardBackendPreference,
 }
 
 impl StartTunnelRequest {
@@ -131,6 +135,7 @@ impl StartTunnelRequest {
         quantum_mode: QuantumMode,
         daita_mode: DaitaMode,
         kill_switch_enabled: bool,
+        wireguard_backend_preference: WireGuardBackendPreference,
     ) -> Self {
         Self {
             tun_name: tun_name.into(),
@@ -139,6 +144,7 @@ impl StartTunnelRequest {
             quantum_mode,
             daita_mode,
             kill_switch_enabled,
+            wireguard_backend_preference,
         }
     }
 }
@@ -160,6 +166,8 @@ pub struct StartTunnelOutcome {
 pub struct TunnelRuntimeSnapshot {
     /// 当前运行状态
     pub status: EngineStatus,
+    /// 当前实际运行的 WireGuard 数据面实现
+    pub active_backend: Option<ActiveBackendStatus>,
     /// 最近一次路由应用报告
     pub apply_report: Option<RouteApplyReport>,
     /// 当前会话是否已经切换到量子保护态
@@ -175,6 +183,7 @@ pub struct TunnelRuntimeSnapshot {
 fn map_runtime_snapshot(snapshot: EngineRuntimeSnapshot) -> TunnelRuntimeSnapshot {
     TunnelRuntimeSnapshot {
         status: snapshot.status,
+        active_backend: snapshot.active_backend,
         apply_report: snapshot.apply_report,
         quantum_protected: snapshot.quantum_protected,
         last_quantum_failure: snapshot.last_quantum_failure,
@@ -316,6 +325,7 @@ mod tests {
     fn runtime_snapshot_mapping_preserves_quantum_state() {
         let snapshot = map_runtime_snapshot(EngineRuntimeSnapshot {
             status: EngineStatus::Running,
+            active_backend: Some(ActiveBackendStatus::UserspaceGotaTun),
             apply_report: None,
             quantum_protected: true,
             last_quantum_failure: Some(EphemeralFailureKind::Timeout),
@@ -324,6 +334,10 @@ mod tests {
         });
 
         assert!(matches!(snapshot.status, EngineStatus::Running));
+        assert_eq!(
+            snapshot.active_backend,
+            Some(ActiveBackendStatus::UserspaceGotaTun)
+        );
         assert!(snapshot.quantum_protected);
         assert_eq!(
             snapshot.last_quantum_failure,

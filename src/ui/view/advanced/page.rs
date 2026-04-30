@@ -7,6 +7,8 @@ use crate::ui::features::theme_settings_group;
 use crate::ui::state::WgApp;
 use crate::ui::view::widgets::{PageShell, PageShellHeader};
 
+#[cfg(target_os = "linux")]
+use super::preferences::wireguard_backend_item;
 use super::preferences::{
     connect_password_item, daita_mode_item, daita_resources_item, dns_mode_item, dns_preset_item,
     inspector_tab_item, kill_switch_item, log_auto_follow_item, quantum_mode_item,
@@ -30,6 +32,19 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
                 .item(inspector_tab_item(app_handle.clone())),
         );
 
+    let connection_security_group = SettingGroup::new()
+        .title("Connection Security")
+        .description("Require local approval and control upcoming tunnel hardening behavior.")
+        .item(kill_switch_item(app_handle.clone()))
+        .item(connect_password_item(app_handle.clone()));
+    #[cfg(target_os = "linux")]
+    let connection_security_group =
+        connection_security_group.item(wireguard_backend_item(app_handle.clone()));
+    let connection_security_group = connection_security_group
+        .item(quantum_mode_item(app_handle.clone()))
+        .item(daita_mode_item(app_handle.clone()))
+        .item(daita_resources_item(app_handle.clone()));
+
     let network_page = SettingPage::new("Network")
         .description("Defaults used when tunnel configs do not fully define DNS behavior.")
         .default_open(true)
@@ -40,18 +55,7 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
                 .item(dns_mode_item(app_handle.clone()))
                 .item(dns_preset_item(app_handle.clone())),
         )
-        .group(
-            SettingGroup::new()
-                .title("Connection Security")
-                .description(
-                    "Require local approval and control upcoming tunnel hardening behavior.",
-                )
-                .item(kill_switch_item(app_handle.clone()))
-                .item(connect_password_item(app_handle.clone()))
-                .item(quantum_mode_item(app_handle.clone()))
-                .item(daita_mode_item(app_handle.clone()))
-                .item(daita_resources_item(app_handle.clone())),
-        );
+        .group(connection_security_group);
 
     let monitoring_page = SettingPage::new("Monitoring")
         .description("Remembered monitoring behavior and chart defaults.")

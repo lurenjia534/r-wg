@@ -4,7 +4,7 @@ use std::time::Duration;
 use gpui::SharedString;
 use gpui::{AppContext, Context, Timer, Window};
 use gpui_component::theme::ThemeMode;
-use r_wg::backend::wg::{DaitaMode, QuantumMode};
+use r_wg::backend::wg::{DaitaMode, QuantumMode, WireGuardBackendPreference};
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use super::super::features::themes::{self, AppearancePolicy};
@@ -251,6 +251,7 @@ impl<'a> PersistedStateSnapshot<'a> {
             dns_preset: Some(self.ui_prefs.dns_preset),
             quantum_mode: Some(self.ui_prefs.quantum_mode),
             daita_mode: Some(self.ui_prefs.daita_mode),
+            wireguard_backend_preference: Some(self.ui_prefs.wireguard_backend_preference),
             traffic_global_days: self
                 .stats
                 .traffic
@@ -335,6 +336,7 @@ struct PersistedStateRestore {
     dns_preset: Option<DnsPreset>,
     quantum_mode: Option<QuantumMode>,
     daita_mode: Option<DaitaMode>,
+    wireguard_backend_preference: Option<WireGuardBackendPreference>,
     configs: Vec<TunnelConfig>,
     next_config_id: u64,
     selected_id: Option<u64>,
@@ -358,7 +360,7 @@ impl PersistedStateRestore {
         storage: &StoragePaths,
         cx: &Context<WgApp>,
     ) -> Result<Self, String> {
-        if state.version != STATE_VERSION {
+        if state.version > STATE_VERSION {
             return Err(format!("Unsupported state version: {}", state.version));
         }
 
@@ -439,6 +441,7 @@ impl PersistedStateRestore {
             dns_preset: state.dns_preset,
             quantum_mode: state.quantum_mode,
             daita_mode: state.daita_mode,
+            wireguard_backend_preference: state.wireguard_backend_preference,
             next_config_id: state.next_id.max(max_id.saturating_add(1)),
             selected_id: state.selected_id,
             traffic: TrafficStore {
@@ -523,6 +526,9 @@ impl PersistedStateRestore {
         }
         if let Some(daita_mode) = self.daita_mode {
             ui_prefs.daita_mode = daita_mode;
+        }
+        if let Some(wireguard_backend_preference) = self.wireguard_backend_preference {
+            ui_prefs.wireguard_backend_preference = wireguard_backend_preference;
         }
 
         configs.configs = self.configs;

@@ -437,9 +437,11 @@ fn build_backend_diagnostics_text(app: &WgApp) -> String {
         .checked_at
         .map(format_checked_timestamp)
         .unwrap_or_else(|| "not checked yet".to_string());
+    let wireguard_backend = active_wireguard_backend_label(app);
     let mut lines = vec![
         format!("App: r-wg v{}", env!("CARGO_PKG_VERSION")),
         format!("Platform: {OS} / {ARCH}"),
+        format!("Active WireGuard backend: {wireguard_backend}"),
         format!("Health: {}", diagnostic.summary()),
         format!("Checked: {checked}"),
         format!("Integration: {}", helper_platform_detail()),
@@ -482,9 +484,11 @@ fn render_backend_details(app: &Entity<WgApp>, cx: &mut gpui::App) -> Div {
         .as_ref()
         .map(|err| err.to_string())
         .unwrap_or_else(|| "None".to_string());
+    let wireguard_backend = active_wireguard_backend_label(app);
 
     let details = DescriptionList::new()
         .columns(1)
+        .item("Active WireGuard Backend", wireguard_backend, 1)
         .item("Integration", helper_platform_detail(), 1)
         .item("Control Endpoint", helper_control_endpoint(), 1)
         .item("Health", diagnostic.summary(), 1)
@@ -513,6 +517,16 @@ fn render_backend_details(app: &Entity<WgApp>, cx: &mut gpui::App) -> Div {
         .border_t_1()
         .border_color(cx.theme().border)
         .child(details)
+}
+
+pub(super) fn active_wireguard_backend_label(app: &WgApp) -> String {
+    if !app.runtime.running {
+        return "Not running".to_string();
+    }
+    app.runtime
+        .active_backend
+        .map(|backend| backend.label().to_string())
+        .unwrap_or_else(|| "Unknown".to_string())
 }
 
 fn format_checked_timestamp(checked_at: SystemTime) -> String {
