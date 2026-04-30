@@ -8,6 +8,7 @@ use rtnetlink::{new_connection, LinkWireguard};
 use tokio::task::JoinHandle;
 
 use super::engine::{DaitaStats, EngineStats, PeerStats};
+use super::ephemeral::EphemeralPeerUpdate;
 use crate::core::config::DeviceSettings;
 
 #[derive(Debug)]
@@ -94,6 +95,22 @@ pub(crate) async fn read_kernel_stats(tun_name: &str) -> Result<EngineStats, Ker
     Ok(EngineStats { peers })
 }
 
+pub(crate) async fn apply_ephemeral_update(
+    tun_name: &str,
+    update: &EphemeralPeerUpdate,
+) -> Result<(), KernelWireGuardError> {
+    let mut config = WireguardParsed::default();
+    config.iface_name = Some(tun_name.to_string());
+    config.private_key = Some(STANDARD.encode(update.private_key.to_bytes()));
+    config.peers = Some(vec![kernel_peer_from_device_peer(&update.peer)]);
+    set_wireguard_config(config, "failed to apply kernel WireGuard ephemeral update").await?;
+    tracing::debug!(
+        tun = tun_name,
+        "Mullvad ephemeral peer configuration applied to kernel WireGuard"
+    );
+    Ok(())
+}
+
 async fn create_wireguard_link(tun_name: &str) -> Result<(), KernelWireGuardError> {
     let connection = route_connection()?;
     let handle = connection.handle.clone();
@@ -124,6 +141,13 @@ async fn configure_wireguard_device(
             .collect(),
     );
 
+    set_wireguard_config(config, "failed to configure kernel WireGuard").await
+}
+
+async fn set_wireguard_config(
+    mut config: WireguardParsed,
+    operation_context: &'static str,
+) -> Result<(), KernelWireGuardError> {
     let (conn, mut handle, _) = nl_wireguard::new_connection()
         .map_err(|error| unavailable(format!("failed to open wireguard netlink: {error}")))?;
     let task = tokio::spawn(conn);
@@ -137,7 +161,7 @@ async fn configure_wireguard_device(
                     "kernel WireGuard generic netlink unavailable: {message}"
                 ))
             } else {
-                operation(format!("failed to configure kernel WireGuard: {message}"))
+                operation(format!("{operation_context}: {message}"))
             }
         });
     task.abort();

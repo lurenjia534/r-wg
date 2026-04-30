@@ -246,6 +246,22 @@ struct EphemeralNegotiation {
     daita: Option<daita::DaitaSettings>,
 }
 
+pub(crate) struct EphemeralPeerUpdate {
+    pub(crate) private_key: StaticSecret,
+    pub(crate) peer: DevicePeer,
+    quantum_applied: bool,
+    daita_applied: bool,
+}
+
+impl EphemeralPeerUpdate {
+    pub(crate) fn outcome(&self) -> UpgradeOutcome {
+        UpgradeOutcome {
+            quantum_applied: self.quantum_applied,
+            daita_applied: self.daita_applied,
+        }
+    }
+}
+
 pub(crate) async fn upgrade_tunnel(
     quantum_mode: QuantumMode,
     daita_mode: DaitaMode,
@@ -254,8 +270,26 @@ pub(crate) async fn upgrade_tunnel(
     parsed: &WireGuardConfig,
     base_peer: &DevicePeer,
 ) -> Result<UpgradeOutcome, Error> {
+    let update =
+        negotiate_tunnel_upgrade(quantum_mode, daita_mode, tun_name, parsed, base_peer).await?;
+    apply_gotatun_update(device, tun_name, &update).await?;
+    Ok(update.outcome())
+}
+
+pub(crate) async fn negotiate_tunnel_upgrade(
+    quantum_mode: QuantumMode,
+    daita_mode: DaitaMode,
+    tun_name: &str,
+    parsed: &WireGuardConfig,
+    base_peer: &DevicePeer,
+) -> Result<EphemeralPeerUpdate, Error> {
     if !quantum_mode.is_enabled() && !daita_mode.is_enabled() {
-        return Ok(UpgradeOutcome::default());
+        return Ok(EphemeralPeerUpdate {
+            private_key: StaticSecret::from(*parsed.interface.private_key.as_bytes()),
+            peer: base_peer.clone(),
+            quantum_applied: false,
+            daita_applied: false,
+        });
     }
 
     ensure_supported_ephemeral_config(parsed)?;
@@ -293,24 +327,9 @@ pub(crate) async fn upgrade_tunnel(
         if let Some(daita) = negotiation.daita.take() {
             peer = peer.with_daita(daita);
         }
-
-        let config_result = device
-            .write(async |device| {
-                device.set_private_key(ephemeral_private_key.clone()).await;
-                device.clear_peers();
-                device.add_peers(vec![peer]);
-                Ok::<_, device::Error>(())
-            })
-            .await
-            .and_then(|result| result)
-            .map_err(Error::Reconfigure);
-
-        config_result?;
-        tracing::debug!(
-            tun = tun_name,
-            "Mullvad ephemeral peer configuration applied"
-        );
-        Ok(UpgradeOutcome {
+        Ok(EphemeralPeerUpdate {
+            private_key: ephemeral_private_key,
+            peer,
             quantum_applied: quantum_mode.is_enabled(),
             daita_applied: daita_mode.is_enabled(),
         })
@@ -333,6 +352,30 @@ pub(crate) async fn upgrade_tunnel(
     {
         upgrade_result
     }
+}
+
+async fn apply_gotatun_update(
+    device: &Device<DefaultDeviceTransports>,
+    tun_name: &str,
+    update: &EphemeralPeerUpdate,
+) -> Result<(), Error> {
+    let config_result = device
+        .write(async |device| {
+            device.set_private_key(update.private_key.clone()).await;
+            device.clear_peers();
+            device.add_peers(vec![update.peer.clone()]);
+            Ok::<_, device::Error>(())
+        })
+        .await
+        .and_then(|result| result)
+        .map_err(Error::Reconfigure);
+
+    config_result?;
+    tracing::debug!(
+        tun = tun_name,
+        "Mullvad ephemeral peer configuration applied to GotaTun"
+    );
+    Ok(())
 }
 
 fn ensure_supported_ephemeral_config(parsed: &WireGuardConfig) -> Result<(), Error> {
@@ -721,8 +764,9 @@ mod tests {
 
     use super::STANDARD;
     use super::{
-        ensure_supported_ephemeral_config, negotiation_timeout_for_attempt,
-        public_key_inventory_token, validate_daita_config_against_inventory,
+        ensure_supported_ephemeral_config, negotiate_tunnel_upgrade,
+        negotiation_timeout_for_attempt, public_key_inventory_token,
+        validate_daita_config_against_inventory, DaitaMode, PublicKey, QuantumMode,
     };
 
     const PRIVATE_KEY: &str = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -951,5 +995,37 @@ mod tests {
         assert_eq!(negotiation_timeout_for_attempt(2), Duration::from_secs(32));
         assert_eq!(negotiation_timeout_for_attempt(3), Duration::from_secs(48));
         assert_eq!(negotiation_timeout_for_attempt(4), Duration::from_secs(48));
+    }
+
+    #[tokio::test]
+    async fn no_op_negotiation_returns_base_peer_update_without_network() {
+        let config = parse_config(&format!(
+            "[Interface]\nPrivateKey = {PRIVATE_KEY}\nAddress = 10.64.12.34/32\n\n[Peer]\nPublicKey = {PUBLIC_KEY_A}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 203.0.113.10:51820\n"
+        ))
+        .expect("config should parse");
+        let settings = config
+            .to_device_settings()
+            .await
+            .expect("device settings should build");
+        let base_peer = settings.peers.first().expect("peer should exist");
+
+        let update = negotiate_tunnel_upgrade(
+            QuantumMode::Off,
+            DaitaMode::Off,
+            "wg-test",
+            &config,
+            base_peer,
+        )
+        .await
+        .expect("disabled modes should not contact config service");
+
+        assert!(!update.outcome().quantum_applied);
+        assert!(!update.outcome().daita_applied);
+        assert_eq!(update.peer.public_key, base_peer.public_key);
+        assert_eq!(update.peer.preshared_key, base_peer.preshared_key);
+        assert_eq!(
+            PublicKey::from(&update.private_key).to_bytes(),
+            PublicKey::from(&settings.private_key).to_bytes()
+        );
     }
 }

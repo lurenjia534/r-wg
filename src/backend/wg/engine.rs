@@ -815,8 +815,82 @@ impl EngineState {
         self.net_state = Some(net_result.state);
         log_engine::network_configured();
         self.route_apply_report = Some(net_result.report.clone());
+
+        if request.quantum_mode.is_enabled() {
+            if let Err(error) = self
+                .upgrade_kernel_ephemeral(tun_name, parsed, settings, request)
+                .await
+            {
+                let cleanup_result = self.cleanup_active_network_state().await;
+                let _ = linux_kernel::delete_kernel_device(kernel_device.tun_name()).await;
+                return match cleanup_result {
+                    Ok(()) => Err(error),
+                    Err(err) => Err(KernelStartError::Engine(err)),
+                };
+            }
+        }
+
         self.active_backend = Some(ActiveWireGuardBackend::LinuxKernel(kernel_device));
         self.running = true;
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn upgrade_kernel_ephemeral(
+        &mut self,
+        tun_name: &str,
+        parsed: &config::WireGuardConfig,
+        settings: &config::DeviceSettings,
+        request: &StartRequest,
+    ) -> Result<(), KernelStartError> {
+        log_engine::ephemeral_negotiation_requested(
+            request.quantum_mode.is_enabled(),
+            request.daita_mode.is_enabled(),
+        );
+        let Some(base_peer) = settings.peers.first() else {
+            let error = ephemeral::Error::UnsupportedConfig(
+                "ephemeral peer negotiation requires exactly one configured peer",
+            );
+            self.last_quantum_failure = Some(error.kind());
+            let message = error.to_string();
+            log_engine::ephemeral_negotiation_failed(&message);
+            return Err(KernelStartError::Engine(EngineError::Ephemeral(message)));
+        };
+
+        let update = match ephemeral::negotiate_tunnel_upgrade(
+            request.quantum_mode,
+            request.daita_mode,
+            tun_name,
+            parsed,
+            base_peer,
+        )
+        .await
+        {
+            Ok(update) => update,
+            Err(error) => {
+                self.last_quantum_failure = Some(error.kind());
+                let message = error.to_string();
+                log_engine::ephemeral_negotiation_failed(&message);
+                return Err(KernelStartError::Engine(EngineError::Ephemeral(message)));
+            }
+        };
+
+        if let Err(error) = linux_kernel::apply_ephemeral_update(tun_name, &update).await {
+            self.last_quantum_failure = Some(EphemeralFailureKind::Reconfigure);
+            let message = error.to_string();
+            log_engine::ephemeral_negotiation_failed(&message);
+            return Err(KernelStartError::Engine(EngineError::Ephemeral(format!(
+                "failed to apply kernel ephemeral update: {message}"
+            ))));
+        }
+
+        let outcome = update.outcome();
+        log_engine::ephemeral_negotiation_completed(outcome.quantum_applied, outcome.daita_applied);
+        self.quantum_active = outcome.quantum_applied;
+        self.daita_active = outcome.daita_applied;
+        self.ephemeral_key_active = outcome.quantum_applied || outcome.daita_applied;
+        self.last_quantum_failure = None;
+        self.last_daita_failure = None;
         Ok(())
     }
 
@@ -1059,7 +1133,7 @@ fn current_kernel_capability() -> KernelCapability {
 fn resolve_backend(
     preference: WireGuardBackendPreference,
     daita_mode: DaitaMode,
-    quantum_mode: QuantumMode,
+    _quantum_mode: QuantumMode,
     kernel_capability: KernelCapability,
 ) -> Result<BackendDecision, EngineError> {
     if daita_mode.is_enabled() {
@@ -1067,17 +1141,6 @@ fn resolve_backend(
             WireGuardBackendPreference::Kernel => Err(EngineError::UnsupportedBackend(
                 "DAITA currently requires GotaTun; switch WireGuard implementation to Userspace"
                     .to_string(),
-            )),
-            WireGuardBackendPreference::Auto | WireGuardBackendPreference::Userspace => {
-                Ok(BackendDecision::UserspaceGotaTun)
-            }
-        };
-    }
-
-    if quantum_mode.is_enabled() {
-        return match preference {
-            WireGuardBackendPreference::Kernel => Err(EngineError::UnsupportedBackend(
-                "quantum-resistant mode is not yet supported with the kernel backend".to_string(),
             )),
             WireGuardBackendPreference::Auto | WireGuardBackendPreference::Userspace => {
                 Ok(BackendDecision::UserspaceGotaTun)
@@ -1248,7 +1311,7 @@ mod tests {
     }
 
     #[test]
-    fn backend_resolution_handles_userspace_features_and_kernel_conflicts() {
+    fn backend_resolution_handles_daita_conflicts_and_quantum_kernel_support() {
         assert_eq!(
             resolve_backend(
                 WireGuardBackendPreference::Auto,
@@ -1266,7 +1329,27 @@ mod tests {
                 QuantumMode::On,
                 KernelCapability::Available,
             )
-            .expect("auto quantum phase 1 should choose userspace"),
+            .expect("auto quantum phase 2 should prefer kernel"),
+            BackendDecision::LinuxKernel
+        );
+        assert_eq!(
+            resolve_backend(
+                WireGuardBackendPreference::Kernel,
+                DaitaMode::Off,
+                QuantumMode::On,
+                KernelCapability::Available,
+            )
+            .expect("kernel quantum phase 2 should be supported"),
+            BackendDecision::LinuxKernel
+        );
+        assert_eq!(
+            resolve_backend(
+                WireGuardBackendPreference::Userspace,
+                DaitaMode::Off,
+                QuantumMode::On,
+                KernelCapability::Available,
+            )
+            .expect("userspace quantum should remain userspace"),
             BackendDecision::UserspaceGotaTun
         );
         assert!(matches!(
@@ -1277,15 +1360,6 @@ mod tests {
                 KernelCapability::Available,
             ),
             Err(EngineError::UnsupportedBackend(message)) if message.contains("DAITA")
-        ));
-        assert!(matches!(
-            resolve_backend(
-                WireGuardBackendPreference::Kernel,
-                DaitaMode::Off,
-                QuantumMode::On,
-                KernelCapability::Available,
-            ),
-            Err(EngineError::UnsupportedBackend(message)) if message.contains("quantum-resistant")
         ));
     }
 
@@ -1299,6 +1373,16 @@ mod tests {
                 KernelCapability::Unavailable,
             )
             .expect("auto should fall back to userspace"),
+            BackendDecision::UserspaceGotaTun
+        );
+        assert_eq!(
+            resolve_backend(
+                WireGuardBackendPreference::Auto,
+                DaitaMode::Off,
+                QuantumMode::On,
+                KernelCapability::Unavailable,
+            )
+            .expect("auto quantum should fall back to userspace when kernel is unavailable"),
             BackendDecision::UserspaceGotaTun
         );
         assert!(matches!(

@@ -244,7 +244,6 @@ pub(super) fn wireguard_backend_item(app: Entity<WgApp>) -> SettingItem {
         SettingField::render(move |_, _window, cx| {
             let current = app.read(cx).ui_prefs.wireguard_backend_preference;
             let daita_mode = app.read(cx).ui_prefs.daita_mode;
-            let quantum_mode = app.read(cx).ui_prefs.quantum_mode;
             let set_handle = app.clone();
             let current_label = wireguard_backend_label(current);
 
@@ -287,9 +286,7 @@ pub(super) fn wireguard_backend_item(app: Entity<WgApp>) -> SettingItem {
                             },
                         ),
                 )
-                .when(
-                    current == WireGuardBackendPreference::Kernel && daita_mode.is_enabled(),
-                    |this| {
+                .when(current != WireGuardBackendPreference::Userspace && daita_mode.is_enabled(), |this| {
                         this.child(
                             div()
                                 .rounded_md()
@@ -304,27 +301,7 @@ pub(super) fn wireguard_backend_item(app: Entity<WgApp>) -> SettingItem {
                                     "DAITA currently requires GotaTun. Switch WireGuard implementation to Userspace to use DAITA.",
                                 ),
                         )
-                    },
-                )
-                .when(
-                    current == WireGuardBackendPreference::Kernel && quantum_mode.is_enabled(),
-                    |this| {
-                        this.child(
-                            div()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(cx.theme().warning.alpha(0.42))
-                                .bg(cx.theme().warning.alpha(0.08))
-                                .px_3()
-                                .py_2()
-                                .text_sm()
-                                .text_color(cx.theme().warning)
-                                .child(
-                                    "Quantum-resistant mode is not yet supported with the kernel backend.",
-                                ),
-                        )
-                    },
-                )
+                    })
         }),
     )
     .layout(Axis::Vertical)
@@ -395,24 +372,79 @@ pub(super) fn quantum_mode_item(app: Entity<WgApp>) -> SettingItem {
 }
 
 pub(super) fn daita_mode_item(app: Entity<WgApp>) -> SettingItem {
-    let get_handle = app.clone();
-    let set_handle = app;
-
     SettingItem::new(
         "DAITA",
-        SettingField::switch(
-            move |cx| get_handle.read(cx).ui_prefs.daita_mode == DaitaMode::On,
-            move |value, cx| {
-                let next = if value { DaitaMode::On } else { DaitaMode::Off };
-                set_handle.update(cx, |app, cx| {
-                    app.set_daita_mode_pref(next, cx);
-                });
-            },
-        ),
+        SettingField::render(move |_, _window, cx| {
+            let enabled = app.read(cx).ui_prefs.daita_mode == DaitaMode::On;
+            let backend_preference = app.read(cx).ui_prefs.wireguard_backend_preference;
+            let enable_handle = app.clone();
+            let direct_set_handle = app.clone();
+
+            Switch::new("advanced-daita")
+                .label("Enable DAITA for Mullvad tunnels")
+                .checked(enabled)
+                .with_size(Size::Small)
+                .on_click(move |checked, window, cx| {
+                    if !*checked {
+                        direct_set_handle.update(cx, |app, cx| {
+                            app.set_daita_mode_pref(DaitaMode::Off, cx);
+                        });
+                        return;
+                    }
+
+                    if backend_preference == WireGuardBackendPreference::Userspace {
+                        direct_set_handle.update(cx, |app, cx| {
+                            app.set_daita_mode_pref(DaitaMode::On, cx);
+                        });
+                        return;
+                    }
+
+                    open_daita_requires_userspace_dialog(enable_handle.clone(), window, cx);
+                })
+        }),
     )
     .description(
         "Negotiate Mullvad DAITA settings for each tunnel start. Requires a Mullvad single-hop peer that advertises DAITA capability.",
     )
+}
+
+fn open_daita_requires_userspace_dialog(
+    app_handle: Entity<WgApp>,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    window.open_dialog(cx, move |dialog, _window, cx| {
+        let confirm_handle = app_handle.clone();
+        dialog
+            .title(div().text_lg().child("Switch to GotaTun for DAITA?"))
+            .confirm()
+            .button_props(
+                DialogButtonProps::default()
+                    .ok_text("Switch to GotaTun")
+                    .ok_variant(ButtonVariant::Primary)
+                    .cancel_text("Cancel"),
+            )
+            .child(
+                div().text_sm().child(
+                    "DAITA currently requires the userspace GotaTun implementation. It is not available with the Linux kernel WireGuard backend.",
+                ),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Choosing Switch to GotaTun changes WireGuard Implementation to Userspace / GotaTun and enables DAITA. Cancel leaves DAITA off.",
+                    ),
+            )
+            .on_ok(move |_, _window, cx| {
+                confirm_handle.update(cx, |app, cx| {
+                    app.set_wireguard_backend_preference(WireGuardBackendPreference::Userspace, cx);
+                    app.set_daita_mode_pref(DaitaMode::On, cx);
+                });
+                true
+            })
+    });
 }
 
 pub(super) fn daita_resources_item(app: Entity<WgApp>) -> SettingItem {
