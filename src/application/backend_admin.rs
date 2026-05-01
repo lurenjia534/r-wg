@@ -23,6 +23,7 @@ impl BackendAdminService {
         match action {
             PrivilegedServiceAction::Install => "Installing",
             PrivilegedServiceAction::Repair => "Repairing",
+            PrivilegedServiceAction::StartupRepair => "Repairing",
             PrivilegedServiceAction::Remove => "Removing",
         }
     }
@@ -31,6 +32,7 @@ impl BackendAdminService {
         match action {
             PrivilegedServiceAction::Install => "Privileged backend installed",
             PrivilegedServiceAction::Repair => "Privileged backend repaired",
+            PrivilegedServiceAction::StartupRepair => "Startup repair completed",
             PrivilegedServiceAction::Remove => "Privileged backend removed",
         }
     }

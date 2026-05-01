@@ -73,6 +73,7 @@ pub enum PrivilegedServiceStatus {
 pub enum PrivilegedServiceAction {
     Install,
     Repair,
+    StartupRepair,
     Remove,
 }
 

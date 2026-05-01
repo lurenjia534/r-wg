@@ -67,6 +67,7 @@ impl BackendHealth {
             Self::Working { action } => match action {
                 PrivilegedServiceAction::Install => "Installing",
                 PrivilegedServiceAction::Repair => "Repairing",
+                PrivilegedServiceAction::StartupRepair => "Repairing",
                 PrivilegedServiceAction::Remove => "Removing",
             },
         }
@@ -116,6 +117,9 @@ impl BackendDiagnostic {
         let detail = match action {
             PrivilegedServiceAction::Install => "Installing the privileged backend service...",
             PrivilegedServiceAction::Repair => "Repairing the privileged backend service...",
+            PrivilegedServiceAction::StartupRepair => {
+                "Running startup repair for stale routes, DNS, and kernel WireGuard links..."
+            }
             PrivilegedServiceAction::Remove => "Removing the privileged backend service...",
         };
 
@@ -186,6 +190,7 @@ impl BackendDiagnostic {
             BackendHealth::Working { action } => match action {
                 PrivilegedServiceAction::Install => "Installing",
                 PrivilegedServiceAction::Repair => "Repairing",
+                PrivilegedServiceAction::StartupRepair => "Repairing",
                 PrivilegedServiceAction::Remove => "Removing",
             },
             _ => self.summary(),
@@ -212,6 +217,7 @@ impl BackendDiagnostic {
                     | BackendHealth::VersionMismatch { .. }
                     | BackendHealth::Unreachable
             ),
+            PrivilegedServiceAction::StartupRepair => !self.is_busy(),
             PrivilegedServiceAction::Remove => matches!(
                 self.health,
                 BackendHealth::Installed

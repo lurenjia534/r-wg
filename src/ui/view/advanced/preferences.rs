@@ -383,7 +383,7 @@ pub(super) fn quantum_mode_item(app: Entity<WgApp>) -> SettingItem {
         ),
     )
     .description(
-        "Currently supports only Mullvad single-hop WireGuard tunnels. Enabling this for other providers will fail.",
+        "Currently supports only Mullvad single-hop WireGuard tunnels. Startup first establishes a base tunnel, then negotiates the quantum upgrade before reporting quantum protected.",
     )
 }
 

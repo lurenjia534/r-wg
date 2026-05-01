@@ -208,10 +208,6 @@ fn start_with_config(
         return;
     }
 
-    app.runtime.begin_start();
-    app.set_status(format!("Starting {}...", selected.name));
-    cx.notify();
-
     let tunnel_session = app.tunnel_session.clone();
     let config_library = app.config_library.clone();
     let dns_selection = DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset);
@@ -219,6 +215,14 @@ fn start_with_config(
     let daita_mode = app.ui_prefs.daita_mode;
     let kill_switch_enabled = app.ui_prefs.kill_switch_enabled;
     let wireguard_backend_preference = app.ui_prefs.wireguard_backend_preference;
+
+    app.runtime.begin_start();
+    app.set_status(starting_status_text(
+        &selected.name,
+        quantum_mode,
+        daita_mode,
+    ));
+    cx.notify();
 
     cx.spawn(async move |view, cx| {
         // 如果指定了延迟，先等待
@@ -305,12 +309,18 @@ fn start_with_config(
                     }
                     this.refresh_configs_workspace_row_flags(cx);
                     this.stats.reset_for_start();
-                    let status = match this.runtime.active_backend {
+                    let mut status = match this.runtime.active_backend {
                         Some(backend) => {
                             format!("Running {} via {}", selected.name, backend.label())
                         }
                         None => format!("Running {}", selected.name),
                     };
+                    match (this.runtime.quantum_protected, this.runtime.daita_active) {
+                        (true, true) => status.push_str(" (quantum protected, DAITA active)"),
+                        (true, false) => status.push_str(" (quantum protected)"),
+                        (false, true) => status.push_str(" (DAITA active)"),
+                        (false, false) => {}
+                    }
                     let notification = format!("Tunnel connected: {}", selected.name);
                     this.set_status(status);
                     tray::notify_system("r-wg", &notification, false);
@@ -346,6 +356,19 @@ fn start_with_config(
         .ok();
     })
     .detach();
+}
+
+fn starting_status_text(
+    name: &str,
+    quantum_mode: r_wg::backend::wg::QuantumMode,
+    daita_mode: r_wg::backend::wg::DaitaMode,
+) -> String {
+    match (quantum_mode.is_enabled(), daita_mode.is_enabled()) {
+        (true, true) => format!("Starting {name}... negotiating quantum upgrade and DAITA"),
+        (true, false) => format!("Starting {name}... negotiating quantum upgrade"),
+        (false, true) => format!("Starting {name}... negotiating DAITA"),
+        (false, false) => format!("Starting {name}..."),
+    }
 }
 
 /// 根据配置 ID 启动
@@ -429,9 +452,9 @@ fn format_start_failure(
 
 #[cfg(test)]
 mod tests {
-    use r_wg::backend::wg::EphemeralFailureKind;
+    use r_wg::backend::wg::{DaitaMode, EphemeralFailureKind, QuantumMode};
 
-    use super::format_start_failure;
+    use super::{format_start_failure, starting_status_text};
 
     #[test]
     fn format_start_failure_includes_quantum_failure_kind() {
@@ -440,6 +463,18 @@ mod tests {
         assert_eq!(
             message,
             "Start failed (ephemeral peer negotiation timeout): timed out"
+        );
+    }
+
+    #[test]
+    fn starting_status_names_pending_tunnel_upgrades() {
+        assert_eq!(
+            starting_status_text("alpha", QuantumMode::On, DaitaMode::Off),
+            "Starting alpha... negotiating quantum upgrade"
+        );
+        assert_eq!(
+            starting_status_text("alpha", QuantumMode::On, DaitaMode::On),
+            "Starting alpha... negotiating quantum upgrade and DAITA"
         );
     }
 }

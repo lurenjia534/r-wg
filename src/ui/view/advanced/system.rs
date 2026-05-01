@@ -30,10 +30,23 @@ pub(super) fn privileged_backend_item(app: Entity<WgApp>) -> SettingItem {
     .layout(Axis::Vertical)
 }
 
-pub(super) fn troubleshooting_item() -> SettingItem {
+pub(super) fn troubleshooting_item(app: Entity<WgApp>) -> SettingItem {
     SettingItem::new(
         "Troubleshooting",
-        SettingField::render(|_, _, cx| {
+        SettingField::render(move |_, _, cx| {
+            #[cfg(target_os = "linux")]
+            let (running, repair_busy) = {
+                let app = app.read(cx);
+                (
+                    app.runtime.running,
+                    app.ui
+                        .backend
+                        .is_working_action(PrivilegedServiceAction::StartupRepair),
+                )
+            };
+            #[cfg(target_os = "linux")]
+            let repair_handle = app.clone();
+
             v_flex()
                 .w_full()
                 .gap_2()
@@ -57,6 +70,48 @@ pub(super) fn troubleshooting_item() -> SettingItem {
                         .text_color(cx.theme().muted_foreground)
                         .child("Remove uninstalls the helper integration only. Tunnel configs are kept."),
                 )
+                .when(cfg!(target_os = "linux"), |this| {
+                    #[cfg(target_os = "linux")]
+                    {
+                        this.child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .pt_1()
+                                .child(
+                                    Button::new("backend-startup-repair")
+                                        .label("Run Startup Repair")
+                                        .outline()
+                                        .small()
+                                        .compact()
+                                        .loading(repair_busy)
+                                        .disabled(running || repair_busy)
+                                        .on_click(move |_, _, cx| {
+                                            repair_handle.update(cx, |app, cx| {
+                                                app.run_privileged_backend_action(
+                                                    PrivilegedServiceAction::StartupRepair,
+                                                    cx,
+                                                );
+                                            });
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(if running {
+                                            "Stop the current tunnel before repairing stale startup state."
+                                        } else {
+                                            "Clears stale routes, DNS state, kill switch state, and journaled kernel WireGuard links."
+                                        }),
+                                ),
+                        )
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        this
+                    }
+                })
         }),
     )
     .layout(Axis::Vertical)

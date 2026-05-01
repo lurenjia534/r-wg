@@ -41,6 +41,7 @@ pub enum PrivilegedServiceStatus {
 pub enum PrivilegedServiceAction {
     Install,
     Repair,
+    StartupRepair,
     Remove,
 }
 
@@ -49,6 +50,7 @@ impl PrivilegedServiceAction {
         match self {
             Self::Install => "install",
             Self::Repair => "repair",
+            Self::StartupRepair => "startup-repair",
             Self::Remove => "remove",
         }
     }

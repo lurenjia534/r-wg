@@ -78,6 +78,12 @@ pub fn probe_privileged_service() -> PrivilegedServiceStatus {
 }
 
 pub fn manage_privileged_service(action: PrivilegedServiceAction) -> Result<(), EngineError> {
+    if matches!(action, PrivilegedServiceAction::StartupRepair) {
+        return Err(remote_error(
+            "startup repair is only available for the Linux privileged backend".to_string(),
+        ));
+    }
+
     let current_exe = env::current_exe()
         .map_err(|err| EngineError::Remote(format!("failed to locate current exe: {err}")))?;
 
@@ -384,6 +390,7 @@ fn wait_for_manager_result(action: PrivilegedServiceAction) -> Result<(), Engine
             (PrivilegedServiceAction::Install, PrivilegedServiceStatus::Running)
             | (PrivilegedServiceAction::Install, PrivilegedServiceStatus::Installed)
             | (PrivilegedServiceAction::Repair, PrivilegedServiceStatus::Running)
+            | (PrivilegedServiceAction::StartupRepair, PrivilegedServiceStatus::Running)
             | (PrivilegedServiceAction::Repair, PrivilegedServiceStatus::Installed) => {
                 return Ok(())
             }
@@ -403,7 +410,10 @@ fn wait_for_manager_result(action: PrivilegedServiceAction) -> Result<(), Engine
 
 fn build_manage_args(action: PrivilegedServiceAction, current_exe: &Path) -> Vec<String> {
     let mut args = vec![SERVICE_SUBCOMMAND.to_string(), action.as_cli().to_string()];
-    if !matches!(action, PrivilegedServiceAction::Remove) {
+    if !matches!(
+        action,
+        PrivilegedServiceAction::Remove | PrivilegedServiceAction::StartupRepair
+    ) {
         args.push("--source".to_string());
         args.push(current_exe.display().to_string());
     }

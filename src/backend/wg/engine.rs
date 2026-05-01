@@ -113,13 +113,6 @@ impl Default for WireGuardBackendPreference {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum KernelCapability {
-    Unavailable,
-    Available,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackendDecision {
     UserspaceGotaTun,
@@ -539,7 +532,6 @@ impl EngineState {
             request.wireguard_backend_preference,
             request.daita_mode,
             request.quantum_mode,
-            current_kernel_capability(),
         )?;
         log_engine::wireguard_backend_resolved(backend_decision.as_str());
 
@@ -1150,22 +1142,10 @@ impl BackendDecision {
     }
 }
 
-fn current_kernel_capability() -> KernelCapability {
-    #[cfg(target_os = "linux")]
-    {
-        KernelCapability::Available
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        KernelCapability::Unavailable
-    }
-}
-
 fn resolve_backend(
     preference: WireGuardBackendPreference,
     daita_mode: DaitaMode,
     _quantum_mode: QuantumMode,
-    kernel_capability: KernelCapability,
 ) -> Result<BackendDecision, EngineError> {
     if daita_mode.is_enabled() {
         return match preference {
@@ -1181,16 +1161,32 @@ fn resolve_backend(
 
     match preference {
         WireGuardBackendPreference::Userspace => Ok(BackendDecision::UserspaceGotaTun),
-        WireGuardBackendPreference::Kernel => match kernel_capability {
-            KernelCapability::Available => Ok(BackendDecision::LinuxKernel),
-            KernelCapability::Unavailable => Err(EngineError::UnsupportedBackend(
-                "Linux kernel WireGuard backend is not available".to_string(),
-            )),
-        },
-        WireGuardBackendPreference::Auto => match kernel_capability {
-            KernelCapability::Available => Ok(BackendDecision::LinuxKernel),
-            KernelCapability::Unavailable => Ok(BackendDecision::UserspaceGotaTun),
-        },
+        WireGuardBackendPreference::Kernel => linux_kernel_backend_decision(),
+        WireGuardBackendPreference::Auto => Ok(default_auto_backend_decision()),
+    }
+}
+
+fn linux_kernel_backend_decision() -> Result<BackendDecision, EngineError> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(BackendDecision::LinuxKernel)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(EngineError::UnsupportedBackend(
+            "kernel WireGuard backend is only supported on Linux".to_string(),
+        ))
+    }
+}
+
+fn default_auto_backend_decision() -> BackendDecision {
+    #[cfg(target_os = "linux")]
+    {
+        BackendDecision::LinuxKernel
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        BackendDecision::UserspaceGotaTun
     }
 }
 
@@ -1348,37 +1344,56 @@ mod tests {
                 WireGuardBackendPreference::Auto,
                 DaitaMode::On,
                 QuantumMode::Off,
-                KernelCapability::Available,
             )
             .expect("auto daita should choose userspace"),
             BackendDecision::UserspaceGotaTun
         );
-        assert_eq!(
-            resolve_backend(
-                WireGuardBackendPreference::Auto,
-                DaitaMode::Off,
-                QuantumMode::On,
-                KernelCapability::Available,
-            )
-            .expect("auto quantum phase 2 should prefer kernel"),
-            BackendDecision::LinuxKernel
-        );
-        assert_eq!(
-            resolve_backend(
-                WireGuardBackendPreference::Kernel,
-                DaitaMode::Off,
-                QuantumMode::On,
-                KernelCapability::Available,
-            )
-            .expect("kernel quantum phase 2 should be supported"),
-            BackendDecision::LinuxKernel
-        );
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(
+                resolve_backend(
+                    WireGuardBackendPreference::Auto,
+                    DaitaMode::Off,
+                    QuantumMode::On,
+                )
+                .expect("auto quantum should prefer kernel on Linux"),
+                BackendDecision::LinuxKernel
+            );
+            assert_eq!(
+                resolve_backend(
+                    WireGuardBackendPreference::Kernel,
+                    DaitaMode::Off,
+                    QuantumMode::On,
+                )
+                .expect("kernel quantum should be supported on Linux"),
+                BackendDecision::LinuxKernel
+            );
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert_eq!(
+                resolve_backend(
+                    WireGuardBackendPreference::Auto,
+                    DaitaMode::Off,
+                    QuantumMode::On,
+                )
+                .expect("auto quantum should remain userspace off Linux"),
+                BackendDecision::UserspaceGotaTun
+            );
+            assert!(matches!(
+                resolve_backend(
+                    WireGuardBackendPreference::Kernel,
+                    DaitaMode::Off,
+                    QuantumMode::On,
+                ),
+                Err(EngineError::UnsupportedBackend(message)) if message.contains("Linux")
+            ));
+        }
         assert_eq!(
             resolve_backend(
                 WireGuardBackendPreference::Userspace,
                 DaitaMode::Off,
                 QuantumMode::On,
-                KernelCapability::Available,
             )
             .expect("userspace quantum should remain userspace"),
             BackendDecision::UserspaceGotaTun
@@ -1388,53 +1403,46 @@ mod tests {
                 WireGuardBackendPreference::Kernel,
                 DaitaMode::On,
                 QuantumMode::Off,
-                KernelCapability::Available,
             ),
             Err(EngineError::UnsupportedBackend(message)) if message.contains("DAITA")
         ));
     }
 
     #[test]
-    fn backend_resolution_auto_falls_back_but_kernel_does_not() {
+    fn backend_resolution_uses_platform_default_without_capability_probe() {
+        #[cfg(target_os = "linux")]
+        let expected_auto = BackendDecision::LinuxKernel;
+        #[cfg(not(target_os = "linux"))]
+        let expected_auto = BackendDecision::UserspaceGotaTun;
+
         assert_eq!(
             resolve_backend(
                 WireGuardBackendPreference::Auto,
                 DaitaMode::Off,
                 QuantumMode::Off,
-                KernelCapability::Unavailable,
             )
-            .expect("auto should fall back to userspace"),
-            BackendDecision::UserspaceGotaTun
+            .expect("auto should resolve from platform defaults"),
+            expected_auto
         );
+        #[cfg(target_os = "linux")]
         assert_eq!(
             resolve_backend(
-                WireGuardBackendPreference::Auto,
+                WireGuardBackendPreference::Kernel,
                 DaitaMode::Off,
-                QuantumMode::On,
-                KernelCapability::Unavailable,
+                QuantumMode::Off,
             )
-            .expect("auto quantum should fall back to userspace when kernel is unavailable"),
-            BackendDecision::UserspaceGotaTun
+            .expect("kernel should be selected on Linux"),
+            BackendDecision::LinuxKernel
         );
+        #[cfg(not(target_os = "linux"))]
         assert!(matches!(
             resolve_backend(
                 WireGuardBackendPreference::Kernel,
                 DaitaMode::Off,
                 QuantumMode::Off,
-                KernelCapability::Unavailable,
             ),
-            Err(EngineError::UnsupportedBackend(message)) if message.contains("not available")
+            Err(EngineError::UnsupportedBackend(message)) if message.contains("Linux")
         ));
-        assert_eq!(
-            resolve_backend(
-                WireGuardBackendPreference::Kernel,
-                DaitaMode::Off,
-                QuantumMode::Off,
-                KernelCapability::Available,
-            )
-            .expect("kernel should be selected when capability is available"),
-            BackendDecision::LinuxKernel
-        );
     }
 
     #[test]

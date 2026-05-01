@@ -32,7 +32,10 @@ pub fn manage_privileged_service(action: PrivilegedServiceAction) -> Result<(), 
         OsString::from(SERVICE_SUBCOMMAND),
         OsString::from(action.as_cli()),
     ];
-    if !matches!(action, PrivilegedServiceAction::Remove) {
+    if !matches!(
+        action,
+        PrivilegedServiceAction::Remove | PrivilegedServiceAction::StartupRepair
+    ) {
         let current_uid = unsafe { libc::getuid() };
         args.push(OsString::from("--source"));
         args.push(current_exe.as_os_str().to_os_string());

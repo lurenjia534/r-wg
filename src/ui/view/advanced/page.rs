@@ -83,7 +83,7 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
                 .title("Privileged Backend")
                 .description("Helper service status, diagnostics, and recovery actions.")
                 .item(privileged_backend_item(app_handle.clone()))
-                .item(troubleshooting_item()),
+                .item(troubleshooting_item(app_handle.clone())),
         );
 
     let settings = Settings::new("advanced-settings")

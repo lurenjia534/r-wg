@@ -108,6 +108,15 @@ fn parse_remove_command_uses_defaults() {
 }
 
 #[test]
+fn parse_startup_repair_command_needs_no_source() {
+    let LinuxEntryCommand::Manage(ManageCommand::StartupRepair) =
+        parse(&["r-wg", "service", "startup-repair"])
+    else {
+        panic!("expected startup repair command");
+    };
+}
+
+#[test]
 fn render_service_unit_uses_binary_and_group() {
     let unit = render_service_unit(Path::new("/opt/r-wg/r-wg"), Some("vpnusers"), Some(1000));
     assert!(unit.contains(
