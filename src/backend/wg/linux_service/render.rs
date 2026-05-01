@@ -117,7 +117,7 @@ pub(super) fn render_socket_unit(socket_user: Option<&str>, socket_group: Option
 
 pub(super) fn render_startup_repair_unit(binary_path: &Path) -> String {
     format!(
-        "[Unit]\nDescription=r-wg boot-time startup repair\nAfter=local-fs.target\nConditionPathExists=/var/lib/r-wg/recovery.json\n\n[Service]\nType=oneshot\nExecStart={} service startup-repair\nStateDirectory=r-wg\n\n[Install]\nWantedBy=multi-user.target\n",
+        "[Unit]\nDescription=r-wg boot-time startup repair\nAfter=local-fs.target\n\n[Service]\nType=oneshot\nExecStart={} service startup-repair\nStateDirectory=r-wg\n\n[Install]\nWantedBy=multi-user.target\n",
         binary_path.display()
     )
 }

@@ -229,10 +229,10 @@ fn load_existing_install_auth_mode_preserves_single_user_model() {
 }
 
 #[test]
-fn render_startup_repair_unit_targets_recovery_journal() {
+fn render_startup_repair_unit_runs_unconditionally() {
     let unit = render_startup_repair_unit(Path::new("/opt/r-wg/r-wg"));
     assert!(unit.contains("ExecStart=/opt/r-wg/r-wg service startup-repair"));
-    assert!(unit.contains("ConditionPathExists=/var/lib/r-wg/recovery.json"));
+    assert!(!unit.contains("ConditionPathExists="));
     assert!(unit.contains("StateDirectory=r-wg"));
 }
 

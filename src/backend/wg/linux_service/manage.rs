@@ -92,8 +92,12 @@ pub(super) fn run_manage_command(command: ManageCommand) -> Result<(), EngineErr
         ManageCommand::Install(options) => install_or_repair(options, false),
         ManageCommand::Repair(options) => install_or_repair(options, true),
         ManageCommand::Remove(options) => remove_installation(options),
-        ManageCommand::StartupRepair => crate::platform::linux::attempt_startup_repair()
-            .map_err(|err| remote_error(format!("startup repair failed: {err}"))),
+        ManageCommand::StartupRepair => {
+            crate::platform::linux::attempt_startup_repair()
+                .map_err(|err| remote_error(format!("startup repair failed: {err}")))?;
+            super::super::linux_kernel::repair_stale_kernel_device_from_journal_sync()
+                .map_err(|err| remote_error(format!("kernel backend startup repair failed: {err}")))
+        }
     }
 }
 

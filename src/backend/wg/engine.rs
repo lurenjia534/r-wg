@@ -220,6 +220,7 @@ pub struct DaitaStats {
 pub struct PeerStats {
     pub public_key: [u8; 32],
     pub endpoint: Option<SocketAddr>,
+    /// 上次握手距现在的时间。backend 必须在填充前把原生时间戳转换成 age。
     pub last_handshake: Option<Duration>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
@@ -807,7 +808,12 @@ impl EngineState {
             Ok(result) => result,
             Err(err) => {
                 self.route_apply_report = Some(err.report);
-                let _ = linux_kernel::delete_kernel_device(kernel_device.tun_name()).await;
+                if linux_kernel::delete_kernel_device(kernel_device.tun_name())
+                    .await
+                    .is_ok()
+                {
+                    let _ = linux_kernel::clear_kernel_backend_journal();
+                }
                 return Err(KernelStartError::Engine(EngineError::Network(err.error)));
             }
         };
@@ -815,6 +821,19 @@ impl EngineState {
         self.net_state = Some(net_result.state);
         log_engine::network_configured();
         self.route_apply_report = Some(net_result.report.clone());
+        if let Err(error) = linux_kernel::mark_kernel_device_running(tun_name) {
+            let cleanup_result = self.cleanup_active_network_state().await;
+            if linux_kernel::delete_kernel_device(kernel_device.tun_name())
+                .await
+                .is_ok()
+            {
+                let _ = linux_kernel::clear_kernel_backend_journal();
+            }
+            return match cleanup_result {
+                Ok(()) => Err(KernelStartError::Kernel(error)),
+                Err(err) => Err(KernelStartError::Engine(err)),
+            };
+        }
 
         if request.quantum_mode.is_enabled() {
             if let Err(error) = self
@@ -822,7 +841,12 @@ impl EngineState {
                 .await
             {
                 let cleanup_result = self.cleanup_active_network_state().await;
-                let _ = linux_kernel::delete_kernel_device(kernel_device.tun_name()).await;
+                if linux_kernel::delete_kernel_device(kernel_device.tun_name())
+                    .await
+                    .is_ok()
+                {
+                    let _ = linux_kernel::clear_kernel_backend_journal();
+                }
                 return match cleanup_result {
                     Ok(()) => Err(error),
                     Err(err) => Err(KernelStartError::Engine(err)),
@@ -956,8 +980,13 @@ impl EngineState {
                 if let Err(error) =
                     linux_kernel::delete_kernel_device(kernel_device.tun_name()).await
                 {
-                    tracing::warn!("failed to delete kernel WireGuard interface: {error}");
+                    self.active_backend = Some(ActiveWireGuardBackend::LinuxKernel(kernel_device));
+                    return Err(EngineError::KernelWireGuard(format!(
+                        "failed to delete kernel WireGuard interface: {error}"
+                    )));
                 }
+                linux_kernel::clear_kernel_backend_journal()
+                    .map_err(|error| EngineError::KernelWireGuard(error.to_string()))?;
             }
         }
         Ok(())
@@ -974,6 +1003,8 @@ impl EngineState {
                         linux_kernel::delete_kernel_device(kernel_device.tun_name()).await
                     {
                         tracing::warn!("failed to delete kernel WireGuard interface: {error}");
+                    } else if let Err(error) = linux_kernel::clear_kernel_backend_journal() {
+                        tracing::warn!("failed to clear kernel WireGuard journal: {error}");
                     }
                 }
             }

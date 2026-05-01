@@ -1,15 +1,29 @@
+use std::env;
 use std::fmt;
+use std::fs;
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use futures_util::stream::TryStreamExt;
+use futures_util::{stream::TryStreamExt, StreamExt};
 use gotatun::device::Peer as DevicePeer;
-use nl_wireguard::{WireguardIpAddress, WireguardParsed, WireguardPeerParsed};
+use nl_wireguard::{
+    WireguardAddressFamily, WireguardAllowedIp, WireguardAllowedIpAttr, WireguardAttribute,
+    WireguardCmd, WireguardMessage, WireguardPeer, WireguardPeerAttribute, WireguardPeerParsed,
+};
 use rtnetlink::{new_connection, LinkWireguard};
+use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 use super::engine::{DaitaStats, EngineStats, PeerStats};
 use super::ephemeral::EphemeralPeerUpdate;
 use crate::core::config::DeviceSettings;
+
+const NLM_F_REQUEST: u16 = 1;
+const NLM_F_ACK: u16 = 4;
+const WGDEVICE_F_REPLACE_PEERS: u32 = 1 << 0;
+const WGPEER_F_REPLACE_ALLOWEDIPS: u32 = 1 << 1;
 
 #[derive(Debug)]
 pub(crate) struct KernelWireGuardDevice {
@@ -26,6 +40,7 @@ impl KernelWireGuardDevice {
 pub(crate) enum KernelWireGuardError {
     Unavailable(String),
     Operation(String),
+    NameConflict(String),
 }
 
 impl KernelWireGuardError {
@@ -37,7 +52,7 @@ impl KernelWireGuardError {
 impl fmt::Display for KernelWireGuardError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unavailable(message) | Self::Operation(message) => {
+            Self::Unavailable(message) | Self::Operation(message) | Self::NameConflict(message) => {
                 write!(f, "{message}")
             }
         }
@@ -50,9 +65,14 @@ pub(crate) async fn start_kernel_device(
     tun_name: &str,
     settings: &DeviceSettings,
 ) -> Result<KernelWireGuardDevice, KernelWireGuardError> {
+    cleanup_journaled_link_before_create(tun_name).await?;
+    write_kernel_backend_journal(tun_name, KernelBackendPhase::CreatingLink)?;
     create_wireguard_link(tun_name).await?;
+    write_kernel_backend_journal(tun_name, KernelBackendPhase::LinkCreated)?;
     if let Err(error) = configure_wireguard_device(tun_name, settings).await {
-        let _ = delete_kernel_device(tun_name).await;
+        if delete_kernel_device(tun_name).await.is_ok() {
+            let _ = clear_kernel_backend_journal();
+        }
         return Err(error);
     }
     Ok(KernelWireGuardDevice {
@@ -60,18 +80,37 @@ pub(crate) async fn start_kernel_device(
     })
 }
 
+pub(crate) fn mark_kernel_device_running(tun_name: &str) -> Result<(), KernelWireGuardError> {
+    write_kernel_backend_journal(tun_name, KernelBackendPhase::Running)
+}
+
 pub(crate) async fn delete_kernel_device(tun_name: &str) -> Result<(), KernelWireGuardError> {
     let connection = route_connection()?;
     let handle = connection.handle.clone();
-    let link = find_link_by_name(&handle, tun_name).await?;
-    handle
-        .link()
-        .del(link.header.index)
-        .execute()
-        .await
-        .map_err(map_route_error)?;
+    if let Some(link) = find_link_by_name(&handle, tun_name).await? {
+        handle
+            .link()
+            .del(link.header.index)
+            .execute()
+            .await
+            .map_err(map_route_error)?;
+    }
     connection.shutdown().await;
     Ok(())
+}
+
+pub(crate) async fn repair_stale_kernel_device_from_journal() -> Result<(), KernelWireGuardError> {
+    let Some(journal) = load_kernel_backend_journal()? else {
+        return Ok(());
+    };
+    delete_kernel_device(&journal.tun_name).await?;
+    clear_kernel_backend_journal()
+}
+
+pub(crate) fn repair_stale_kernel_device_from_journal_sync() -> Result<(), KernelWireGuardError> {
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| operation(format!("failed to create startup repair runtime: {error}")))?;
+    runtime.block_on(async { repair_stale_kernel_device_from_journal().await })
 }
 
 pub(crate) async fn read_kernel_stats(tun_name: &str) -> Result<EngineStats, KernelWireGuardError> {
@@ -99,11 +138,17 @@ pub(crate) async fn apply_ephemeral_update(
     tun_name: &str,
     update: &EphemeralPeerUpdate,
 ) -> Result<(), KernelWireGuardError> {
-    let mut config = WireguardParsed::default();
-    config.iface_name = Some(tun_name.to_string());
-    config.private_key = Some(STANDARD.encode(update.private_key.to_bytes()));
-    config.peers = Some(vec![kernel_peer_from_device_peer(&update.peer)]);
-    set_wireguard_config(config, "failed to apply kernel WireGuard ephemeral update").await?;
+    let attributes = vec![
+        WireguardAttribute::IfName(tun_name.to_string()),
+        WireguardAttribute::PrivateKey(update.private_key.to_bytes()),
+        WireguardAttribute::Flags(WGDEVICE_F_REPLACE_PEERS),
+        WireguardAttribute::Peers(vec![kernel_peer_from_device_peer(&update.peer)]),
+    ];
+    set_wireguard_config(
+        attributes,
+        "failed to apply kernel WireGuard ephemeral update",
+    )
+    .await?;
     tracing::debug!(
         tun = tun_name,
         "Mullvad ephemeral peer configuration applied to kernel WireGuard"
@@ -114,6 +159,13 @@ pub(crate) async fn apply_ephemeral_update(
 async fn create_wireguard_link(tun_name: &str) -> Result<(), KernelWireGuardError> {
     let connection = route_connection()?;
     let handle = connection.handle.clone();
+    if find_link_by_name(&handle, tun_name).await?.is_some() {
+        connection.shutdown().await;
+        clear_kernel_backend_journal()?;
+        return Err(KernelWireGuardError::NameConflict(format!(
+            "kernel WireGuard interface name conflict: link '{tun_name}' already exists"
+        )));
+    }
     let result = handle
         .link()
         .add(LinkWireguard::new(tun_name).build())
@@ -128,63 +180,91 @@ async fn configure_wireguard_device(
     tun_name: &str,
     settings: &DeviceSettings,
 ) -> Result<(), KernelWireGuardError> {
-    let mut config = WireguardParsed::default();
-    config.iface_name = Some(tun_name.to_string());
-    config.private_key = Some(STANDARD.encode(settings.private_key.to_bytes()));
-    config.listen_port = settings.listen_port;
-    config.fwmark = settings.fwmark;
-    config.peers = Some(
+    let mut attributes = vec![
+        WireguardAttribute::IfName(tun_name.to_string()),
+        WireguardAttribute::PrivateKey(settings.private_key.to_bytes()),
+        WireguardAttribute::Flags(WGDEVICE_F_REPLACE_PEERS),
+    ];
+    if let Some(port) = settings.listen_port {
+        attributes.push(WireguardAttribute::ListenPort(port));
+    }
+    if let Some(fwmark) = settings.fwmark {
+        attributes.push(WireguardAttribute::Fwmark(fwmark));
+    }
+    attributes.push(WireguardAttribute::Peers(
         settings
             .peers
             .iter()
             .map(kernel_peer_from_device_peer)
             .collect(),
-    );
+    ));
 
-    set_wireguard_config(config, "failed to configure kernel WireGuard").await
+    set_wireguard_config(attributes, "failed to configure kernel WireGuard").await
 }
 
 async fn set_wireguard_config(
-    mut config: WireguardParsed,
+    attributes: Vec<WireguardAttribute>,
     operation_context: &'static str,
 ) -> Result<(), KernelWireGuardError> {
     let (conn, mut handle, _) = nl_wireguard::new_connection()
         .map_err(|error| unavailable(format!("failed to open wireguard netlink: {error}")))?;
     let task = tokio::spawn(conn);
-    let result = handle
-        .set(std::mem::take(&mut config))
-        .await
-        .map_err(|error| {
-            let message = error.to_string();
-            if is_unavailable_message(&message) {
-                unavailable(format!(
-                    "kernel WireGuard generic netlink unavailable: {message}"
-                ))
-            } else {
-                operation(format!("{operation_context}: {message}"))
-            }
-        });
+    let message = WireguardMessage {
+        cmd: WireguardCmd::SetDevice,
+        attributes,
+    };
+    let result = match handle.request(NLM_F_REQUEST | NLM_F_ACK, message).await {
+        Ok(mut replies) => match replies.next().await {
+            None | Some(Ok(_)) => Ok(()),
+            Some(Err(error)) => Err(error),
+        },
+        Err(error) => Err(error),
+    }
+    .map_err(|error| {
+        let message = error.to_string();
+        if is_unavailable_message(&message) {
+            unavailable(format!(
+                "kernel WireGuard generic netlink unavailable: {message}"
+            ))
+        } else {
+            operation(format!("{operation_context}: {message}"))
+        }
+    });
     task.abort();
     let _ = task.await;
     result
 }
 
-fn kernel_peer_from_device_peer(peer: &DevicePeer) -> WireguardPeerParsed {
-    let mut parsed = WireguardPeerParsed::default();
-    parsed.endpoint = peer.endpoint;
-    parsed.public_key = Some(STANDARD.encode(peer.public_key.to_bytes()));
-    parsed.preshared_key = peer.preshared_key.map(|key| STANDARD.encode(key));
-    parsed.persistent_keepalive = peer.keepalive;
-    parsed.allowed_ips = Some(
-        peer.allowed_ips
-            .iter()
-            .map(|network| WireguardIpAddress {
-                ip_addr: network.ip(),
-                prefix_length: network.prefix(),
-            })
-            .collect(),
-    );
-    parsed
+fn kernel_peer_from_device_peer(peer: &DevicePeer) -> WireguardPeer {
+    let mut attributes = vec![
+        WireguardPeerAttribute::PublicKey(peer.public_key.to_bytes()),
+        WireguardPeerAttribute::Flags(WGPEER_F_REPLACE_ALLOWEDIPS),
+        WireguardPeerAttribute::AllowedIps(
+            peer.allowed_ips
+                .iter()
+                .map(|network| {
+                    WireguardAllowedIp(vec![
+                        WireguardAllowedIpAttr::Family(match network.ip() {
+                            IpAddr::V4(_) => WireguardAddressFamily::Ipv4,
+                            IpAddr::V6(_) => WireguardAddressFamily::Ipv6,
+                        }),
+                        WireguardAllowedIpAttr::IpAddr(network.ip()),
+                        WireguardAllowedIpAttr::Cidr(network.prefix()),
+                    ])
+                })
+                .collect(),
+        ),
+    ];
+    if let Some(key) = peer.preshared_key {
+        attributes.push(WireguardPeerAttribute::PresharedKey(key));
+    }
+    if let Some(endpoint) = peer.endpoint {
+        attributes.push(WireguardPeerAttribute::Endpoint(endpoint));
+    }
+    if let Some(keepalive) = peer.keepalive {
+        attributes.push(WireguardPeerAttribute::PersistentKeepalive(keepalive));
+    }
+    WireguardPeer(attributes)
 }
 
 fn peer_stats_from_kernel_peer(peer: WireguardPeerParsed) -> Option<PeerStats> {
@@ -192,11 +272,16 @@ fn peer_stats_from_kernel_peer(peer: WireguardPeerParsed) -> Option<PeerStats> {
     Some(PeerStats {
         public_key,
         endpoint: peer.endpoint,
-        last_handshake: peer.last_handshake,
+        last_handshake: peer.last_handshake.and_then(kernel_handshake_age),
         rx_bytes: peer.rx_bytes.unwrap_or(0),
         tx_bytes: peer.tx_bytes.unwrap_or(0),
         daita: None::<DaitaStats>,
     })
+}
+
+fn kernel_handshake_age(since_epoch: Duration) -> Option<Duration> {
+    let when = SystemTime::UNIX_EPOCH.checked_add(since_epoch)?;
+    SystemTime::now().duration_since(when).ok()
 }
 
 fn decode_key(encoded: &str) -> Option<[u8; 32]> {
@@ -228,28 +313,46 @@ fn route_connection() -> Result<RouteConnection, KernelWireGuardError> {
 async fn find_link_by_name(
     handle: &rtnetlink::Handle,
     tun_name: &str,
-) -> Result<netlink_packet_route::link::LinkMessage, KernelWireGuardError> {
+) -> Result<Option<netlink_packet_route::link::LinkMessage>, KernelWireGuardError> {
     let mut links = handle
         .link()
         .get()
         .match_name(tun_name.to_string())
         .execute();
-    links
-        .try_next()
-        .await
-        .map_err(map_route_error)?
-        .ok_or_else(|| operation(format!("kernel WireGuard link not found: {tun_name}")))
+    links.try_next().await.map_err(map_route_error)
+}
+
+async fn cleanup_journaled_link_before_create(tun_name: &str) -> Result<(), KernelWireGuardError> {
+    let Some(journal) = load_kernel_backend_journal()? else {
+        return Ok(());
+    };
+    if journal.tun_name != tun_name {
+        return Ok(());
+    }
+    delete_kernel_device(tun_name).await?;
+    clear_kernel_backend_journal()
 }
 
 fn map_route_error(error: rtnetlink::Error) -> KernelWireGuardError {
     let message = error.to_string();
-    if is_unavailable_message(&message) {
+    if is_unavailable_route_error(&error) || is_unavailable_message(&message) {
         unavailable(format!(
             "Linux kernel WireGuard unavailable while creating interface: {message}"
         ))
     } else {
         operation(format!("kernel WireGuard netlink error: {message}"))
     }
+}
+
+fn is_unavailable_route_error(error: &rtnetlink::Error) -> bool {
+    let rtnetlink::Error::NetlinkError(message) = error else {
+        return false;
+    };
+    let Some(code) = message.code else {
+        return false;
+    };
+    let errno = code.get().abs();
+    errno == libc::EOPNOTSUPP || errno == libc::ENODEV || errno == libc::EAFNOSUPPORT
 }
 
 fn is_unavailable_message(message: &str) -> bool {
@@ -259,7 +362,6 @@ fn is_unavailable_message(message: &str) -> bool {
         || message.contains("address family not supported")
         || message.contains("family not found")
         || message.contains("wireguard generic netlink")
-        || message.contains("not supported")
 }
 
 fn unavailable(message: String) -> KernelWireGuardError {
@@ -268,6 +370,82 @@ fn unavailable(message: String) -> KernelWireGuardError {
 
 fn operation(message: String) -> KernelWireGuardError {
     KernelWireGuardError::Operation(message)
+}
+
+const KERNEL_BACKEND_JOURNAL_FILE: &str = "kernel-backend.json";
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum KernelBackendPhase {
+    CreatingLink,
+    LinkCreated,
+    Running,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KernelBackendJournal {
+    tun_name: String,
+    phase: KernelBackendPhase,
+}
+
+fn write_kernel_backend_journal(
+    tun_name: &str,
+    phase: KernelBackendPhase,
+) -> Result<(), KernelWireGuardError> {
+    let path = kernel_backend_journal_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            operation(format!(
+                "failed to create kernel backend journal dir: {error}"
+            ))
+        })?;
+    }
+    let journal = KernelBackendJournal {
+        tun_name: tun_name.to_string(),
+        phase,
+    };
+    let json = serde_json::to_string(&journal)
+        .map_err(|error| operation(format!("failed to encode kernel backend journal: {error}")))?;
+    fs::write(path, json)
+        .map_err(|error| operation(format!("failed to write kernel backend journal: {error}")))
+}
+
+fn load_kernel_backend_journal() -> Result<Option<KernelBackendJournal>, KernelWireGuardError> {
+    let path = kernel_backend_journal_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(operation(format!(
+                "failed to read kernel backend journal: {error}"
+            )))
+        }
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|error| operation(format!("failed to parse kernel backend journal: {error}")))
+}
+
+pub(crate) fn clear_kernel_backend_journal() -> Result<(), KernelWireGuardError> {
+    let path = kernel_backend_journal_path();
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(operation(format!(
+            "failed to clear kernel backend journal: {error}"
+        ))),
+    }
+}
+
+fn kernel_backend_journal_path() -> PathBuf {
+    kernel_backend_journal_path_in(env::var_os("STATE_DIRECTORY").as_deref())
+}
+
+fn kernel_backend_journal_path_in(state_directory: Option<&std::ffi::OsStr>) -> PathBuf {
+    state_directory
+        .map(Path::new)
+        .unwrap_or_else(|| Path::new("/var/lib/r-wg"))
+        .join(KERNEL_BACKEND_JOURNAL_FILE)
 }
 
 #[cfg(test)]
@@ -294,9 +472,19 @@ mod tests {
             "permission denied",
             "failed to configure peer endpoint",
             "invalid allowed ip",
+            "feature not supported for this configuration",
         ] {
             assert!(!is_unavailable_message(message), "{message}");
         }
+    }
+
+    #[test]
+    fn kernel_handshake_age_rejects_future_timestamps() {
+        let future = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock before UNIX epoch")
+            + Duration::from_secs(60);
+        assert_eq!(kernel_handshake_age(future), None);
     }
 
     #[tokio::test]

@@ -286,7 +286,7 @@ pub(super) fn wireguard_backend_item(app: Entity<WgApp>) -> SettingItem {
                             },
                         ),
                 )
-                .when(current != WireGuardBackendPreference::Userspace && daita_mode.is_enabled(), |this| {
+                .when(current == WireGuardBackendPreference::Kernel && daita_mode.is_enabled(), |this| {
                         this.child(
                             div()
                                 .rounded_md()
@@ -298,7 +298,23 @@ pub(super) fn wireguard_backend_item(app: Entity<WgApp>) -> SettingItem {
                                 .text_sm()
                                 .text_color(cx.theme().warning)
                                 .child(
-                                    "DAITA currently requires GotaTun. Switch WireGuard implementation to Userspace to use DAITA.",
+                                    "DAITA requires GotaTun. Switch WireGuard implementation to Userspace or Auto to use DAITA.",
+                                ),
+                        )
+                    })
+                .when(current == WireGuardBackendPreference::Auto && daita_mode.is_enabled(), |this| {
+                        this.child(
+                            div()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().border)
+                                .bg(cx.theme().background)
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(
+                                    "Auto will use GotaTun while DAITA is enabled.",
                                 ),
                         )
                     })
@@ -306,7 +322,7 @@ pub(super) fn wireguard_backend_item(app: Entity<WgApp>) -> SettingItem {
     )
     .layout(Axis::Vertical)
     .description(
-        "Auto prefers Linux kernel WireGuard and falls back to GotaTun when kernel support is unavailable. DAITA currently requires GotaTun.",
+        "Auto prefers Linux kernel WireGuard, falls back to GotaTun when kernel support is unavailable, and uses GotaTun while DAITA is enabled.",
     )
 }
 
@@ -392,7 +408,7 @@ pub(super) fn daita_mode_item(app: Entity<WgApp>) -> SettingItem {
                         return;
                     }
 
-                    if backend_preference == WireGuardBackendPreference::Userspace {
+                    if backend_preference != WireGuardBackendPreference::Kernel {
                         direct_set_handle.update(cx, |app, cx| {
                             app.set_daita_mode_pref(DaitaMode::On, cx);
                         });

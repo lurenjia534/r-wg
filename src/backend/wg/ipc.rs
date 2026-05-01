@@ -20,6 +20,7 @@
 //! - v8: 新增 DAITA relay inventory 状态/刷新接口
 //! - v9: StartRequest 新增 kill_switch_enabled
 //! - v10: StartRequest 新增 wireguard_backend_preference
+//! - v11: BackendErrorKind 新增 kernel/unsupported/ephemeral 结构化分类
 //!
 //! # 消息格式
 //!
@@ -48,7 +49,7 @@ use super::engine::{
 ///
 /// 当 UI 和服务端的版本不匹配时，会返回 VersionMismatch 错误。
 /// 升级时需要确保双方都支持相同的版本。
-pub const IPC_PROTOCOL_VERSION: u32 = 10;
+pub const IPC_PROTOCOL_VERSION: u32 = 11;
 
 /// UI -> 特权后端的命令枚举
 ///
@@ -121,6 +122,12 @@ pub enum BackendErrorKind {
     NotRunning,
     /// 权限不足：无法访问特权后端
     AccessDenied,
+    /// Linux kernel WireGuard 控制面错误
+    KernelWireGuard,
+    /// 请求的后端不可用或与功能冲突
+    UnsupportedBackend,
+    /// Quantum/DAITA ephemeral 协商或重配置失败
+    Ephemeral,
     /// 其他错误：需要查看 message 字段
     Other,
 }
@@ -169,7 +176,17 @@ pub fn relay_inventory_status_reply(
 pub fn error_reply(err: EngineError) -> BackendReply {
     BackendReply::Error {
         kind: backend_error_kind(&err),
-        message: err.to_string(),
+        message: backend_error_message(&err),
+    }
+}
+
+fn backend_error_message(err: &EngineError) -> String {
+    match err {
+        EngineError::KernelWireGuard(message)
+        | EngineError::UnsupportedBackend(message)
+        | EngineError::Ephemeral(message)
+        | EngineError::Remote(message) => message.clone(),
+        _ => err.to_string(),
     }
 }
 
@@ -180,6 +197,9 @@ pub fn backend_error_kind(err: &EngineError) -> BackendErrorKind {
         EngineError::AlreadyRunning => BackendErrorKind::AlreadyRunning,
         EngineError::NotRunning => BackendErrorKind::NotRunning,
         EngineError::AccessDenied => BackendErrorKind::AccessDenied,
+        EngineError::KernelWireGuard(_) => BackendErrorKind::KernelWireGuard,
+        EngineError::UnsupportedBackend(_) => BackendErrorKind::UnsupportedBackend,
+        EngineError::Ephemeral(_) => BackendErrorKind::Ephemeral,
         _ => BackendErrorKind::Other,
     }
 }
@@ -193,6 +213,9 @@ pub fn map_backend_error(kind: BackendErrorKind, message: String) -> EngineError
         BackendErrorKind::AlreadyRunning => EngineError::AlreadyRunning,
         BackendErrorKind::NotRunning => EngineError::NotRunning,
         BackendErrorKind::AccessDenied => EngineError::AccessDenied,
+        BackendErrorKind::KernelWireGuard => EngineError::KernelWireGuard(message),
+        BackendErrorKind::UnsupportedBackend => EngineError::UnsupportedBackend(message),
+        BackendErrorKind::Ephemeral => EngineError::Ephemeral(message),
         BackendErrorKind::Other => EngineError::Remote(message),
     }
 }
