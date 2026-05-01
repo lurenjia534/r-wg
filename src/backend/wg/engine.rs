@@ -4,7 +4,7 @@
 //! - 对外提供同步 API（start/stop/status），内部异步执行并做清理回滚。
 use std::any::Any;
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
@@ -828,9 +828,52 @@ impl EngineState {
         }
 
         if request.quantum_mode.is_enabled() {
+            let quantum_guard = match platform::linux::apply_quantum_negotiation_traffic_guard(
+                tun_name,
+                route_plan_has_ipv6_tunnel_routes(route_plan),
+            )
+            .await
+            {
+                Ok(guard) => guard,
+                Err(error) => {
+                    let cleanup_result = self.cleanup_active_network_state().await;
+                    if linux_kernel::delete_kernel_device(kernel_device.tun_name())
+                        .await
+                        .is_ok()
+                    {
+                        let _ = linux_kernel::clear_kernel_backend_journal();
+                    }
+                    return match cleanup_result {
+                        Ok(()) => Err(KernelStartError::Engine(EngineError::Network(error))),
+                        Err(err) => Err(KernelStartError::Engine(err)),
+                    };
+                }
+            };
+
             if let Err(error) = self
                 .upgrade_kernel_ephemeral(tun_name, parsed, settings, request)
                 .await
+            {
+                let guard_cleanup_result =
+                    platform::linux::cleanup_quantum_negotiation_traffic_guard(quantum_guard)
+                        .await
+                        .map_err(EngineError::from);
+                let cleanup_result = self.cleanup_active_network_state().await;
+                if linux_kernel::delete_kernel_device(kernel_device.tun_name())
+                    .await
+                    .is_ok()
+                {
+                    let _ = linux_kernel::clear_kernel_backend_journal();
+                }
+                return match (guard_cleanup_result, cleanup_result) {
+                    (Err(err), _) => Err(KernelStartError::Engine(err)),
+                    (Ok(()), Ok(())) => Err(error),
+                    (Ok(()), Err(err)) => Err(KernelStartError::Engine(err)),
+                };
+            }
+
+            if let Err(error) =
+                platform::linux::cleanup_quantum_negotiation_traffic_guard(quantum_guard).await
             {
                 let cleanup_result = self.cleanup_active_network_state().await;
                 if linux_kernel::delete_kernel_device(kernel_device.tun_name())
@@ -840,7 +883,7 @@ impl EngineState {
                     let _ = linux_kernel::clear_kernel_backend_journal();
                 }
                 return match cleanup_result {
-                    Ok(()) => Err(error),
+                    Ok(()) => Err(KernelStartError::Engine(EngineError::Network(error))),
                     Err(err) => Err(KernelStartError::Engine(err)),
                 };
             }
@@ -1078,6 +1121,14 @@ fn wants_full_tunnel(peers: &[config::PeerConfig]) -> bool {
             .iter()
             .any(|allowed| allowed.addr.is_unspecified() && allowed.cidr == 0)
     })
+}
+
+#[cfg(target_os = "linux")]
+fn route_plan_has_ipv6_tunnel_routes(route_plan: &RoutePlan) -> bool {
+    route_plan
+        .allowed_routes
+        .iter()
+        .any(|route| matches!(route.addr, IpAddr::V6(_)))
 }
 
 async fn read_userspace_stats(slot: &DeviceSlot) -> Result<EngineStats, EngineError> {

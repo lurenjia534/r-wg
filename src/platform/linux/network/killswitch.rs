@@ -9,6 +9,10 @@ use crate::log::events::net as log_net;
 
 const NFT_TABLE_NAME: &str = "r_wg_killswitch";
 const IPTABLES_CHAIN_NAME: &str = "R_WG_KILLSWITCH";
+const QUANTUM_NFT_TABLE_NAME: &str = "r_wg_quantum_start";
+const QUANTUM_IPTABLES_CHAIN_NAME: &str = "R_WG_QUANTUM_START";
+const CONFIG_SERVICE_GATEWAY: &str = "10.64.0.1";
+const CONFIG_SERVICE_PORT: &str = "1337";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct KillSwitchState {
@@ -78,6 +82,62 @@ pub(super) async fn apply_kill_switch(
     }
 }
 
+#[derive(Debug)]
+pub struct QuantumNegotiationGuardState {
+    backend: KillSwitchBackend,
+    block_ipv6: bool,
+}
+
+pub(super) async fn apply_quantum_negotiation_guard(
+    tun_name: &str,
+    block_ipv6: bool,
+) -> Result<QuantumNegotiationGuardState, NetworkError> {
+    let mut nft_error = None;
+    if let Some(nft) = resolve_command("nft") {
+        match apply_quantum_nftables(&nft, tun_name).await {
+            Ok(()) => {
+                return Ok(QuantumNegotiationGuardState {
+                    backend: KillSwitchBackend::Nftables,
+                    block_ipv6,
+                });
+            }
+            Err(err) => {
+                let _ = cleanup_quantum_nftables(&nft).await;
+                nft_error = Some(err);
+            }
+        }
+    }
+
+    match apply_quantum_iptables(tun_name, block_ipv6).await {
+        Ok(()) => Ok(QuantumNegotiationGuardState {
+            backend: KillSwitchBackend::Iptables,
+            block_ipv6,
+        }),
+        Err(NetworkError::KillSwitchUnavailable(_)) => match nft_error {
+            Some(err) => Err(err),
+            None => Err(NetworkError::KillSwitchUnavailable(
+                "nftables and iptables backends are unavailable for quantum negotiation guard"
+                    .to_string(),
+            )),
+        },
+        Err(err) => Err(err),
+    }
+}
+
+impl QuantumNegotiationGuardState {
+    pub(super) async fn cleanup(self) -> Result<(), NetworkError> {
+        match self.backend {
+            KillSwitchBackend::Nftables => {
+                let nft = resolve_command("nft").ok_or_else(|| {
+                    NetworkError::KillSwitchUnavailable("nft command not found".to_string())
+                })?;
+                cleanup_quantum_nftables(&nft).await
+            }
+            KillSwitchBackend::Iptables => cleanup_quantum_iptables(self.block_ipv6).await,
+        }
+    }
+}
+
 impl KillSwitchState {
     pub(super) async fn cleanup(self) -> Result<(), NetworkError> {
         match self.backend {
@@ -90,6 +150,41 @@ impl KillSwitchState {
             KillSwitchBackend::Iptables => cleanup_iptables(self.ipv4, self.ipv6).await,
         }
     }
+}
+
+async fn apply_quantum_nftables(nft: &Path, tun_name: &str) -> Result<(), NetworkError> {
+    let _ = cleanup_quantum_nftables(nft).await;
+    run_cmd_with_input(
+        nft,
+        &[String::from("-f"), String::from("-")],
+        &quantum_nft_script(tun_name),
+    )
+    .await
+}
+
+async fn cleanup_quantum_nftables(nft: &Path) -> Result<(), NetworkError> {
+    ignore_missing_firewall_state(
+        run_cmd(
+            nft,
+            &[
+                String::from("delete"),
+                String::from("table"),
+                String::from("inet"),
+                QUANTUM_NFT_TABLE_NAME.to_string(),
+            ],
+        )
+        .await,
+    )
+}
+
+fn quantum_nft_script(tun_name: &str) -> String {
+    let escaped_tun_name = nft_string(tun_name);
+    format!(
+        "add table inet {QUANTUM_NFT_TABLE_NAME}\n\
+         add chain inet {QUANTUM_NFT_TABLE_NAME} output {{ type filter hook output priority -10; policy accept; }}\n\
+         add rule inet {QUANTUM_NFT_TABLE_NAME} output oifname \"{escaped_tun_name}\" ip daddr {CONFIG_SERVICE_GATEWAY} tcp dport {CONFIG_SERVICE_PORT} accept\n\
+         add rule inet {QUANTUM_NFT_TABLE_NAME} output oifname \"{escaped_tun_name}\" reject\n"
+    )
 }
 
 async fn apply_nftables(
@@ -145,6 +240,164 @@ fn nft_script(tun_name: &str, fwmark: u32, ipv4: bool, ipv6: bool) -> String {
     }
 
     script
+}
+
+async fn apply_quantum_iptables(tun_name: &str, block_ipv6: bool) -> Result<(), NetworkError> {
+    let iptables = resolve_command("iptables").ok_or_else(|| {
+        NetworkError::KillSwitchUnavailable("iptables command not found".to_string())
+    })?;
+    apply_quantum_iptables_v4(&iptables, tun_name).await?;
+
+    if block_ipv6 {
+        let ip6tables = match resolve_command("ip6tables") {
+            Some(path) => path,
+            None => {
+                let _ = cleanup_quantum_iptables_family(&iptables).await;
+                return Err(NetworkError::KillSwitchUnavailable(
+                    "ip6tables command not found".to_string(),
+                ));
+            }
+        };
+        if let Err(err) = apply_quantum_iptables_v6(&ip6tables, tun_name).await {
+            let _ = cleanup_quantum_iptables_family(&iptables).await;
+            return Err(err);
+        }
+    }
+
+    Ok(())
+}
+
+async fn apply_quantum_iptables_v4(program: &Path, tun_name: &str) -> Result<(), NetworkError> {
+    let _ = cleanup_quantum_iptables_family(program).await;
+    let result = async {
+        run_cmd(
+            program,
+            &iptables_args(["-w", "-N", QUANTUM_IPTABLES_CHAIN_NAME]),
+        )
+        .await?;
+        run_cmd(
+            program,
+            &iptables_args([
+                "-w",
+                "-A",
+                QUANTUM_IPTABLES_CHAIN_NAME,
+                "-o",
+                tun_name,
+                "-p",
+                "tcp",
+                "-d",
+                CONFIG_SERVICE_GATEWAY,
+                "--dport",
+                CONFIG_SERVICE_PORT,
+                "-j",
+                "RETURN",
+            ]),
+        )
+        .await?;
+        run_cmd(
+            program,
+            &iptables_args([
+                "-w",
+                "-A",
+                QUANTUM_IPTABLES_CHAIN_NAME,
+                "-o",
+                tun_name,
+                "-j",
+                "REJECT",
+            ]),
+        )
+        .await?;
+        run_cmd(
+            program,
+            &iptables_args(["-w", "-I", "OUTPUT", "1", "-j", QUANTUM_IPTABLES_CHAIN_NAME]),
+        )
+        .await
+    }
+    .await;
+    if result.is_err() {
+        let _ = cleanup_quantum_iptables_family(program).await;
+    }
+    result
+}
+
+async fn apply_quantum_iptables_v6(program: &Path, tun_name: &str) -> Result<(), NetworkError> {
+    let _ = cleanup_quantum_iptables_family(program).await;
+    let result = async {
+        run_cmd(
+            program,
+            &iptables_args(["-w", "-N", QUANTUM_IPTABLES_CHAIN_NAME]),
+        )
+        .await?;
+        run_cmd(
+            program,
+            &iptables_args([
+                "-w",
+                "-A",
+                QUANTUM_IPTABLES_CHAIN_NAME,
+                "-o",
+                tun_name,
+                "-j",
+                "REJECT",
+            ]),
+        )
+        .await?;
+        run_cmd(
+            program,
+            &iptables_args(["-w", "-I", "OUTPUT", "1", "-j", QUANTUM_IPTABLES_CHAIN_NAME]),
+        )
+        .await
+    }
+    .await;
+    if result.is_err() {
+        let _ = cleanup_quantum_iptables_family(program).await;
+    }
+    result
+}
+
+async fn cleanup_quantum_iptables(block_ipv6: bool) -> Result<(), NetworkError> {
+    let iptables = resolve_command("iptables").ok_or_else(|| {
+        NetworkError::KillSwitchUnavailable("iptables command not found".to_string())
+    })?;
+    cleanup_quantum_iptables_family(&iptables).await?;
+
+    if block_ipv6 {
+        let ip6tables = resolve_command("ip6tables").ok_or_else(|| {
+            NetworkError::KillSwitchUnavailable("ip6tables command not found".to_string())
+        })?;
+        cleanup_quantum_iptables_family(&ip6tables).await?;
+    }
+    Ok(())
+}
+
+async fn cleanup_quantum_iptables_family(program: &Path) -> Result<(), NetworkError> {
+    for _ in 0..8 {
+        match run_cmd(
+            program,
+            &iptables_args(["-w", "-D", "OUTPUT", "-j", QUANTUM_IPTABLES_CHAIN_NAME]),
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(err) if is_missing_firewall_state(&err) => break,
+            Err(err) => return Err(err),
+        }
+    }
+
+    ignore_missing_firewall_state(
+        run_cmd(
+            program,
+            &iptables_args(["-w", "-F", QUANTUM_IPTABLES_CHAIN_NAME]),
+        )
+        .await,
+    )?;
+    ignore_missing_firewall_state(
+        run_cmd(
+            program,
+            &iptables_args(["-w", "-X", QUANTUM_IPTABLES_CHAIN_NAME]),
+        )
+        .await,
+    )?;
+    Ok(())
 }
 
 async fn apply_iptables(
@@ -474,6 +727,15 @@ mod tests {
         let script = nft_script("wg\\\"0", 0x12, true, true);
 
         assert!(script.contains("oifname \"wg\\\\\\\"0\" accept"));
+    }
+
+    #[test]
+    fn quantum_nft_script_allows_only_config_service_on_tunnel() {
+        let script = quantum_nft_script("wg0");
+
+        assert!(script.contains("hook output priority -10"));
+        assert!(script.contains("oifname \"wg0\" ip daddr 10.64.0.1 tcp dport 1337 accept"));
+        assert!(script.contains("oifname \"wg0\" reject"));
     }
 
     #[test]

@@ -35,7 +35,8 @@ use crate::core::route_plan::{
 use crate::platform::{NetworkApplyError, NetworkApplyResult};
 
 use dns::{apply_dns, cleanup_dns, DnsState};
-use killswitch::{apply_kill_switch, KillSwitchState};
+pub use killswitch::QuantumNegotiationGuardState;
+use killswitch::{apply_kill_switch, apply_quantum_negotiation_guard, KillSwitchState};
 use logging::{log_default_routes, log_privileges};
 use netlink::{build_route_message, delete_address, delete_route, link_index, netlink_handle};
 use policy::{
@@ -632,6 +633,19 @@ fn persist_running_recovery_state(
 /// 清理之前应用的网络配置。
 pub async fn cleanup_network_config(state: AppliedNetworkState) -> Result<(), NetworkError> {
     cleanup_network_config_impl(state, true).await
+}
+
+pub async fn apply_quantum_negotiation_traffic_guard(
+    tun_name: &str,
+    block_ipv6: bool,
+) -> Result<QuantumNegotiationGuardState, NetworkError> {
+    apply_quantum_negotiation_guard(tun_name, block_ipv6).await
+}
+
+pub async fn cleanup_quantum_negotiation_traffic_guard(
+    state: QuantumNegotiationGuardState,
+) -> Result<(), NetworkError> {
+    state.cleanup().await
 }
 
 async fn cleanup_network_config_impl(
