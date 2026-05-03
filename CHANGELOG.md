@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.3 - 2026-05-03
+
+- Upgraded `gotatun` to upstream `0.6.0` on the `main` branch, refreshing the lockfile to the latest git revision while keeping the existing device, TUN, and DAITA feature set enabled.
+- Added a Linux kernel WireGuard backend alongside the existing userspace path, with backend selection wired through tunnel startup, persistence, overview/session state, advanced preferences, diagnostics, and engine logging.
+- Added post-quantum tunnel upgrade support for the Linux kernel backend, including ephemeral-peer negotiation updates and UI availability controls that keep provider-specific upgrade behavior consistent across backend modes.
+- Hardened the kernel WireGuard backend with stricter device/config application, IPC state reporting, service-management cleanup, and recovery controls for installed privileged backends on Linux and Windows.
+- Blocked kernel-backend quantum startup leaks by extending Linux kill-switch enforcement around early tunnel setup, so traffic remains constrained while post-quantum peer material is negotiated and applied.
+
 ## 0.3.2 - 2026-04-29
 
 - Added kill switch protection with persisted preferences, Linux network-enforcement plumbing, recovery integration, route-map reporting, and advanced-preferences controls so tunnel traffic can fail closed when the tunnel is unavailable.
