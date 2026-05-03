@@ -36,7 +36,10 @@ use crate::platform::{NetworkApplyError, NetworkApplyResult};
 
 use dns::{apply_dns, cleanup_dns, DnsState};
 pub use killswitch::QuantumNegotiationGuardState;
-use killswitch::{apply_kill_switch, apply_quantum_negotiation_guard, KillSwitchState};
+use killswitch::{
+    apply_kill_switch, apply_quantum_negotiation_guard, cleanup_stale_quantum_negotiation_guard,
+    KillSwitchState,
+};
 use logging::{log_default_routes, log_privileges};
 use netlink::{build_route_message, delete_address, delete_route, link_index, netlink_handle};
 use policy::{
@@ -646,6 +649,11 @@ pub async fn cleanup_quantum_negotiation_traffic_guard(
     state: QuantumNegotiationGuardState,
 ) -> Result<(), NetworkError> {
     state.cleanup().await
+}
+
+pub fn cleanup_stale_quantum_negotiation_traffic_guard_sync() -> Result<(), NetworkError> {
+    let runtime = tokio::runtime::Runtime::new().map_err(NetworkError::Io)?;
+    runtime.block_on(async { cleanup_stale_quantum_negotiation_guard().await })
 }
 
 async fn cleanup_network_config_impl(

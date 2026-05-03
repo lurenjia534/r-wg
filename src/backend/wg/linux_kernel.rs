@@ -1,6 +1,7 @@
 use std::env;
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -8,6 +9,7 @@ use std::time::{Duration, SystemTime};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use futures_util::{stream::TryStreamExt, StreamExt};
 use gotatun::device::Peer as DevicePeer;
+use netlink_packet_route::link::{InfoKind, LinkAttribute, LinkInfo, LinkMessage};
 use nl_wireguard::{
     WireguardAddressFamily, WireguardAllowedIp, WireguardAllowedIpAttr, WireguardAttribute,
     WireguardCmd, WireguardMessage, WireguardPeer, WireguardPeerAttribute, WireguardPeerParsed,
@@ -67,7 +69,14 @@ pub(crate) async fn start_kernel_device(
 ) -> Result<KernelWireGuardDevice, KernelWireGuardError> {
     cleanup_journaled_link_before_create(tun_name).await?;
     write_kernel_backend_journal(tun_name, KernelBackendPhase::CreatingLink)?;
-    create_wireguard_link(tun_name).await?;
+    if let Err(error) = create_wireguard_link(tun_name).await {
+        if let Err(clear_error) = clear_kernel_backend_journal() {
+            tracing::warn!(
+                "kernel backend journal may be stale after create failure: {clear_error}"
+            );
+        }
+        return Err(error);
+    }
     write_kernel_backend_journal(tun_name, KernelBackendPhase::LinkCreated)?;
     if let Err(error) = configure_wireguard_device(tun_name, settings).await {
         if delete_kernel_device(tun_name).await.is_ok() {
@@ -88,6 +97,12 @@ pub(crate) async fn delete_kernel_device(tun_name: &str) -> Result<(), KernelWir
     let connection = route_connection()?;
     let handle = connection.handle.clone();
     if let Some(link) = find_link_by_name(&handle, tun_name).await? {
+        if !is_wireguard_link(&link) {
+            connection.shutdown().await;
+            return Err(operation(format!(
+                "refusing to delete non-WireGuard link '{tun_name}' during kernel backend cleanup"
+            )));
+        }
         handle
             .link()
             .del(link.header.index)
@@ -161,7 +176,6 @@ async fn create_wireguard_link(tun_name: &str) -> Result<(), KernelWireGuardErro
     let handle = connection.handle.clone();
     if find_link_by_name(&handle, tun_name).await?.is_some() {
         connection.shutdown().await;
-        clear_kernel_backend_journal()?;
         return Err(KernelWireGuardError::NameConflict(format!(
             "kernel WireGuard interface name conflict: link '{tun_name}' already exists"
         )));
@@ -191,6 +205,10 @@ async fn configure_wireguard_device(
     if let Some(fwmark) = settings.fwmark {
         attributes.push(WireguardAttribute::Fwmark(fwmark));
     }
+    // Linux WireGuard netlink supports fragmented SetDevice writes for very
+    // large configs. r-wg currently emits one small Mullvad-style config
+    // message and relies on the existing single-hop config validation for
+    // quantum/DAITA upgrade paths.
     attributes.push(WireguardAttribute::Peers(
         settings
             .peers
@@ -222,7 +240,7 @@ async fn set_wireguard_config(
     }
     .map_err(|error| {
         let message = error.to_string();
-        if is_unavailable_message(&message) {
+        if is_wireguard_family_unavailable_message(&message) {
             unavailable(format!(
                 "kernel WireGuard generic netlink unavailable: {message}"
             ))
@@ -313,13 +331,27 @@ fn route_connection() -> Result<RouteConnection, KernelWireGuardError> {
 async fn find_link_by_name(
     handle: &rtnetlink::Handle,
     tun_name: &str,
-) -> Result<Option<netlink_packet_route::link::LinkMessage>, KernelWireGuardError> {
+) -> Result<Option<LinkMessage>, KernelWireGuardError> {
     let mut links = handle
         .link()
         .get()
         .match_name(tun_name.to_string())
         .execute();
     links.try_next().await.map_err(map_route_error)
+}
+
+fn is_wireguard_link(link: &LinkMessage) -> bool {
+    link_info_kind(link) == Some(InfoKind::Wireguard)
+}
+
+fn link_info_kind(link: &LinkMessage) -> Option<InfoKind> {
+    link.attributes.iter().find_map(|attr| match attr {
+        LinkAttribute::LinkInfo(infos) => infos.iter().find_map(|info| match info {
+            LinkInfo::Kind(kind) => Some(kind.clone()),
+            _ => None,
+        }),
+        _ => None,
+    })
 }
 
 async fn cleanup_journaled_link_before_create(tun_name: &str) -> Result<(), KernelWireGuardError> {
@@ -335,7 +367,7 @@ async fn cleanup_journaled_link_before_create(tun_name: &str) -> Result<(), Kern
 
 fn map_route_error(error: rtnetlink::Error) -> KernelWireGuardError {
     let message = error.to_string();
-    if is_unavailable_route_error(&error) || is_unavailable_message(&message) {
+    if is_unavailable_route_error(&error) || is_kernel_link_unavailable_message(&message) {
         unavailable(format!(
             "Linux kernel WireGuard unavailable while creating interface: {message}"
         ))
@@ -355,13 +387,18 @@ fn is_unavailable_route_error(error: &rtnetlink::Error) -> bool {
     errno == libc::EOPNOTSUPP || errno == libc::ENODEV || errno == libc::EAFNOSUPPORT
 }
 
-fn is_unavailable_message(message: &str) -> bool {
+fn is_kernel_link_unavailable_message(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("operation not supported")
         || message.contains("no such device")
         || message.contains("address family not supported")
         || message.contains("family not found")
         || message.contains("wireguard generic netlink")
+}
+
+fn is_wireguard_family_unavailable_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("family not found") || message.contains("wireguard generic netlink")
 }
 
 fn unavailable(message: String) -> KernelWireGuardError {
@@ -406,7 +443,7 @@ fn write_kernel_backend_journal(
     };
     let json = serde_json::to_string(&journal)
         .map_err(|error| operation(format!("failed to encode kernel backend journal: {error}")))?;
-    fs::write(path, json)
+    write_atomic(&path, json.as_bytes())
         .map_err(|error| operation(format!("failed to write kernel backend journal: {error}")))
 }
 
@@ -421,9 +458,14 @@ fn load_kernel_backend_journal() -> Result<Option<KernelBackendJournal>, KernelW
             )))
         }
     };
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|error| operation(format!("failed to parse kernel backend journal: {error}")))
+    match serde_json::from_str(&text) {
+        Ok(journal) => Ok(Some(journal)),
+        Err(error) => {
+            quarantine_kernel_backend_journal(&path)?;
+            tracing::warn!("quarantined corrupt kernel backend journal: {error}");
+            Ok(None)
+        }
+    }
 }
 
 pub(crate) fn clear_kernel_backend_journal() -> Result<(), KernelWireGuardError> {
@@ -448,12 +490,48 @@ fn kernel_backend_journal_path_in(state_directory: Option<&std::ffi::OsStr>) -> 
         .join(KERNEL_BACKEND_JOURNAL_FILE)
 }
 
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp_path = path.with_file_name(format!(
+        ".{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(KERNEL_BACKEND_JOURNAL_FILE)
+    ));
+    {
+        let mut file = fs::File::create(&tmp_path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp_path, path)?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+fn quarantine_kernel_backend_journal(path: &Path) -> Result<(), KernelWireGuardError> {
+    let suffix = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let quarantine_path =
+        path.with_file_name(format!("{KERNEL_BACKEND_JOURNAL_FILE}.corrupt.{suffix}"));
+    fs::rename(path, quarantine_path).map_err(|error| {
+        operation(format!(
+            "failed to quarantine kernel backend journal: {error}"
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn unavailable_message_matches_kernel_capability_failures() {
+    fn kernel_link_unavailable_message_matches_capability_failures() {
         for message in [
             "Operation not supported",
             "No such device",
@@ -461,12 +539,12 @@ mod tests {
             "family not found",
             "wireguard generic netlink unavailable",
         ] {
-            assert!(is_unavailable_message(message), "{message}");
+            assert!(is_kernel_link_unavailable_message(message), "{message}");
         }
     }
 
     #[test]
-    fn unavailable_message_rejects_configuration_failures() {
+    fn kernel_link_unavailable_message_rejects_configuration_failures() {
         for message in [
             "invalid public key",
             "permission denied",
@@ -474,7 +552,28 @@ mod tests {
             "invalid allowed ip",
             "feature not supported for this configuration",
         ] {
-            assert!(!is_unavailable_message(message), "{message}");
+            assert!(!is_kernel_link_unavailable_message(message), "{message}");
+        }
+    }
+
+    #[test]
+    fn set_device_unavailable_message_only_matches_generic_family_failures() {
+        for message in ["family not found", "wireguard generic netlink unavailable"] {
+            assert!(
+                is_wireguard_family_unavailable_message(message),
+                "{message}"
+            );
+        }
+        for message in [
+            "Operation not supported",
+            "No such device",
+            "Address family not supported by protocol",
+            "invalid public key",
+        ] {
+            assert!(
+                !is_wireguard_family_unavailable_message(message),
+                "{message}"
+            );
         }
     }
 

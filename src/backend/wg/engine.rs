@@ -519,7 +519,9 @@ impl EngineState {
             return Err(EngineError::AlreadyRunning);
         }
         self.route_apply_report = None;
-        self.active_backend = None;
+        if self.active_backend.is_some() {
+            self.shutdown_active_backend().await;
+        }
         self.quantum_active = false;
         self.daita_active = false;
         self.ephemeral_key_active = false;
@@ -789,6 +791,28 @@ impl EngineState {
             .map_err(KernelStartError::Kernel)?;
         log_engine::kernel_device_created(tun_name);
 
+        let mut quantum_guard = if request.quantum_mode.is_enabled() {
+            match platform::linux::apply_quantum_negotiation_traffic_guard(
+                tun_name,
+                route_plan_has_ipv6_tunnel_routes(route_plan),
+            )
+            .await
+            {
+                Ok(guard) => Some(guard),
+                Err(error) => {
+                    if linux_kernel::delete_kernel_device(kernel_device.tun_name())
+                        .await
+                        .is_ok()
+                    {
+                        let _ = linux_kernel::clear_kernel_backend_journal();
+                    }
+                    return Err(KernelStartError::Engine(EngineError::Network(error)));
+                }
+            }
+        } else {
+            None
+        };
+
         let net_result = match platform::apply_network_config(
             tun_name,
             parsed,
@@ -799,6 +823,9 @@ impl EngineState {
         {
             Ok(result) => result,
             Err(err) => {
+                if let Some(guard) = quantum_guard.take() {
+                    let _ = platform::linux::cleanup_quantum_negotiation_traffic_guard(guard).await;
+                }
                 self.route_apply_report = Some(err.report);
                 if linux_kernel::delete_kernel_device(kernel_device.tun_name())
                     .await
@@ -814,6 +841,9 @@ impl EngineState {
         log_engine::network_configured();
         self.route_apply_report = Some(net_result.report.clone());
         if let Err(error) = linux_kernel::mark_kernel_device_running(tun_name) {
+            if let Some(guard) = quantum_guard.take() {
+                let _ = platform::linux::cleanup_quantum_negotiation_traffic_guard(guard).await;
+            }
             let cleanup_result = self.cleanup_active_network_state().await;
             if linux_kernel::delete_kernel_device(kernel_device.tun_name())
                 .await
@@ -828,36 +858,17 @@ impl EngineState {
         }
 
         if request.quantum_mode.is_enabled() {
-            let quantum_guard = match platform::linux::apply_quantum_negotiation_traffic_guard(
-                tun_name,
-                route_plan_has_ipv6_tunnel_routes(route_plan),
-            )
-            .await
-            {
-                Ok(guard) => guard,
-                Err(error) => {
-                    let cleanup_result = self.cleanup_active_network_state().await;
-                    if linux_kernel::delete_kernel_device(kernel_device.tun_name())
-                        .await
-                        .is_ok()
-                    {
-                        let _ = linux_kernel::clear_kernel_backend_journal();
-                    }
-                    return match cleanup_result {
-                        Ok(()) => Err(KernelStartError::Engine(EngineError::Network(error))),
-                        Err(err) => Err(KernelStartError::Engine(err)),
-                    };
-                }
-            };
-
             if let Err(error) = self
                 .upgrade_kernel_ephemeral(tun_name, parsed, settings, request)
                 .await
             {
-                let guard_cleanup_result =
-                    platform::linux::cleanup_quantum_negotiation_traffic_guard(quantum_guard)
+                let guard_cleanup_result = if let Some(guard) = quantum_guard.take() {
+                    platform::linux::cleanup_quantum_negotiation_traffic_guard(guard)
                         .await
-                        .map_err(EngineError::from);
+                        .map_err(EngineError::from)
+                } else {
+                    Ok(())
+                };
                 let cleanup_result = self.cleanup_active_network_state().await;
                 if linux_kernel::delete_kernel_device(kernel_device.tun_name())
                     .await
@@ -872,20 +883,22 @@ impl EngineState {
                 };
             }
 
-            if let Err(error) =
-                platform::linux::cleanup_quantum_negotiation_traffic_guard(quantum_guard).await
-            {
-                let cleanup_result = self.cleanup_active_network_state().await;
-                if linux_kernel::delete_kernel_device(kernel_device.tun_name())
-                    .await
-                    .is_ok()
+            if let Some(guard) = quantum_guard.take() {
+                if let Err(error) =
+                    platform::linux::cleanup_quantum_negotiation_traffic_guard(guard).await
                 {
-                    let _ = linux_kernel::clear_kernel_backend_journal();
+                    let cleanup_result = self.cleanup_active_network_state().await;
+                    if linux_kernel::delete_kernel_device(kernel_device.tun_name())
+                        .await
+                        .is_ok()
+                    {
+                        let _ = linux_kernel::clear_kernel_backend_journal();
+                    }
+                    return match cleanup_result {
+                        Ok(()) => Err(KernelStartError::Engine(EngineError::Network(error))),
+                        Err(err) => Err(KernelStartError::Engine(err)),
+                    };
                 }
-                return match cleanup_result {
-                    Ok(()) => Err(KernelStartError::Engine(EngineError::Network(error))),
-                    Err(err) => Err(KernelStartError::Engine(err)),
-                };
             }
         }
 
@@ -902,6 +915,11 @@ impl EngineState {
         settings: &config::DeviceSettings,
         request: &StartRequest,
     ) -> Result<(), KernelStartError> {
+        if request.daita_mode.is_enabled() {
+            return Err(KernelStartError::Engine(EngineError::UnsupportedBackend(
+                "DAITA requires userspace GotaTun".to_string(),
+            )));
+        }
         log_engine::ephemeral_negotiation_requested(
             request.quantum_mode.is_enabled(),
             request.daita_mode.is_enabled(),
@@ -981,7 +999,19 @@ impl EngineState {
             Ok(())
         };
 
-        self.stop_active_backend().await?;
+        if let Err(error) = self.stop_active_backend().await {
+            if cleanup_result.is_ok() {
+                self.route_apply_report = None;
+                self.running = false;
+                self.quantum_active = false;
+                self.daita_active = false;
+                self.ephemeral_key_active = false;
+                self.last_quantum_failure = None;
+                self.last_daita_failure = None;
+                trim_allocator();
+            }
+            return Err(error);
+        }
         self.route_apply_report = None;
         self.running = false;
         self.quantum_active = false;

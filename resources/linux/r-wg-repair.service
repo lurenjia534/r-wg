@@ -1,7 +1,6 @@
 [Unit]
 Description=r-wg boot-time startup repair
 After=local-fs.target
-ConditionPathExists=/var/lib/r-wg/recovery.json
 
 [Service]
 Type=oneshot

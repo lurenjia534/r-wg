@@ -1,5 +1,9 @@
+use std::env;
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -11,6 +15,7 @@ const NFT_TABLE_NAME: &str = "r_wg_killswitch";
 const IPTABLES_CHAIN_NAME: &str = "R_WG_KILLSWITCH";
 const QUANTUM_NFT_TABLE_NAME: &str = "r_wg_quantum_start";
 const QUANTUM_IPTABLES_CHAIN_NAME: &str = "R_WG_QUANTUM_START";
+const QUANTUM_GUARD_JOURNAL_FILE: &str = "quantum-guard.json";
 const CONFIG_SERVICE_GATEWAY: &str = "10.64.0.1";
 const CONFIG_SERVICE_PORT: &str = "1337";
 
@@ -85,6 +90,14 @@ pub(super) async fn apply_kill_switch(
 #[derive(Debug)]
 pub struct QuantumNegotiationGuardState {
     backend: KillSwitchBackend,
+    tun_name: String,
+    block_ipv6: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct QuantumNegotiationGuardJournal {
+    backend: KillSwitchBackend,
+    tun_name: String,
     block_ipv6: bool,
 }
 
@@ -96,10 +109,16 @@ pub(super) async fn apply_quantum_negotiation_guard(
     if let Some(nft) = resolve_command("nft") {
         match apply_quantum_nftables(&nft, tun_name).await {
             Ok(()) => {
-                return Ok(QuantumNegotiationGuardState {
+                let state = QuantumNegotiationGuardState {
                     backend: KillSwitchBackend::Nftables,
+                    tun_name: tun_name.to_string(),
                     block_ipv6,
-                });
+                };
+                if let Err(err) = write_quantum_guard_journal(&state) {
+                    let _ = state.cleanup_firewall().await;
+                    return Err(err);
+                }
+                return Ok(state);
             }
             Err(err) => {
                 let _ = cleanup_quantum_nftables(&nft).await;
@@ -109,10 +128,18 @@ pub(super) async fn apply_quantum_negotiation_guard(
     }
 
     match apply_quantum_iptables(tun_name, block_ipv6).await {
-        Ok(()) => Ok(QuantumNegotiationGuardState {
-            backend: KillSwitchBackend::Iptables,
-            block_ipv6,
-        }),
+        Ok(()) => {
+            let state = QuantumNegotiationGuardState {
+                backend: KillSwitchBackend::Iptables,
+                tun_name: tun_name.to_string(),
+                block_ipv6,
+            };
+            if let Err(err) = write_quantum_guard_journal(&state) {
+                let _ = state.cleanup_firewall().await;
+                return Err(err);
+            }
+            Ok(state)
+        }
         Err(NetworkError::KillSwitchUnavailable(_)) => match nft_error {
             Some(err) => Err(err),
             None => Err(NetworkError::KillSwitchUnavailable(
@@ -126,6 +153,11 @@ pub(super) async fn apply_quantum_negotiation_guard(
 
 impl QuantumNegotiationGuardState {
     pub(super) async fn cleanup(self) -> Result<(), NetworkError> {
+        self.cleanup_firewall().await?;
+        clear_quantum_guard_journal()
+    }
+
+    async fn cleanup_firewall(&self) -> Result<(), NetworkError> {
         match self.backend {
             KillSwitchBackend::Nftables => {
                 let nft = resolve_command("nft").ok_or_else(|| {
@@ -134,6 +166,24 @@ impl QuantumNegotiationGuardState {
                 cleanup_quantum_nftables(&nft).await
             }
             KillSwitchBackend::Iptables => cleanup_quantum_iptables(self.block_ipv6).await,
+        }
+    }
+}
+
+pub(super) async fn cleanup_stale_quantum_negotiation_guard() -> Result<(), NetworkError> {
+    match load_quantum_guard_journal()? {
+        Some(journal) => {
+            let state = QuantumNegotiationGuardState {
+                backend: journal.backend,
+                tun_name: journal.tun_name,
+                block_ipv6: journal.block_ipv6,
+            };
+            state.cleanup_firewall().await?;
+            clear_quantum_guard_journal()
+        }
+        None => {
+            cleanup_quantum_firewall_best_effort(true).await?;
+            clear_quantum_guard_journal()
         }
     }
 }
@@ -367,6 +417,35 @@ async fn cleanup_quantum_iptables(block_ipv6: bool) -> Result<(), NetworkError> 
         cleanup_quantum_iptables_family(&ip6tables).await?;
     }
     Ok(())
+}
+
+async fn cleanup_quantum_firewall_best_effort(block_ipv6: bool) -> Result<(), NetworkError> {
+    let mut first_error = None;
+
+    if let Some(nft) = resolve_command("nft") {
+        if let Err(err) = cleanup_quantum_nftables(&nft).await {
+            first_error.get_or_insert(err);
+        }
+    }
+
+    if let Some(iptables) = resolve_command("iptables") {
+        if let Err(err) = cleanup_quantum_iptables_family(&iptables).await {
+            first_error.get_or_insert(err);
+        }
+    }
+
+    if block_ipv6 {
+        if let Some(ip6tables) = resolve_command("ip6tables") {
+            if let Err(err) = cleanup_quantum_iptables_family(&ip6tables).await {
+                first_error.get_or_insert(err);
+            }
+        }
+    }
+
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 async fn cleanup_quantum_iptables_family(program: &Path) -> Result<(), NetworkError> {
@@ -680,6 +759,83 @@ fn iptables_args<const N: usize>(args: [&str; N]) -> Vec<String> {
 
 fn nft_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn write_quantum_guard_journal(state: &QuantumNegotiationGuardState) -> Result<(), NetworkError> {
+    let journal = QuantumNegotiationGuardJournal {
+        backend: state.backend,
+        tun_name: state.tun_name.clone(),
+        block_ipv6: state.block_ipv6,
+    };
+    let json = serde_json::to_vec(&journal).map_err(|err| {
+        NetworkError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+    })?;
+    write_atomic_json(quantum_guard_journal_path(), &json)
+}
+
+fn load_quantum_guard_journal() -> Result<Option<QuantumNegotiationGuardJournal>, NetworkError> {
+    let path = quantum_guard_journal_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(NetworkError::Io(err)),
+    };
+    match serde_json::from_str(&text) {
+        Ok(journal) => Ok(Some(journal)),
+        Err(err) => {
+            quarantine_quantum_guard_journal(&path)?;
+            tracing::warn!("quarantined corrupt quantum guard journal: {err}");
+            Ok(None)
+        }
+    }
+}
+
+fn clear_quantum_guard_journal() -> Result<(), NetworkError> {
+    let path = quantum_guard_journal_path();
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(NetworkError::Io(err)),
+    }
+}
+
+fn quarantine_quantum_guard_journal(path: &Path) -> Result<(), NetworkError> {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let quarantine_path =
+        path.with_file_name(format!("{QUANTUM_GUARD_JOURNAL_FILE}.corrupt.{suffix}"));
+    fs::rename(path, quarantine_path).map_err(NetworkError::Io)
+}
+
+fn write_atomic_json(path: PathBuf, json: &[u8]) -> Result<(), NetworkError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp_path = path.with_file_name(format!(
+        ".{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(QUANTUM_GUARD_JOURNAL_FILE)
+    ));
+    {
+        let mut file = fs::File::create(&tmp_path)?;
+        file.write_all(json)?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp_path, &path)?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+fn quantum_guard_journal_path() -> PathBuf {
+    env::var_os("STATE_DIRECTORY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/r-wg"))
+        .join(QUANTUM_GUARD_JOURNAL_FILE)
 }
 
 #[cfg(test)]

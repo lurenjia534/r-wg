@@ -46,6 +46,8 @@ pub(super) fn run_service(options: ServiceOptions) -> Result<(), super::super::E
 
     crate::platform::linux::attempt_startup_repair()
         .map_err(|err| remote_error(format!("startup repair failed: {err}")))?;
+    crate::platform::linux::cleanup_stale_quantum_negotiation_traffic_guard_sync()
+        .map_err(|err| remote_error(format!("quantum guard startup repair failed: {err}")))?;
     super::super::linux_kernel::repair_stale_kernel_device_from_journal_sync()
         .map_err(|err| remote_error(format!("kernel backend startup repair failed: {err}")))?;
 

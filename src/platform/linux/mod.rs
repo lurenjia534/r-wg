@@ -4,6 +4,7 @@ mod network;
 
 pub use network::{
     apply_network_config, apply_quantum_negotiation_traffic_guard, attempt_startup_repair,
-    cleanup_network_config, cleanup_quantum_negotiation_traffic_guard, load_persisted_apply_report,
+    cleanup_network_config, cleanup_quantum_negotiation_traffic_guard,
+    cleanup_stale_quantum_negotiation_traffic_guard_sync, load_persisted_apply_report,
     AppliedNetworkState, NetworkError, QuantumNegotiationGuardState,
 };
