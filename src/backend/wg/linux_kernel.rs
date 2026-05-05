@@ -337,7 +337,11 @@ async fn find_link_by_name(
         .get()
         .match_name(tun_name.to_string())
         .execute();
-    links.try_next().await.map_err(map_route_error)
+    match links.try_next().await {
+        Ok(link) => Ok(link),
+        Err(error) if is_route_link_not_found_error(&error) => Ok(None),
+        Err(error) => Err(map_route_error(error)),
+    }
 }
 
 fn is_wireguard_link(link: &LinkMessage) -> bool {
@@ -377,14 +381,21 @@ fn map_route_error(error: rtnetlink::Error) -> KernelWireGuardError {
 }
 
 fn is_unavailable_route_error(error: &rtnetlink::Error) -> bool {
-    let rtnetlink::Error::NetlinkError(message) = error else {
+    let Some(errno) = route_error_errno(error) else {
         return false;
     };
-    let Some(code) = message.code else {
-        return false;
-    };
-    let errno = code.get().abs();
     errno == libc::EOPNOTSUPP || errno == libc::ENODEV || errno == libc::EAFNOSUPPORT
+}
+
+fn is_route_link_not_found_error(error: &rtnetlink::Error) -> bool {
+    route_error_errno(error) == Some(libc::ENODEV)
+}
+
+fn route_error_errno(error: &rtnetlink::Error) -> Option<i32> {
+    let rtnetlink::Error::NetlinkError(message) = error else {
+        return None;
+    };
+    Some(message.code?.get().abs())
 }
 
 fn is_kernel_link_unavailable_message(message: &str) -> bool {
@@ -529,6 +540,8 @@ fn quarantine_kernel_backend_journal(path: &Path) -> Result<(), KernelWireGuardE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rtnetlink::packet_core::ErrorMessage;
+    use std::num::NonZeroI32;
 
     #[test]
     fn kernel_link_unavailable_message_matches_capability_failures() {
@@ -575,6 +588,19 @@ mod tests {
                 "{message}"
             );
         }
+    }
+
+    #[test]
+    fn route_link_not_found_only_matches_enodev() {
+        let mut not_found_message = ErrorMessage::default();
+        not_found_message.code = NonZeroI32::new(-libc::ENODEV);
+        let not_found = rtnetlink::Error::NetlinkError(not_found_message);
+        let mut unsupported_message = ErrorMessage::default();
+        unsupported_message.code = NonZeroI32::new(-libc::EOPNOTSUPP);
+        let unsupported = rtnetlink::Error::NetlinkError(unsupported_message);
+
+        assert!(is_route_link_not_found_error(&not_found));
+        assert!(!is_route_link_not_found_error(&unsupported));
     }
 
     #[test]

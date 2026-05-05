@@ -660,6 +660,7 @@ fn is_missing_firewall_state(error: &NetworkError) -> bool {
     normalized.contains("no such file")
         || normalized.contains("no such table")
         || normalized.contains("no such chain")
+        || normalized.contains("does not exist")
         || normalized.contains("does a matching rule exist")
         || normalized.contains("no chain/target/match")
 }
@@ -892,6 +893,18 @@ mod tests {
         assert!(script.contains("hook output priority -10"));
         assert!(script.contains("oifname \"wg0\" ip daddr 10.64.0.1 tcp dport 1337 accept"));
         assert!(script.contains("oifname \"wg0\" reject"));
+    }
+
+    #[test]
+    fn missing_firewall_state_accepts_nf_tables_chain_absence() {
+        let error = NetworkError::CommandFailed {
+            command: "/usr/sbin/iptables -w -D OUTPUT -j R_WG_QUANTUM_START".to_string(),
+            status: Some(2),
+            stderr: "iptables v1.8.13 (nf_tables): Chain 'R_WG_QUANTUM_START' does not exist"
+                .to_string(),
+        };
+
+        assert!(is_missing_firewall_state(&error));
     }
 
     #[test]
