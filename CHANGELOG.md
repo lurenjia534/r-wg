@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.4 - 2026-05-06
+
+- Fixed Linux kernel WireGuard startup by treating `RTM_GETLINK` `ENODEV` during pre-create name checks as a missing interface instead of aborting before the `RTM_NEWLINK` create request.
+- Improved privileged Linux backend failure visibility by routing service-entry startup errors through the app logger.
+- Made Linux startup repair tolerate nft-backed `iptables` reports that say a stale quantum-guard chain `does not exist`.
+
 ## 0.3.3 - 2026-05-03
 
 - Upgraded `gotatun` to upstream `0.6.0` on the `main` branch, refreshing the lockfile to the latest git revision while keeping the existing device, TUN, and DAITA feature set enabled.
