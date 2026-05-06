@@ -7,6 +7,7 @@ use r_wg::dns::{DnsMode, DnsPreset};
 use serde::{Deserialize, Serialize};
 
 use super::features::themes::AppearancePolicy;
+use super::i18n::LanguagePreference;
 use super::state::{ConfigInspectorTab, ConfigSource, ProxiesViewMode, TrafficPeriod};
 
 pub(crate) const STATE_VERSION: u32 = 4;
@@ -38,6 +39,8 @@ pub(crate) struct PersistedState {
     pub(crate) theme_light_name: Option<String>,
     #[serde(default)]
     pub(crate) theme_dark_name: Option<String>,
+    #[serde(default)]
+    pub(crate) language_preference: Option<LanguagePreference>,
     #[serde(default)]
     pub(crate) log_auto_follow: Option<bool>,
     #[serde(default)]
@@ -232,6 +235,7 @@ mod tests {
             theme_dark_key: Some("curated:tokyonight.json#dark-tokyo-night".to_string()),
             theme_light_name: Some("Signal Light".to_string()),
             theme_dark_name: Some("Network Dark".to_string()),
+            language_preference: Some(LanguagePreference::System),
             log_auto_follow: Some(true),
             require_connect_password: Some(true),
             kill_switch_enabled: Some(true),
@@ -305,6 +309,7 @@ mod tests {
         assert_eq!(loaded.theme_dark_key, state.theme_dark_key);
         assert_eq!(loaded.theme_light_name, state.theme_light_name);
         assert_eq!(loaded.theme_dark_name, state.theme_dark_name);
+        assert_eq!(loaded.language_preference, state.language_preference);
         assert_eq!(loaded.log_auto_follow, state.log_auto_follow);
         assert_eq!(
             loaded.require_connect_password,

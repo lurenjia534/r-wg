@@ -4,6 +4,7 @@ use gpui_component::setting::{SettingGroup, SettingPage, Settings};
 use gpui_component::ActiveTheme as _;
 
 use crate::ui::features::theme_settings_group;
+use crate::ui::i18n::tr;
 use crate::ui::state::WgApp;
 use crate::ui::view::widgets::{PageShell, PageShellHeader};
 
@@ -11,32 +12,48 @@ use crate::ui::view::widgets::{PageShell, PageShellHeader};
 use super::preferences::wireguard_backend_item;
 use super::preferences::{
     connect_password_item, daita_mode_item, daita_resources_item, dns_mode_item, dns_preset_item,
-    inspector_tab_item, kill_switch_item, log_auto_follow_item, quantum_mode_item,
+    inspector_tab_item, kill_switch_item, language_item, log_auto_follow_item, quantum_mode_item,
     traffic_period_item,
 };
 use super::system::{privileged_backend_item, troubleshooting_item};
 
 // Settings page composition.
 
-pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
+pub(crate) fn render_advanced(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
     let app_handle = cx.entity();
+    let language = app.language();
 
-    let general_page = SettingPage::new("General")
-        .description("Appearance and remembered app defaults.")
+    let general_page = SettingPage::new(tr(language, "General"))
+        .description(tr(language, "Appearance and remembered app defaults."))
         .default_open(true)
-        .group(theme_settings_group(app_handle.clone()))
+        .group(theme_settings_group(app_handle.clone(), language))
         .group(
             SettingGroup::new()
-                .title("Workspace")
-                .description("Choose which right-side panel opens first in Configs.")
-                .item(inspector_tab_item(app_handle.clone())),
+                .title(tr(language, "Language"))
+                .description(tr(
+                    language,
+                    "Set the UI language. System follows your OS locale when it is available.",
+                ))
+                .item(language_item(app_handle.clone(), language)),
+        )
+        .group(
+            SettingGroup::new()
+                .title(tr(language, "Workspace"))
+                .description(tr(
+                    language,
+                    "Choose which right-side panel opens first in Configs.",
+                ))
+                .item(inspector_tab_item(app_handle.clone(), language)),
         );
 
     let connection_security_group = SettingGroup::new()
-        .title("Connection Security")
-        .description("Require local approval and control upcoming tunnel hardening behavior.")
-        .item(kill_switch_item(app_handle.clone()))
-        .item(connect_password_item(app_handle.clone()));
+        .title(tr(language, "Connection Security"))
+        .description(tr(
+            language,
+            "Require local approval and control upcoming tunnel hardening behavior.",
+        ))
+        .item(kill_switch_item(app_handle.clone(), language))
+        .item(connect_password_item(app_handle.clone(), language));
     #[cfg(target_os = "linux")]
     let connection_security_group =
         connection_security_group.item(wireguard_backend_item(app_handle.clone()));
@@ -45,44 +62,57 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
         .item(daita_mode_item(app_handle.clone()))
         .item(daita_resources_item(app_handle.clone()));
 
-    let network_page = SettingPage::new("Network")
-        .description("Defaults used when tunnel configs do not fully define DNS behavior.")
+    let network_page = SettingPage::new(tr(language, "Network"))
+        .description(tr(
+            language,
+            "Defaults used when tunnel configs do not fully define DNS behavior.",
+        ))
         .default_open(true)
         .group(
             SettingGroup::new()
-                .title("DNS")
-                .description("Keep DNS handling predictable across imported configs.")
-                .item(dns_mode_item(app_handle.clone()))
-                .item(dns_preset_item(app_handle.clone())),
+                .title(tr(language, "DNS"))
+                .description(tr(
+                    language,
+                    "Keep DNS handling predictable across imported configs.",
+                ))
+                .item(dns_mode_item(app_handle.clone(), language))
+                .item(dns_preset_item(app_handle.clone(), language)),
         )
         .group(connection_security_group);
 
-    let monitoring_page = SettingPage::new("Monitoring")
-        .description("Remembered monitoring behavior and chart defaults.")
+    let monitoring_page = SettingPage::new(tr(language, "Monitoring"))
+        .description(tr(
+            language,
+            "Remembered monitoring behavior and chart defaults.",
+        ))
         .default_open(true)
         .group(
             SettingGroup::new()
-                .title("Logs")
-                .description("Control how the runtime log viewer behaves.")
-                .item(log_auto_follow_item(app_handle.clone())),
+                .title(tr(language, "Logs"))
+                .description(tr(language, "Control how the runtime log viewer behaves."))
+                .item(log_auto_follow_item(app_handle.clone(), language)),
         )
         .group(
             SettingGroup::new()
-                .title("Traffic")
-                .description("Choose the default range for charts and summaries.")
-                .item(traffic_period_item(app_handle.clone())),
+                .title(tr(language, "Traffic"))
+                .description(tr(
+                    language,
+                    "Choose the default range for charts and summaries.",
+                ))
+                .item(traffic_period_item(app_handle.clone(), language)),
         );
 
-    let system_page = SettingPage::new("System")
-        .description(
+    let system_page = SettingPage::new(tr(language, "System"))
+        .description(tr(
+            language,
             "Manage the helper service required for routes, DNS changes, and tunnel startup.",
-        )
+        ))
         .default_open(true)
         .group(
             SettingGroup::new()
-                .title("Privileged Backend")
+                .title(tr(language, "Privileged Backend"))
                 .description("Helper service status, diagnostics, and recovery actions.")
-                .item(privileged_backend_item(app_handle.clone()))
+                .item(privileged_backend_item(app_handle.clone(), language))
                 .item(troubleshooting_item(app_handle.clone())),
         );
 
@@ -97,9 +127,12 @@ pub(crate) fn render_advanced(_app: &mut WgApp, cx: &mut Context<WgApp>) -> Div 
 
     PageShell::new(
         PageShellHeader::new(
-            "SETTINGS",
-            "Preferences",
-            "Manage appearance, defaults, and system integration in one place.",
+            tr(language, "SETTINGS"),
+            tr(language, "Preferences"),
+            tr(
+                language,
+                "Manage appearance, defaults, and system integration in one place.",
+            ),
         ),
         div()
             .flex_1()

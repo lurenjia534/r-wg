@@ -10,30 +10,32 @@ use super::{
     available_themes, lint_theme_config, resolve_theme_preference, AppearancePolicy,
     ThemeCatalogEntry, ThemeLintItem, ThemeLintSeverity,
 };
+use crate::ui::i18n::{tr, Language};
 use crate::ui::persistence;
 use crate::ui::state::WgApp;
 
 // Theme policy, palette selection, preview, and lint presentation.
 
-pub(crate) fn theme_settings_group(app: Entity<WgApp>) -> SettingGroup {
+pub(crate) fn theme_settings_group(app: Entity<WgApp>, language: Language) -> SettingGroup {
     SettingGroup::new()
-        .title("Appearance")
+        .title(tr(language, "Appearance"))
         .description(
             "Separate the appearance policy from the light and dark palettes it resolves to.",
         )
-        .item(theme_mode_item(app.clone()))
-        .item(theme_palette_item(app.clone(), ThemeMode::Light))
-        .item(theme_palette_item(app.clone(), ThemeMode::Dark))
+        .item(theme_mode_item(app.clone(), language))
+        .item(theme_palette_item(app.clone(), ThemeMode::Light, language))
+        .item(theme_palette_item(app.clone(), ThemeMode::Dark, language))
         .item(reset_theme_item(app.clone()))
         .item(theme_file_workflow_item(app.clone()))
         .item(theme_preview_item(app))
 }
 
-fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
+fn theme_mode_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     SettingItem::new(
-        "Appearance Policy",
+        tr(language, "Appearance Policy"),
         SettingField::render(move |_, _window, cx| {
             let current = app.read(cx).ui_prefs.appearance_policy;
+            let language = app.read(cx).language();
             let system_handle = app.clone();
             let light_handle = app.clone();
             let dark_handle = app.clone();
@@ -45,7 +47,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                     .compact()
                     .child(
                         Button::new("advanced-theme-system")
-                            .label("Follow System")
+                            .label(tr(language, "Follow System"))
                             .selected(current == AppearancePolicy::System)
                             .on_click(move |_, _, cx| {
                                 system_handle.update(cx, |app, cx| {
@@ -59,7 +61,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                     )
                     .child(
                         Button::new("advanced-theme-light")
-                            .label("Light")
+                            .label(tr(language, "Light"))
                             .selected(current == AppearancePolicy::Light)
                             .on_click(move |_, _, cx| {
                                 light_handle.update(cx, |app, cx| {
@@ -73,7 +75,7 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
                     )
                     .child(
                         Button::new("advanced-theme-dark")
-                            .label("Dark")
+                            .label(tr(language, "Dark"))
                             .selected(current == AppearancePolicy::Dark)
                             .on_click(move |_, _, cx| {
                                 dark_handle.update(cx, |app, cx| {
@@ -88,13 +90,16 @@ fn theme_mode_item(app: Entity<WgApp>) -> SettingItem {
             )
         }),
     )
-    .description("Choose whether the app follows the OS, or stays pinned to light or dark.")
+    .description(tr(
+        language,
+        "Choose whether the app follows the OS, or stays pinned to light or dark.",
+    ))
 }
 
-fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode) -> SettingItem {
+fn theme_palette_item(app: Entity<WgApp>, mode: ThemeMode, language: Language) -> SettingItem {
     let title = match mode {
-        ThemeMode::Light => "Light Palette",
-        ThemeMode::Dark => "Dark Palette",
+        ThemeMode::Light => tr(language, "Light Palette"),
+        ThemeMode::Dark => tr(language, "Dark Palette"),
     };
     let description = match mode {
         ThemeMode::Light => "Used whenever the appearance policy resolves to light.",

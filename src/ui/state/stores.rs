@@ -16,6 +16,7 @@ use r_wg::dns::{DnsMode, DnsPreset};
 
 use crate::ui::features::configs::state::{ConfigsWorkspace, LoadedConfigState};
 use crate::ui::features::themes::AppearancePolicy;
+use crate::ui::i18n::LanguagePreference;
 use crate::ui::persistence::{self, StoragePaths};
 
 use super::{
@@ -481,6 +482,7 @@ pub(crate) struct UiPrefsState {
     pub(crate) theme_dark_key: Option<SharedString>,
     pub(crate) theme_light_name: Option<SharedString>,
     pub(crate) theme_dark_name: Option<SharedString>,
+    pub(crate) language_preference: LanguagePreference,
     pub(crate) dns_mode: DnsMode,
     pub(crate) dns_preset: DnsPreset,
     pub(crate) quantum_mode: QuantumMode,
@@ -496,6 +498,7 @@ impl UiPrefsState {
         theme_dark_key: Option<SharedString>,
         theme_light_name: Option<SharedString>,
         theme_dark_name: Option<SharedString>,
+        language_preference: LanguagePreference,
     ) -> Self {
         Self {
             log_auto_follow: true,
@@ -514,6 +517,7 @@ impl UiPrefsState {
             theme_dark_key,
             theme_light_name,
             theme_dark_name,
+            language_preference,
             dns_mode: DnsMode::FollowConfig,
             dns_preset: DnsPreset::CloudflareStandard,
             quantum_mode: QuantumMode::Off,

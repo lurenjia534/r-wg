@@ -9,6 +9,8 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Collapsible, Icon, IconName, StyledExt as _,
 };
 
+use crate::ui::i18n::{tr, Language, LanguagePreference};
+
 use super::super::state::{SidebarItem, WgApp};
 
 const SIDEBAR_EXPANDED_WIDTH: f32 = 256.0;
@@ -24,14 +26,14 @@ enum NavSuffixTone {
 
 #[derive(Clone)]
 enum NavSuffix {
-    Label(&'static str, NavSuffixTone),
+    Label(SharedString, NavSuffixTone),
 }
 
 #[derive(Clone)]
 struct NavEntry {
     key: &'static str,
     item: Option<SidebarItem>,
-    label: &'static str,
+    label: SharedString,
     icon: IconName,
     active: bool,
     disabled: bool,
@@ -41,11 +43,11 @@ struct NavEntry {
 }
 
 impl NavEntry {
-    fn item(item: SidebarItem, active: bool) -> Self {
+    fn item(item: SidebarItem, active: bool, language: Language) -> Self {
         Self {
             key: item.nav_key(),
             item: Some(item),
-            label: item.label(),
+            label: item.label_for(language).into(),
             icon: item.icon(),
             active,
             disabled: false,
@@ -57,7 +59,7 @@ impl NavEntry {
 
     fn group(
         key: &'static str,
-        label: &'static str,
+        label: impl Into<SharedString>,
         icon: IconName,
         children: Vec<Self>,
         default_open: bool,
@@ -66,7 +68,7 @@ impl NavEntry {
         Self {
             key,
             item: None,
-            label,
+            label: label.into(),
             icon,
             active,
             disabled: false,
@@ -76,8 +78,8 @@ impl NavEntry {
         }
     }
 
-    fn suffix(mut self, label: &'static str, tone: NavSuffixTone) -> Self {
-        self.suffix = Some(NavSuffix::Label(label, tone));
+    fn suffix(mut self, label: impl Into<SharedString>, tone: NavSuffixTone) -> Self {
+        self.suffix = Some(NavSuffix::Label(label.into(), tone));
         self
     }
 
@@ -94,6 +96,7 @@ struct LeftPanelCacheKey {
     runtime_running: bool,
     runtime_busy: bool,
     quantum_protected: bool,
+    language_preference: LanguagePreference,
     running_name: Option<String>,
     draft_dirty: bool,
 }
@@ -103,6 +106,7 @@ struct LeftPanelSnapshot {
     sidebar_collapsed: bool,
     runtime_running: bool,
     quantum_protected: bool,
+    language: Language,
     status_text: SharedString,
     primary: Vec<NavEntry>,
     network: Vec<NavEntry>,
@@ -244,14 +248,18 @@ impl RenderOnce for LeftPanelSurface {
                 matches!(self.presentation, LeftPanelPresentation::Overlay),
                 |this| this.w_full().border_r_0(),
             )
-            .child(SidebarGroup::new("Core").child(NavMenu::new(
-                self.app.clone(),
-                self.snapshot.primary.clone(),
-            )))
-            .child(SidebarGroup::new("Network").child(NavMenu::new(
-                self.app.clone(),
-                self.snapshot.network.clone(),
-            )))
+            .child(
+                SidebarGroup::new(tr(self.snapshot.language, "Core")).child(NavMenu::new(
+                    self.app.clone(),
+                    self.snapshot.primary.clone(),
+                )),
+            )
+            .child(
+                SidebarGroup::new(tr(self.snapshot.language, "Network")).child(NavMenu::new(
+                    self.app.clone(),
+                    self.snapshot.network.clone(),
+                )),
+            )
             .footer(footer)
     }
 }
@@ -283,11 +291,12 @@ pub(crate) fn sync_left_panel(
         runtime_running: app.runtime.running,
         runtime_busy: app.runtime.busy,
         quantum_protected: app.runtime.quantum_protected,
+        language_preference: app.ui_prefs.language_preference,
         running_name: app.runtime.running_name.clone(),
         draft_dirty,
     };
     let status_text: SharedString = if app.runtime.busy {
-        "Updating".into()
+        app.t("Updating").into()
     } else if let Some(name) = app.runtime.running_name.as_ref() {
         if app.runtime.quantum_protected {
             format!("{name} - Quantum").into()
@@ -295,20 +304,26 @@ pub(crate) fn sync_left_panel(
             name.clone().into()
         }
     } else {
-        "Ready".into()
+        app.t("Ready").into()
     };
     let active = app.ui_session.sidebar_active;
     let runtime_running = app.runtime.running;
+    let language = app.language();
     let next_snapshot = LeftPanelSnapshot {
         sidebar_collapsed: app.ui_session.sidebar_collapsed,
         runtime_running,
         quantum_protected: app.runtime.quantum_protected,
+        language,
         status_text,
-        primary: primary_nav_entries(active, draft_dirty, runtime_running),
-        network: insight_nav_entries(active),
+        primary: primary_nav_entries(active, draft_dirty, runtime_running, language),
+        network: insight_nav_entries(active, language),
         footer: vec![
-            NavEntry::item(SidebarItem::Advanced, active == SidebarItem::Advanced),
-            NavEntry::item(SidebarItem::About, active == SidebarItem::About),
+            NavEntry::item(
+                SidebarItem::Advanced,
+                active == SidebarItem::Advanced,
+                language,
+            ),
+            NavEntry::item(SidebarItem::About, active == SidebarItem::About, language),
         ],
     };
 
@@ -467,7 +482,7 @@ fn render_sidebar_header(
                                                     div()
                                                         .text_xs()
                                                         .text_color(cx.theme().sidebar_primary)
-                                                        .child("Protected"),
+                                                        .child(tr(snapshot.language, "Protected")),
                                                 )
                                             }),
                                     ),
@@ -483,36 +498,63 @@ fn primary_nav_entries(
     active_item: SidebarItem,
     draft_dirty: bool,
     running: bool,
+    language: Language,
 ) -> Vec<NavEntry> {
     vec![
-        NavEntry::item(SidebarItem::Overview, active_item == SidebarItem::Overview),
-        NavEntry::item(SidebarItem::Configs, active_item == SidebarItem::Configs)
-            .when(draft_dirty, |entry| {
-                entry.suffix("Dirty", NavSuffixTone::Accent)
-            }),
-        NavEntry::item(SidebarItem::Proxies, active_item == SidebarItem::Proxies)
-            .when(running, |entry| entry.suffix("Live", NavSuffixTone::Muted)),
-        NavEntry::item(SidebarItem::Dns, active_item == SidebarItem::Dns),
-        NavEntry::item(SidebarItem::Logs, active_item == SidebarItem::Logs),
+        NavEntry::item(
+            SidebarItem::Overview,
+            active_item == SidebarItem::Overview,
+            language,
+        ),
+        NavEntry::item(
+            SidebarItem::Configs,
+            active_item == SidebarItem::Configs,
+            language,
+        )
+        .when(draft_dirty, |entry| {
+            entry.suffix(tr(language, "Dirty"), NavSuffixTone::Accent)
+        }),
+        NavEntry::item(
+            SidebarItem::Proxies,
+            active_item == SidebarItem::Proxies,
+            language,
+        )
+        .when(running, |entry| {
+            entry.suffix(tr(language, "Live"), NavSuffixTone::Muted)
+        }),
+        NavEntry::item(SidebarItem::Dns, active_item == SidebarItem::Dns, language),
+        NavEntry::item(
+            SidebarItem::Logs,
+            active_item == SidebarItem::Logs,
+            language,
+        ),
     ]
 }
 
-fn insight_nav_entries(active_item: SidebarItem) -> Vec<NavEntry> {
+fn insight_nav_entries(active_item: SidebarItem, language: Language) -> Vec<NavEntry> {
     vec![
-        NavEntry::item(SidebarItem::RouteMap, active_item == SidebarItem::RouteMap),
-        NavEntry::item(SidebarItem::Tools, active_item == SidebarItem::Tools),
+        NavEntry::item(
+            SidebarItem::RouteMap,
+            active_item == SidebarItem::RouteMap,
+            language,
+        ),
+        NavEntry::item(
+            SidebarItem::Tools,
+            active_item == SidebarItem::Tools,
+            language,
+        ),
         NavEntry::group(
             "coming-soon",
-            "Coming Soon",
+            tr(language, "Coming Soon"),
             IconName::Ellipsis,
             vec![
-                NavEntry::item(SidebarItem::Connections, false).disabled(true),
-                NavEntry::item(SidebarItem::Providers, false).disabled(true),
-                NavEntry::item(SidebarItem::Rules, false).disabled(true),
-                NavEntry::item(SidebarItem::TrafficStats, false)
-                    .suffix("Soon", NavSuffixTone::Muted)
+                NavEntry::item(SidebarItem::Connections, false, language).disabled(true),
+                NavEntry::item(SidebarItem::Providers, false, language).disabled(true),
+                NavEntry::item(SidebarItem::Rules, false, language).disabled(true),
+                NavEntry::item(SidebarItem::TrafficStats, false, language)
+                    .suffix(tr(language, "Soon"), NavSuffixTone::Muted)
                     .disabled(true),
-                NavEntry::item(SidebarItem::Topology, false)
+                NavEntry::item(SidebarItem::Topology, false, language)
                     .suffix("Beta", NavSuffixTone::Muted)
                     .disabled(true),
             ],

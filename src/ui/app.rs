@@ -47,6 +47,7 @@ use super::features::{
     session::lifecycle,
     themes::{self, AppearancePolicy},
 };
+use super::i18n::LanguagePreference;
 use super::persistence;
 use super::single_instance::PrimaryInstance;
 use super::state::WgApp;
@@ -69,6 +70,8 @@ struct StartupThemePrefs {
     light_name: Option<SharedString>,
     /// 暗色主题的名称
     dark_name: Option<SharedString>,
+    /// UI 语言偏好
+    language_preference: LanguagePreference,
 }
 
 /// 应用主入口函数
@@ -149,6 +152,7 @@ pub fn run(primary: PrimaryInstance) {
                             startup_theme.dark_key.clone(),
                             startup_theme.light_name.clone(),
                             startup_theme.dark_name.clone(),
+                            startup_theme.language_preference,
                         )
                     });
 
@@ -267,6 +271,7 @@ fn load_startup_theme_prefs(_cx: &App) -> StartupThemePrefs {
                 dark_key: None,
                 light_name: None,
                 dark_name: None,
+                language_preference: LanguagePreference::System,
             };
         }
     };
@@ -309,5 +314,9 @@ fn load_startup_theme_prefs(_cx: &App) -> StartupThemePrefs {
             .as_ref()
             .and_then(|state| state.theme_dark_name.clone())
             .map(Into::into),
+        language_preference: state
+            .as_ref()
+            .and_then(|state| state.language_preference)
+            .unwrap_or_default(),
     }
 }

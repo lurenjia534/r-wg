@@ -28,6 +28,7 @@ use r_wg::backend::wg::{DaitaMode, QuantumMode, WireGuardBackendPreference};
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use crate::ui::features::themes::{self, AppearancePolicy};
+use crate::ui::i18n::{tr, Language, LanguagePreference};
 
 use super::{
     ConfigInspectorTab, ConfigsState, PersistenceState, ProxiesViewMode, RouteFamilyFilter,
@@ -81,6 +82,7 @@ impl WgApp {
         theme_dark_key: Option<SharedString>,
         theme_light_name: Option<SharedString>,
         theme_dark_name: Option<SharedString>,
+        language_preference: LanguagePreference,
     ) -> Self {
         let ui_prefs = UiPrefsState::new(
             appearance_policy,
@@ -89,6 +91,7 @@ impl WgApp {
             theme_dark_key,
             theme_light_name,
             theme_dark_name,
+            language_preference,
         );
         Self {
             tunnel_session,
@@ -103,6 +106,14 @@ impl WgApp {
             ui_prefs,
             ui: UiState::new(),
         }
+    }
+
+    pub(crate) fn language(&self) -> Language {
+        self.ui_prefs.language_preference.resolve()
+    }
+
+    pub(crate) fn t(&self, key: &'static str) -> &'static str {
+        tr(self.language(), key)
     }
 
     pub(crate) fn current_configs_inspector_tab(
@@ -276,6 +287,19 @@ impl WgApp {
         if self.ui_prefs.log_auto_follow != value {
             self.ui_prefs.log_auto_follow = value;
             self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_language_preference(
+        &mut self,
+        value: LanguagePreference,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.language_preference != value {
+            self.ui_prefs.language_preference = value;
+            self.persist_state_async(cx);
+            cx.refresh_windows();
         }
         cx.notify();
     }

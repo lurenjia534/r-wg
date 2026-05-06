@@ -8,6 +8,7 @@ use r_wg::backend::wg::{DaitaMode, QuantumMode, WireGuardBackendPreference};
 use r_wg::dns::{DnsMode, DnsPreset};
 
 use super::super::features::themes::{self, AppearancePolicy};
+use super::super::i18n::LanguagePreference;
 use super::super::persistence::{
     self, PersistedConfig, PersistedConfigTrafficDayBucket, PersistedConfigTrafficHourBucket,
     PersistedSource, PersistedState, PersistedTrafficDayBucket, PersistedTrafficHourBucket,
@@ -237,6 +238,7 @@ impl<'a> PersistedStateSnapshot<'a> {
                 .theme_dark_name
                 .as_ref()
                 .map(ToString::to_string),
+            language_preference: Some(self.ui_prefs.language_preference),
             log_auto_follow: Some(self.ui_prefs.log_auto_follow),
             require_connect_password: Some(self.ui_prefs.require_connect_password),
             kill_switch_enabled: Some(self.ui_prefs.kill_switch_enabled),
@@ -322,6 +324,7 @@ struct PersistedStateRestore {
     theme_dark_key: Option<SharedString>,
     theme_light_name: Option<SharedString>,
     theme_dark_name: Option<SharedString>,
+    language_preference: Option<LanguagePreference>,
     log_auto_follow: Option<bool>,
     require_connect_password: Option<bool>,
     kill_switch_enabled: Option<bool>,
@@ -427,6 +430,7 @@ impl PersistedStateRestore {
             theme_dark_key: Some(dark.entry.key.clone()),
             theme_light_name: Some(light.entry.name.clone()),
             theme_dark_name: Some(dark.entry.name.clone()),
+            language_preference: state.language_preference,
             log_auto_follow: state.log_auto_follow,
             require_connect_password: state.require_connect_password,
             kill_switch_enabled: state.kill_switch_enabled,
@@ -484,6 +488,9 @@ impl PersistedStateRestore {
         }
         if let Some(theme_dark_name) = self.theme_dark_name {
             ui_prefs.theme_dark_name = Some(theme_dark_name);
+        }
+        if let Some(language_preference) = self.language_preference {
+            ui_prefs.language_preference = language_preference;
         }
         if let Some(log_auto_follow) = self.log_auto_follow {
             ui_prefs.log_auto_follow = log_auto_follow;

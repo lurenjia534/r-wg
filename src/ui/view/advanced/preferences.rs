@@ -14,6 +14,7 @@ use gpui_component::{
 use r_wg::backend::wg::{DaitaMode, QuantumMode, WireGuardBackendPreference};
 
 use crate::ui::features::session::password_gate;
+use crate::ui::i18n::{tr, Language, LanguagePreference};
 use crate::ui::state::{ConfigInspectorTab, DaitaResourcesHealth, TrafficPeriod, WgApp};
 
 use super::system::{
@@ -22,12 +23,69 @@ use super::system::{
 
 // Log, DNS mode, traffic range, and inspector default controls.
 
-pub(super) fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn language_item(app: Entity<WgApp>, language: Language) -> SettingItem {
+    SettingItem::new(
+        tr(language, "Language"),
+        SettingField::render(move |_, _window, cx| {
+            let current = app.read(cx).ui_prefs.language_preference;
+            let system_handle = app.clone();
+            let english_handle = app.clone();
+            let chinese_handle = app.clone();
+            let language = app.read(cx).language();
+
+            div().child(
+                ButtonGroup::new("advanced-language")
+                    .outline()
+                    .small()
+                    .compact()
+                    .child(
+                        Button::new("advanced-language-system")
+                            .label(tr(language, "System"))
+                            .selected(current == LanguagePreference::System)
+                            .on_click(move |_, _, cx| {
+                                system_handle.update(cx, |app, cx| {
+                                    app.set_language_preference(LanguagePreference::System, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new("advanced-language-english")
+                            .label(tr(language, "English"))
+                            .selected(current == LanguagePreference::English)
+                            .on_click(move |_, _, cx| {
+                                english_handle.update(cx, |app, cx| {
+                                    app.set_language_preference(LanguagePreference::English, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new("advanced-language-zh-cn")
+                            .label(tr(language, "Simplified Chinese"))
+                            .selected(current == LanguagePreference::ChineseSimplified)
+                            .on_click(move |_, _, cx| {
+                                chinese_handle.update(cx, |app, cx| {
+                                    app.set_language_preference(
+                                        LanguagePreference::ChineseSimplified,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    ),
+            )
+        }),
+    )
+    .description(tr(
+        language,
+        "Set the UI language. System follows your OS locale when it is available.",
+    ))
+}
+
+pub(super) fn log_auto_follow_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     let get_handle = app.clone();
     let set_handle = app;
 
     SettingItem::new(
-        "Auto Follow Logs",
+        tr(language, "Auto Follow Logs"),
         SettingField::switch(
             move |cx| get_handle.read(cx).ui_prefs.log_auto_follow,
             move |value, cx| {
@@ -37,10 +95,13 @@ pub(super) fn log_auto_follow_item(app: Entity<WgApp>) -> SettingItem {
             },
         ),
     )
-    .description("Keep the log pane pinned to the latest runtime events.")
+    .description(tr(
+        language,
+        "Keep the log pane pinned to the latest runtime events.",
+    ))
 }
 
-pub(super) fn connect_password_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn connect_password_item(app: Entity<WgApp>, _language: Language) -> SettingItem {
     SettingItem::new(
         "Connect Password",
         SettingField::render(move |_, _window, cx| {
@@ -116,10 +177,11 @@ pub(super) fn connect_password_item(app: Entity<WgApp>) -> SettingItem {
     .description("Require a local password before starting a WireGuard tunnel.")
 }
 
-pub(super) fn kill_switch_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn kill_switch_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     SettingItem::new(
         "Kill Switch",
         SettingField::render(move |_, _window, cx| {
+            let language = app.read(cx).language();
             let enabled = app.read(cx).ui_prefs.kill_switch_enabled;
             let enable_handle = app.clone();
             let disable_dialog_handle = app.clone();
@@ -129,7 +191,10 @@ pub(super) fn kill_switch_item(app: Entity<WgApp>) -> SettingItem {
                 .gap_2()
                 .child(
                     Switch::new("advanced-kill-switch")
-                        .label("Block traffic outside the tunnel during protected sessions")
+                        .label(tr(
+                            language,
+                            "Block traffic outside the tunnel during protected sessions",
+                        ))
                         .checked(enabled)
                         .with_size(Size::Small)
                         .on_click(move |checked, window, cx| {
@@ -166,17 +231,20 @@ pub(super) fn kill_switch_item(app: Entity<WgApp>) -> SettingItem {
     )
     .layout(Axis::Vertical)
     .description(
-        "Enabled by default. Full-tunnel sessions keep extra platform guardrails active to reduce leak risk.",
+        tr(
+            language,
+            "Enabled by default. Full-tunnel sessions keep extra platform guardrails active to reduce leak risk.",
+        ),
     )
 }
 
-pub(super) fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn dns_mode_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     let options = dns_mode_options();
     let get_handle = app.clone();
     let set_handle = app;
 
     SettingItem::new(
-        "DNS Mode",
+        tr(language, "DNS Mode"),
         SettingField::dropdown(
             options,
             move |cx| dns_mode_value(get_handle.read(cx).ui_prefs.dns_mode),
@@ -188,7 +256,10 @@ pub(super) fn dns_mode_item(app: Entity<WgApp>) -> SettingItem {
             },
         ),
     )
-    .description("Choose whether config DNS, system DNS, or presets take precedence.")
+    .description(tr(
+        language,
+        "Choose whether config DNS, system DNS, or presets take precedence.",
+    ))
 }
 
 fn open_kill_switch_disable_dialog(
@@ -229,9 +300,9 @@ fn open_kill_switch_disable_dialog(
     });
 }
 
-pub(super) fn dns_preset_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn dns_preset_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     SettingItem::new(
-        "DNS Preset",
+        tr(language, "DNS Preset"),
         SettingField::render(move |_, _window, cx| render_dns_preset_field(app.clone(), cx)),
     )
     .description("Only used when DNS mode fills or overrides resolver records.")
@@ -562,11 +633,12 @@ pub(super) fn daita_resources_item(app: Entity<WgApp>) -> SettingItem {
     .description("Download or refresh the Mullvad relay inventory required for DAITA startup validation.")
 }
 
-pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn traffic_period_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     SettingItem::new(
-        "Preferred Traffic Range",
+        tr(language, "Preferred Traffic Range"),
         SettingField::render(move |_, _window, cx| {
             let current = app.read(cx).ui_prefs.preferred_traffic_period;
+            let language = app.read(cx).language();
             let today_handle = app.clone();
             let month_handle = app.clone();
             let last_month_handle = app.clone();
@@ -578,7 +650,7 @@ pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
                     .compact()
                     .child(
                         Button::new("advanced-traffic-today")
-                            .label("Today")
+                            .label(tr(language, "Today"))
                             .selected(current == TrafficPeriod::Today)
                             .on_click(move |_, _, cx| {
                                 today_handle.update(cx, |app, cx| {
@@ -588,7 +660,7 @@ pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
                     )
                     .child(
                         Button::new("advanced-traffic-this-month")
-                            .label("This Month")
+                            .label(tr(language, "This Month"))
                             .selected(current == TrafficPeriod::ThisMonth)
                             .on_click(move |_, _, cx| {
                                 month_handle.update(cx, |app, cx| {
@@ -598,7 +670,7 @@ pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
                     )
                     .child(
                         Button::new("advanced-traffic-last-month")
-                            .label("Last Month")
+                            .label(tr(language, "Last Month"))
                             .selected(current == TrafficPeriod::LastMonth)
                             .on_click(move |_, _, cx| {
                                 last_month_handle.update(cx, |app, cx| {
@@ -612,11 +684,12 @@ pub(super) fn traffic_period_item(app: Entity<WgApp>) -> SettingItem {
     .description("Applies now and stays remembered for future sessions.")
 }
 
-pub(super) fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn inspector_tab_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     SettingItem::new(
-        "Inspector View",
+        tr(language, "Inspector View"),
         SettingField::render(move |_, _window, cx| {
             let current = app.read(cx).ui_prefs.preferred_inspector_tab;
+            let language = app.read(cx).language();
             let preview_handle = app.clone();
             let diagnostics_handle = app.clone();
             let activity_handle = app.clone();
@@ -628,7 +701,7 @@ pub(super) fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
                     .compact()
                     .child(
                         Button::new("advanced-inspector-preview")
-                            .label("Preview")
+                            .label(tr(language, "Preview"))
                             .selected(current == ConfigInspectorTab::Preview)
                             .on_click(move |_, _, cx| {
                                 preview_handle.update(cx, |app, cx| {
@@ -641,7 +714,7 @@ pub(super) fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
                     )
                     .child(
                         Button::new("advanced-inspector-diagnostics")
-                            .label("Diagnostics")
+                            .label(tr(language, "Diagnostics"))
                             .selected(current == ConfigInspectorTab::Diagnostics)
                             .on_click(move |_, _, cx| {
                                 diagnostics_handle.update(cx, |app, cx| {
@@ -654,7 +727,7 @@ pub(super) fn inspector_tab_item(app: Entity<WgApp>) -> SettingItem {
                     )
                     .child(
                         Button::new("advanced-inspector-activity")
-                            .label("Activity")
+                            .label(tr(language, "Activity"))
                             .selected(current == ConfigInspectorTab::Activity)
                             .on_click(move |_, _, cx| {
                                 activity_handle.update(cx, |app, cx| {

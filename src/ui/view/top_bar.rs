@@ -32,7 +32,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                 .and_then(|id| app.configs.get_by_id(id))
                 .map(|config| config.name.as_str())
         })
-        .unwrap_or("No tunnel");
+        .unwrap_or(app.t("No tunnel"));
     let focus_name: SharedString = focus_name.to_string().into();
 
     let theme_toggle = ButtonGroup::new("theme-group")
@@ -41,9 +41,9 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .small()
         .child(
             Button::new("theme-system")
-                .label("Auto")
+                .label(app.t("Auto"))
                 .selected(appearance_policy == AppearancePolicy::System)
-                .tooltip("Follow system appearance")
+                .tooltip(app.t("Follow System"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.set_appearance_policy_pref(AppearancePolicy::System, Some(window), cx);
                 })),
@@ -52,7 +52,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
             Button::new("theme-light")
                 .icon(Icon::new(IconName::Sun).size_4())
                 .selected(appearance_policy == AppearancePolicy::Light)
-                .tooltip("Switch to light mode")
+                .tooltip(app.t("Switch to light mode"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.set_appearance_policy_pref(AppearancePolicy::Light, Some(window), cx);
                 })),
@@ -61,7 +61,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
             Button::new("theme-dark")
                 .icon(Icon::new(IconName::Moon).size_4())
                 .selected(appearance_policy == AppearancePolicy::Dark)
-                .tooltip("Switch to dark mode")
+                .tooltip(app.t("Switch to dark mode"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.set_appearance_policy_pref(AppearancePolicy::Dark, Some(window), cx);
                 })),
@@ -92,7 +92,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
         .ghost()
         .small()
         .icon(Icon::new(IconName::Settings).size_5())
-        .tooltip("Open preferences")
+        .tooltip(app.t("Open preferences"))
         .on_click(cx.listener(|this, _, window, cx| {
             this.command_open_sidebar_item(SidebarItem::Advanced, window, cx);
         }));
@@ -115,7 +115,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
                                 .text_xs()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Tunnel"),
+                                .child(app.t("Tunnel")),
                         )
                         .child(
                             div()
@@ -143,7 +143,7 @@ pub(crate) fn render_top_bar(app: &mut WgApp, data: &ViewData, cx: &mut Context<
 fn render_status_chip(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
     let (label, bg, border, dot, text) = if app.runtime.busy {
         (
-            "Updating",
+            app.t("Updating"),
             cx.theme().warning.alpha(0.16),
             cx.theme().warning.alpha(0.28),
             cx.theme().warning,
@@ -151,7 +151,7 @@ fn render_status_chip(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
         )
     } else if app.runtime.running {
         (
-            "Connected",
+            app.t("Connected"),
             cx.theme().success.alpha(0.16),
             cx.theme().success.alpha(0.28),
             cx.theme().success,
@@ -159,7 +159,7 @@ fn render_status_chip(app: &WgApp, cx: &mut Context<WgApp>) -> Div {
         )
     } else {
         (
-            "Idle",
+            app.t("Idle"),
             cx.theme()
                 .background
                 .alpha(if cx.theme().is_dark() { 0.44 } else { 0.86 }),

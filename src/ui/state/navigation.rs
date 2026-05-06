@@ -1,6 +1,8 @@
 use gpui_component::IconName;
 use serde::{Deserialize, Serialize};
 
+use crate::ui::i18n::{tr, Language};
+
 // Shared UI enums for inspector, navigation, and route-map filters.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,22 +94,22 @@ impl SidebarItem {
         }
     }
 
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) fn label_for(self, language: Language) -> &'static str {
         match self {
-            Self::Overview => "Overview",
-            Self::TrafficStats => "Traffic Stats",
-            Self::Connections => "Connections",
-            Self::Logs => "Logs",
-            Self::Proxies => "Proxies",
-            Self::Rules => "Rules",
-            Self::Dns => "DNS",
-            Self::Providers => "Providers",
-            Self::Configs => "Configs",
-            Self::Advanced => "Preferences",
-            Self::Topology => "Topology",
-            Self::RouteMap => "Route Map",
-            Self::Tools => "Tools",
-            Self::About => "About",
+            Self::Overview => tr(language, "Overview"),
+            Self::TrafficStats => tr(language, "Traffic Stats"),
+            Self::Connections => tr(language, "Connections"),
+            Self::Logs => tr(language, "Logs"),
+            Self::Proxies => tr(language, "Proxies"),
+            Self::Rules => tr(language, "Rules"),
+            Self::Dns => tr(language, "DNS"),
+            Self::Providers => tr(language, "Providers"),
+            Self::Configs => tr(language, "Configs"),
+            Self::Advanced => tr(language, "Preferences"),
+            Self::Topology => tr(language, "Topology"),
+            Self::RouteMap => tr(language, "Route Map"),
+            Self::Tools => tr(language, "Tools"),
+            Self::About => tr(language, "About"),
         }
     }
 

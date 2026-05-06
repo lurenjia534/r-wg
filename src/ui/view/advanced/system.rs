@@ -15,14 +15,15 @@ use gpui_component::{h_flex, v_flex, ActiveTheme as _, Disableable as _, Sizable
 use r_wg::backend::wg::PrivilegedServiceAction;
 use r_wg::dns::{DnsMode, DnsPreset};
 
+use crate::ui::i18n::{tr, Language};
 use crate::ui::state::{BackendDiagnostic, BackendHealth, SidebarItem, WgApp};
 use crate::ui::view::widgets::backend_status_tag;
 
 // DNS preset field and privileged backend diagnostics/recovery UI.
 
-pub(super) fn privileged_backend_item(app: Entity<WgApp>) -> SettingItem {
+pub(super) fn privileged_backend_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     SettingItem::new(
-        "Service Status",
+        tr(language, "Service Status"),
         SettingField::render(move |_, window, cx| {
             render_privileged_backend_panel(app.clone(), window, cx)
         }),

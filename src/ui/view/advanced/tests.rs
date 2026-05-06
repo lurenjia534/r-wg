@@ -32,6 +32,7 @@ fn make_app() -> WgApp {
         None,
         None,
         None,
+        Default::default(),
     )
 }
 

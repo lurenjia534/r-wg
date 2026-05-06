@@ -117,7 +117,7 @@
 - `install_keybindings(cx)` 在应用启动时注册
 - 根视图在 `src/ui/view/mod.rs` 统一挂 `on_action(...)`
 - `Configs` 页补上了 `key_context("Configs")`
-- 顶栏按钮、左侧导航、configs/proxies 的相关按钮都开始 dispatch typed action
+- 键盘命令链路已经接通；顶部和侧边栏按钮暂时保留 direct handler
 
 这意味着当前已经不是“只有按钮回调，没有命令层”，而是有了一条实际工作的：
 
