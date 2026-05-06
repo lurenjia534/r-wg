@@ -56,6 +56,8 @@ pub(crate) fn render_about(app: &mut WgApp, window: &mut Window, cx: &mut Contex
     let side_column = v_flex()
         .gap_3()
         .w(px(336.0))
+        .flex_shrink_0()
+        .min_w(px(0.0))
         .child(render_system_card(app, &theme_text, cx));
 
     let body = if two_column_layout {
@@ -538,55 +540,71 @@ fn render_whats_new(
     cx: &mut Context<WgApp>,
 ) -> impl IntoElement {
     let latest_header = format!("What's new in v{latest_version}");
+    let release_notes = v_flex()
+        .min_w(px(0.0))
+        .gap_3()
+        .child(
+            h_flex()
+                .w_full()
+                .min_w(px(0.0))
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .gap_1()
+                        .child(div().text_sm().font_semibold().child(latest_header))
+                        .child(
+                            div()
+                                .min_w(px(0.0))
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(
+                                    "Recent release notes keep About closer to a living desktop release panel than a static info sheet.",
+                                ),
+                        ),
+                )
+                .child(
+                    Tag::secondary()
+                        .flex_shrink_0()
+                        .small()
+                        .rounded_full()
+                        .child("CHANGELOG.md"),
+                ),
+        )
+        .children(latest_changes.iter().map(|item| {
+            let item = sanitize_release_note(item);
+            h_flex()
+                .w_full()
+                .min_w(px(0.0))
+                .items_start()
+                .gap_3()
+                .child(
+                    div()
+                        .mt(px(5.0))
+                        .size(px(8.0))
+                        .flex_shrink_0()
+                        .rounded_full()
+                        .bg(cx.theme().accent.alpha(0.9)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_sm()
+                        .text_color(cx.theme().foreground)
+                        .child(item),
+                )
+        }));
 
-    GroupBox::new().fill().title("Release Notes").child(
-        v_flex()
-            .gap_3()
-            .child(
-                h_flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(div().text_sm().font_semibold().child(latest_header))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(
-                                        "Recent release notes keep About closer to a living desktop release panel than a static info sheet.",
-                                    ),
-                            ),
-                    )
-                    .child(
-                        Tag::secondary()
-                            .small()
-                            .rounded_full()
-                            .child("CHANGELOG.md"),
-                    ),
-            )
-            .children(latest_changes.iter().map(|item| {
-                let item = sanitize_release_note(item);
-                h_flex()
-                    .items_start()
-                    .gap_3()
-                    .child(
-                        div()
-                            .mt(px(5.0))
-                            .size(px(8.0))
-                            .rounded_full()
-                            .bg(cx.theme().accent.alpha(0.9)),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().foreground)
-                            .child(item),
-                    )
-            })),
-    )
+    GroupBox::new()
+        .fill()
+        .min_w(px(0.0))
+        .content_style(StyleRefinement::default().min_w(px(0.0)))
+        .title("Release Notes")
+        .child(release_notes)
 }
 
 fn render_system_card(app: &WgApp, theme_text: &str, cx: &mut Context<WgApp>) -> impl IntoElement {
