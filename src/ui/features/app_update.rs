@@ -85,6 +85,33 @@ pub(crate) fn check_for_updates_on_startup(window_handle: AnyWindowHandle, cx: &
     .detach();
 }
 
+pub(crate) fn check_for_updates_interactively(window_handle: AnyWindowHandle, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let result = cx
+            .background_spawn(async move { latest_update_blocking(CURRENT_VERSION) })
+            .await;
+
+        let _ = window_handle.update(cx, move |_root, window, cx| match result {
+            Ok(Some(update)) => open_update_dialog(update, window, cx),
+            Ok(None) => open_update_status_dialog(
+                "You're up to date",
+                format!("r-wg v{CURRENT_VERSION} is the latest available release."),
+                None,
+                window,
+                cx,
+            ),
+            Err(err) => open_update_status_dialog(
+                "Update check failed",
+                "Could not reach the GitHub latest-release endpoint.".to_string(),
+                Some(err.to_string()),
+                window,
+                cx,
+            ),
+        });
+    })
+    .detach();
+}
+
 fn latest_update_blocking(current_version: &str) -> Result<Option<UpdateInfo>, UpdateCheckError> {
     let runtime = Builder::new_current_thread()
         .enable_io()
@@ -203,6 +230,30 @@ fn open_update_dialog(update: UpdateInfo, window: &mut gpui::Window, cx: &mut Ap
                     later_button.into_any_element(),
                     open_button.into_any_element(),
                 ]
+            })
+    });
+}
+
+fn open_update_status_dialog(
+    title: &'static str,
+    body: String,
+    detail: Option<String>,
+    window: &mut gpui::Window,
+    cx: &mut App,
+) {
+    window.open_dialog(cx, move |dialog, _window, dlg_cx| {
+        dialog
+            .title(div().text_lg().child(title))
+            .alert()
+            .button_props(DialogButtonProps::default().ok_text("OK"))
+            .child(div().text_sm().child(body.clone()))
+            .when_some(detail.clone(), |dialog, detail| {
+                dialog.child(
+                    div()
+                        .text_xs()
+                        .text_color(dlg_cx.theme().muted_foreground)
+                        .child(detail),
+                )
             })
     });
 }

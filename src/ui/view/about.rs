@@ -11,7 +11,7 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
 };
 
-use super::super::features::themes::AppearancePolicy;
+use super::super::features::{app_update, themes::AppearancePolicy};
 use super::super::state::WgApp;
 use super::widgets::backend_status_badge;
 
@@ -281,7 +281,21 @@ fn render_about_hero(
                                                     "Copy Build Info",
                                                     copy_build_text,
                                                     cx,
-                                                )),
+                                                ))
+                                                .child(
+                                                    Button::new("about-check-updates")
+                                                        .icon(Icon::new(IconName::Redo2).size_3())
+                                                        .label("Check for Updates")
+                                                        .outline()
+                                                        .small()
+                                                        .compact()
+                                                        .on_click(|_, window, cx| {
+                                                            app_update::check_for_updates_interactively(
+                                                                window.window_handle(),
+                                                                cx,
+                                                            );
+                                                        }),
+                                                ),
                                         ),
                                 ),
                         ),
