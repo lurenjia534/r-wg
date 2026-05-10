@@ -203,7 +203,7 @@ fn render_configs_page(
             .flex_col()
             .flex_1()
             .min_h(px(0.0))
-            .child(render_configs_shell_header(data, cx))
+            .child(render_configs_shell_header(app_handle, data, cx))
             .child(page)
     } else {
         page

@@ -2,6 +2,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{h_flex, tag::Tag, v_flex, ActiveTheme as _, IconName, Sizable as _};
 
+use crate::ui::i18n::{tr, Language};
 use crate::ui::state::WgApp;
 
 use super::chart::{build_sparkline_points, sparkline_chart};
@@ -12,30 +13,37 @@ use super::common::{
 use super::traffic::traffic_column;
 use super::view_model::OverviewData;
 
-pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> Div {
+pub(crate) fn running_status_card<T>(
+    overview: &OverviewData,
+    language: Language,
+    cx: &mut Context<T>,
+) -> Div {
     let runtime = &overview.runtime;
     let running_name = if runtime.is_running {
         runtime.running_name_text.as_str()
     } else {
-        "Tunnel idle"
+        tr(language, "Tunnel idle")
     };
     let running_name: SharedString = running_name.to_string().into();
     let status_tag = if runtime.is_running {
-        Tag::success().rounded_full().small().child("Connected")
+        Tag::success()
+            .rounded_full()
+            .small()
+            .child(tr(language, "Connected"))
     } else {
         Tag::secondary()
             .outline()
             .rounded_full()
             .small()
-            .child("Idle")
+            .child(tr(language, "Idle"))
     };
 
     overview_section(
         OverviewSectionTone::Primary,
         section_title(
             IconName::PanelBottom,
-            "Runtime Health",
-            Some("Live session metrics and transport state"),
+            tr(language, "Runtime Health"),
+            Some(tr(language, "Live session metrics and transport state")),
             OverviewSectionTone::Primary,
             cx,
         ),
@@ -61,7 +69,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                                             Tag::secondary()
                                                 .rounded_full()
                                                 .small()
-                                                .child("Quantum protected"),
+                                                .child(tr(language, "Quantum protected")),
                                         )
                                     })
                                     .when(runtime.is_running && runtime.daita_active, |this| {
@@ -80,7 +88,11 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                                 div()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(format!("Last updated {}", runtime.last_updated_text)),
+                                    .child(format!(
+                                        "{} {}",
+                                        tr(language, "Last updated"),
+                                        runtime.last_updated_text
+                                    )),
                             ),
                     )
                     .child(
@@ -91,7 +103,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                             .child(
                                 metric_cell(
                                     IconName::LoaderCircle,
-                                    "Uptime",
+                                    tr(language, "Uptime"),
                                     &runtime.uptime_text,
                                     cx.theme().muted_foreground,
                                     false,
@@ -102,7 +114,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                             .child(
                                 status_item(
                                     IconName::CircleUser,
-                                    "Peers",
+                                    tr(language, "Peers"),
                                     &runtime.peer_count_text,
                                     cx.theme().muted_foreground,
                                     false,
@@ -113,7 +125,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                             .child(
                                 status_item(
                                     IconName::ExternalLink,
-                                    "Handshake",
+                                    tr(language, "Handshake"),
                                     &runtime.handshake_text,
                                     cx.theme().muted_foreground,
                                     false,
@@ -146,7 +158,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                 [
                     status_item(
                         IconName::PanelBottom,
-                        "Running Tunnel",
+                        tr(language, "Running Tunnel"),
                         &runtime.running_name_text,
                         cx.theme().muted_foreground,
                         false,
@@ -162,7 +174,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                     ),
                     status_item(
                         IconName::LayoutDashboard,
-                        "Memory",
+                        tr(language, "Memory"),
                         &runtime.memory_text,
                         cx.theme().muted_foreground,
                         false,
@@ -182,7 +194,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                                     .text_xs()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("DAITA overhead"),
+                                    .child(tr(language, "DAITA overhead")),
                             )
                             .child(
                                 div()
@@ -191,7 +203,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                                     .gap_3()
                                     .child(metric_cell(
                                         IconName::ArrowUp,
-                                        "TX Padding",
+                                        tr(language, "TX Padding"),
                                         &runtime.daita_tx_padding_text,
                                         cx.theme().chart_1,
                                         false,
@@ -199,7 +211,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                                     ))
                                     .child(metric_cell(
                                         IconName::ArrowUp,
-                                        "TX Decoy",
+                                        tr(language, "TX Decoy"),
                                         &runtime.daita_tx_decoy_text,
                                         cx.theme().warning,
                                         false,
@@ -207,7 +219,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                                     ))
                                     .child(metric_cell(
                                         IconName::ArrowDown,
-                                        "RX Padding",
+                                        tr(language, "RX Padding"),
                                         &runtime.daita_rx_padding_text,
                                         cx.theme().chart_2,
                                         false,
@@ -215,7 +227,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
                                     ))
                                     .child(metric_cell(
                                         IconName::ArrowDown,
-                                        "RX Decoy",
+                                        tr(language, "RX Decoy"),
                                         &runtime.daita_rx_decoy_text,
                                         cx.theme().success,
                                         false,
@@ -232,6 +244,7 @@ pub(crate) fn running_status_card<T>(overview: &OverviewData, cx: &mut Context<T
 pub(crate) fn network_status_card<T>(
     app_handle: &Entity<WgApp>,
     overview: &OverviewData,
+    language: Language,
     cx: &mut Context<T>,
 ) -> Div {
     let preview = &overview.preview;
@@ -241,20 +254,23 @@ pub(crate) fn network_status_card<T>(
             .outline()
             .rounded_full()
             .small()
-            .child("Selected preview")
+            .child(tr(language, "Selected preview"))
     } else {
         Tag::secondary()
             .rounded_full()
             .small()
-            .child("No selection")
+            .child(tr(language, "No selection"))
     };
 
     overview_section(
         OverviewSectionTone::Secondary,
         section_title(
             IconName::Globe,
-            "Selected Config Preview",
-            Some("Saved config values shown as a stable reference"),
+            tr(language, "Selected Config Preview"),
+            Some(tr(
+                language,
+                "Saved config values shown as a stable reference",
+            )),
             OverviewSectionTone::Secondary,
             cx,
         ),
@@ -287,7 +303,7 @@ pub(crate) fn network_status_card<T>(
                     .child(
                         status_item(
                             IconName::FolderOpen,
-                            "Source",
+                            tr(language, "Source"),
                             &preview.source_text,
                             cx.theme().muted_foreground,
                             false,
@@ -302,7 +318,7 @@ pub(crate) fn network_status_card<T>(
                         app_handle,
                         "overview-copy-local-ip",
                         IconName::ArrowUp,
-                        "Local IP",
+                        tr(language, "Local IP"),
                         &preview.local_ip_text,
                         cx.theme().muted_foreground,
                         true,
@@ -322,7 +338,7 @@ pub(crate) fn network_status_card<T>(
                         app_handle,
                         "overview-copy-endpoint",
                         IconName::Globe,
-                        "Endpoint",
+                        tr(language, "Endpoint"),
                         &preview.endpoint_text,
                         cx.theme().muted_foreground,
                         true,
@@ -332,7 +348,7 @@ pub(crate) fn network_status_card<T>(
                 [
                     status_item(
                         IconName::PanelBottom,
-                        "Selected",
+                        tr(language, "Selected"),
                         &preview.selected_name_text,
                         cx.theme().muted_foreground,
                         false,
@@ -340,7 +356,7 @@ pub(crate) fn network_status_card<T>(
                     ),
                     status_item(
                         IconName::Map,
-                        "Route Table",
+                        tr(language, "Route Table"),
                         &preview.route_table_text,
                         cx.theme().muted_foreground,
                         true,
@@ -348,7 +364,7 @@ pub(crate) fn network_status_card<T>(
                     ),
                     status_item(
                         IconName::SortAscending,
-                        "Allowed IPs",
+                        tr(language, "Allowed IPs"),
                         &preview.allowed_text,
                         cx.theme().muted_foreground,
                         true,
@@ -361,7 +377,11 @@ pub(crate) fn network_status_card<T>(
     )
 }
 
-pub(crate) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>) -> Div {
+pub(crate) fn traffic_stats_card<T>(
+    overview: &OverviewData,
+    language: Language,
+    cx: &mut Context<T>,
+) -> Div {
     let runtime = &overview.runtime;
     let upload_sparkline = sparkline_chart(
         build_sparkline_points(&runtime.upload_series),
@@ -376,8 +396,8 @@ pub(crate) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>
         OverviewSectionTone::Primary,
         section_title(
             IconName::ChartPie,
-            "Traffic Stats",
-            Some("Current throughput and accumulated transfer"),
+            tr(language, "Traffic Stats"),
+            Some(tr(language, "Current throughput and accumulated transfer")),
             OverviewSectionTone::Primary,
             cx,
         ),
@@ -389,8 +409,8 @@ pub(crate) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>
                 traffic_column(
                     super::traffic::TrafficColumnProps {
                         icon: IconName::ArrowUp,
-                        label: "Upload Speed",
-                        footer_label: "Upload",
+                        label: tr(language, "Upload Speed"),
+                        footer_label: tr(language, "Upload"),
                         speed: &runtime.upload_speed_text,
                         total: &runtime.upload_total_text,
                         color: cx.theme().chart_1,
@@ -406,8 +426,8 @@ pub(crate) fn traffic_stats_card<T>(overview: &OverviewData, cx: &mut Context<T>
                 traffic_column(
                     super::traffic::TrafficColumnProps {
                         icon: IconName::ArrowDown,
-                        label: "Download Speed",
-                        footer_label: "Download",
+                        label: tr(language, "Download Speed"),
+                        footer_label: tr(language, "Download"),
                         speed: &runtime.download_speed_text,
                         total: &runtime.download_total_text,
                         color: cx.theme().chart_2,

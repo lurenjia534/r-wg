@@ -20,6 +20,7 @@ use gpui_component::{
     v_flex, ActiveTheme as _, Sizable as _,
 };
 
+use crate::ui::i18n::{tr, Language};
 use crate::ui::state::WgApp;
 
 use super::{
@@ -161,6 +162,7 @@ fn render_overview_snapshot<T>(
     window: &mut Window,
     cx: &mut Context<T>,
 ) -> Div {
+    let language = app.read(cx).language();
     let compact = window.viewport_size().width < px(OVERVIEW_COMPACT_BREAKPOINT);
     let stacked = window.viewport_size().width < px(OVERVIEW_STACK_BREAKPOINT);
     let runtime = &overview.runtime;
@@ -169,19 +171,22 @@ fn render_overview_snapshot<T>(
         .items_center()
         .flex_wrap()
         .gap_2()
-        .child(
-            Tag::secondary()
-                .xsmall()
-                .rounded_full()
-                .child(format!("Updated {}", runtime.last_updated_text)),
-        )
+        .child(Tag::secondary().xsmall().rounded_full().child(format!(
+            "{} {}",
+            tr(language, "Updated"),
+            runtime.last_updated_text
+        )))
         .when(preview.has_selection, |this| {
             this.child(
                 Tag::secondary()
                     .outline()
                     .xsmall()
                     .rounded_full()
-                    .child(format!("Selected {}", preview.selected_name_text)),
+                    .child(format!(
+                        "{} {}",
+                        tr(language, "Selected"),
+                        preview.selected_name_text
+                    )),
             )
         });
 
@@ -190,7 +195,7 @@ fn render_overview_snapshot<T>(
         .flex_col()
         .flex_1()
         .min_h(px(0.0))
-        .child(render_overview_header(header_actions, cx))
+        .child(render_overview_header(header_actions, language, cx))
         .child(
             div()
                 .flex()
@@ -213,12 +218,12 @@ fn render_overview_snapshot<T>(
                                 .flex_wrap()
                                 .when(stacked, |this| this.flex_col())
                                 .child(
-                                    running_status_card(overview, cx)
+                                    running_status_card(overview, language, cx)
                                         .min_w(px(if stacked { 320.0 } else { 520.0 }))
                                         .flex_1(),
                                 )
                                 .child(
-                                    network_status_card(app, overview, cx)
+                                    network_status_card(app, overview, language, cx)
                                         .min_w(px(if stacked { 320.0 } else { 380.0 }))
                                         .flex_1(),
                                 ),
@@ -230,7 +235,7 @@ fn render_overview_snapshot<T>(
                                 .flex_wrap()
                                 .when(stacked, |this| this.flex_col())
                                 .child(
-                                    traffic_stats_card(overview, cx)
+                                    traffic_stats_card(overview, language, cx)
                                         .min_w(px(if compact { 320.0 } else { 420.0 }))
                                         .flex_1(),
                                 )
@@ -245,7 +250,7 @@ fn render_overview_snapshot<T>(
         )
 }
 
-fn render_overview_header<T>(actions: Div, cx: &mut Context<T>) -> Div {
+fn render_overview_header<T>(actions: Div, language: Language, cx: &mut Context<T>) -> Div {
     div()
         .px_3()
         .pt_1()
@@ -264,21 +269,22 @@ fn render_overview_header<T>(actions: Div, cx: &mut Context<T>) -> Div {
                                 .text_xs()
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(cx.theme().muted_foreground)
-                                .child("CONTROL ROOM"),
+                                .child(tr(language, "CONTROL ROOM")),
                         )
                         .child(
                             div()
                                 .text_xl()
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .child("Overview"),
+                                .child(tr(language, "Overview")),
                         )
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(
+                                .child(tr(
+                                    language,
                                     "Runtime health, selected config reference, and traffic posture in one surface.",
-                                ),
+                                )),
                         ),
                 )
                 .child(actions),
@@ -287,12 +293,16 @@ fn render_overview_header<T>(actions: Div, cx: &mut Context<T>) -> Div {
 
 /// 渲染占位页面
 pub(crate) fn render_placeholder(cx: &mut Context<WgApp>) -> Div {
+    let language = cx.entity().read(cx).language();
     div().child(
-        GroupBox::new().fill().title("Coming Soon").child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("This section is under construction."),
-        ),
+        GroupBox::new()
+            .fill()
+            .title(tr(language, "Coming Soon"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(tr(language, "This section is under construction.")),
+            ),
     )
 }

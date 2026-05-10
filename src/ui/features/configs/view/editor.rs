@@ -8,6 +8,7 @@ use gpui_component::{
 };
 
 use crate::ui::features::configs::state::ConfigsWorkspace;
+use crate::ui::i18n::tr;
 use crate::ui::state::WgApp;
 
 use super::inspector::{editor_action_bar, render_diagnostics_strip};
@@ -24,6 +25,7 @@ pub(super) fn render_editor_panel(
     mode: ConfigsLayoutMode,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
+    let language = app_handle.read(cx).language();
     let desktop = matches!(mode, ConfigsLayoutMode::Desktop);
     let compact = matches!(mode, ConfigsLayoutMode::Compact);
     let framed = compact;
@@ -31,27 +33,40 @@ pub(super) fn render_editor_panel(
         Tag::secondary()
             .xsmall()
             .rounded_full()
-            .child("Saved source")
+            .child(tr(language, "Saved source"))
     } else {
-        Tag::warning().xsmall().rounded_full().child("Draft")
+        Tag::warning()
+            .xsmall()
+            .rounded_full()
+            .child(tr(language, "Draft"))
     };
     let status_tags = h_flex()
         .items_center()
         .gap_2()
         .flex_wrap()
         .when(data.shared.draft_dirty, |this| {
-            this.child(Tag::warning().xsmall().rounded_full().child("Dirty"))
+            this.child(
+                Tag::warning()
+                    .xsmall()
+                    .rounded_full()
+                    .child(tr(language, "Dirty")),
+            )
         })
         .when(data.shared.needs_restart, |this| {
             this.child(
                 Tag::warning()
                     .xsmall()
                     .rounded_full()
-                    .child("Needs restart"),
+                    .child(tr(language, "Needs restart")),
             )
         })
         .when(data.is_running_draft, |this| {
-            this.child(Tag::success().xsmall().rounded_full().child("Running"))
+            this.child(
+                Tag::success()
+                    .xsmall()
+                    .rounded_full()
+                    .child(tr(language, "Running")),
+            )
         });
     let title_block = if data.title_editing {
         div()
@@ -143,9 +158,9 @@ pub(super) fn render_editor_panel(
                                         .text_xs()
                                         .font_semibold()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child("DOCUMENT"),
+                                        .child(tr(language, "DOCUMENT")),
                                 )
-                                .child(editor_action_bar(data, app_handle, cx)),
+                                .child(editor_action_bar(data, app_handle, language, cx)),
                         )
                         .child(
                             h_flex()
@@ -226,7 +241,7 @@ pub(super) fn render_editor_panel(
                                         .text_xs()
                                         .font_semibold()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child("WIREGUARD CONFIG"),
+                                        .child(tr(language, "WIREGUARD CONFIG")),
                                 ),
                         )
                         .child(

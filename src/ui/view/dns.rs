@@ -10,11 +10,13 @@ use gpui_component::{
 };
 
 use super::super::state::WgApp;
+use crate::ui::i18n::{tr, Language};
 use r_wg::dns::{DnsMode, DnsPreset};
 
 /// DNS 页面：模式选择 + 预设 DNS 卡片。
 pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
     let preset_active = dns_mode_uses_preset(app.ui_prefs.dns_mode);
+    let language = app.language();
 
     let mode_group = ButtonGroup::new("dns-mode")
         .outline()
@@ -22,36 +24,39 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
         .small()
         .child(
             Button::new("dns-mode-follow")
-                .label(DnsMode::FollowConfig.label())
+                .label(tr(language, DnsMode::FollowConfig.label()))
                 .selected(app.ui_prefs.dns_mode == DnsMode::FollowConfig)
-                .tooltip("Use DNS only from the config file")
+                .tooltip(tr(language, "Use DNS only from the config file"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.set_dns_mode_pref(DnsMode::FollowConfig, cx);
                 })),
         )
         .child(
             Button::new("dns-mode-system")
-                .label(DnsMode::UseSystemDns.label())
+                .label(tr(language, DnsMode::UseSystemDns.label()))
                 .selected(app.ui_prefs.dns_mode == DnsMode::UseSystemDns)
-                .tooltip("Use DNS from the system resolver")
+                .tooltip(tr(language, "Use DNS from the system resolver"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.set_dns_mode_pref(DnsMode::UseSystemDns, cx);
                 })),
         )
         .child(
             Button::new("dns-mode-auto")
-                .label(DnsMode::AutoFillMissingFamilies.label())
+                .label(tr(language, DnsMode::AutoFillMissingFamilies.label()))
                 .selected(app.ui_prefs.dns_mode == DnsMode::AutoFillMissingFamilies)
-                .tooltip("Only fill missing IPv4/IPv6 DNS families")
+                .tooltip(tr(language, "Only fill missing IPv4/IPv6 DNS families"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.set_dns_mode_pref(DnsMode::AutoFillMissingFamilies, cx);
                 })),
         )
         .child(
             Button::new("dns-mode-override")
-                .label(DnsMode::OverrideAll.label())
+                .label(tr(language, DnsMode::OverrideAll.label()))
                 .selected(app.ui_prefs.dns_mode == DnsMode::OverrideAll)
-                .tooltip("Ignore config DNS and force selected provider")
+                .tooltip(tr(
+                    language,
+                    "Ignore config DNS and force selected provider",
+                ))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.set_dns_mode_pref(DnsMode::OverrideAll, cx);
                 })),
@@ -59,18 +64,23 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
 
     let mode_section = v_flex()
         .gap_2()
-        .child(div().text_sm().font_semibold().child("DNS Mode"))
+        .child(
+            div()
+                .text_sm()
+                .font_semibold()
+                .child(tr(language, "DNS Mode")),
+        )
         .child(
             div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child("Choose how DNS values are derived."),
+                .child(tr(language, "Choose how DNS values are derived.")),
         )
         .child(h_flex().items_center().child(mode_group));
 
     let mode_hint = match app.ui_prefs.dns_mode {
-        DnsMode::FollowConfig => Some("Use DNS settings from the config file."),
-        DnsMode::UseSystemDns => Some("Use system default DNS."),
+        DnsMode::FollowConfig => Some(tr(language, "Use DNS settings from the config file.")),
+        DnsMode::UseSystemDns => Some(tr(language, "Use system default DNS.")),
         _ => None,
     };
 
@@ -80,7 +90,7 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
             div()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("DNS settings will appear here."),
+                .child(tr(language, "DNS settings will appear here.")),
         )
         .child(mode_section)
         .when_some(mode_hint, |this, hint| {
@@ -94,7 +104,10 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
 
     let cloudflare_cards = v_flex()
         .gap_3()
-        .child(dns_section_title("Cloudflare (1.1.1.1)", "Plain / 53"))
+        .child(dns_section_title(
+            tr(language, "Cloudflare (1.1.1.1)"),
+            "Plain / 53",
+        ))
         .child(
             div()
                 .grid()
@@ -105,18 +118,21 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                     cx,
                     DnsPreset::CloudflareStandard,
                     preset_active,
+                    language,
                 ))
                 .child(dns_card(
                     app,
                     cx,
                     DnsPreset::CloudflareMalware,
                     preset_active,
+                    language,
                 ))
                 .child(dns_card(
                     app,
                     cx,
                     DnsPreset::CloudflareMalwareAdult,
                     preset_active,
+                    language,
                 )),
         );
 
@@ -128,14 +144,27 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                 .grid()
                 .grid_cols(2)
                 .gap_3()
-                .child(dns_card(app, cx, DnsPreset::AdguardDefault, preset_active))
+                .child(dns_card(
+                    app,
+                    cx,
+                    DnsPreset::AdguardDefault,
+                    preset_active,
+                    language,
+                ))
                 .child(dns_card(
                     app,
                     cx,
                     DnsPreset::AdguardUnfiltered,
                     preset_active,
+                    language,
                 ))
-                .child(dns_card(app, cx, DnsPreset::AdguardFamily, preset_active)),
+                .child(dns_card(
+                    app,
+                    cx,
+                    DnsPreset::AdguardFamily,
+                    preset_active,
+                    language,
+                )),
         );
 
     content = content
@@ -144,13 +173,19 @@ pub(crate) fn render_dns(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Preset selection is remembered, but inactive in the current DNS mode."),
+                    .child(tr(
+                        language,
+                        "Preset selection is remembered, but inactive in the current DNS mode.",
+                    )),
             )
         })
         .child(cloudflare_cards)
         .child(adguard_cards);
 
-    let group = GroupBox::new().title("DNS").w_full().child(content);
+    let group = GroupBox::new()
+        .title(tr(language, "DNS"))
+        .w_full()
+        .child(content);
     let scrollable = v_flex()
         .id("dns-scroll")
         .w_full()
@@ -191,6 +226,7 @@ fn dns_card(
     cx: &mut Context<WgApp>,
     preset: DnsPreset,
     active: bool,
+    language: Language,
 ) -> Stateful<Div> {
     let info = preset.info();
     let selected = app.ui_prefs.dns_preset == preset;
@@ -235,19 +271,24 @@ fn dns_card(
                 .child(
                     v_flex()
                         .gap_1()
-                        .child(div().text_sm().text_color(title_color).child(info.title))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(title_color)
+                                .child(tr(language, info.title)),
+                        )
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(info.note),
+                                .child(tr(language, info.note)),
                         ),
                 )
                 .child(if selected && active {
                     h_flex()
                         .items_center()
                         .gap_2()
-                        .child(Tag::info().small().child("Selected"))
+                        .child(Tag::info().small().child(tr(language, "Selected")))
                         .child(
                             Icon::new(IconName::CircleCheck)
                                 .size_4()
@@ -257,7 +298,7 @@ fn dns_card(
                 } else if selected {
                     Tag::secondary()
                         .small()
-                        .child("Remembered")
+                        .child(tr(language, "Remembered"))
                         .into_any_element()
                 } else {
                     div().into_any_element()

@@ -18,6 +18,7 @@ pub(crate) fn render_logs(
     cx: &mut Context<WgApp>,
 ) -> impl IntoElement {
     app.ensure_log_input(window, cx);
+    let language = app.language();
     let log_input = app
         .ui
         .log_input
@@ -59,7 +60,7 @@ pub(crate) fn render_logs(
         .gap_2()
         .child(
             Button::new("logs-copy")
-                .label("Copy All")
+                .label(app.t("Copy All"))
                 .outline()
                 .small()
                 .compact()
@@ -71,12 +72,12 @@ pub(crate) fn render_logs(
                         .map(|input| input.read(cx).value().to_string())
                         .unwrap_or_default();
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    this.push_success_toast("Logs copied", window, cx);
+                    this.push_success_toast(this.t("Logs copied"), window, cx);
                 })),
         )
         .child(
             Button::new("logs-clear")
-                .label("Clear")
+                .label(app.t("Clear"))
                 .outline()
                 .small()
                 .compact()
@@ -87,13 +88,14 @@ pub(crate) fn render_logs(
                             input.set_value("", window, cx);
                         });
                     }
-                    this.set_status("Logs cleared");
+                    let status = this.t("Logs cleared");
+                    this.set_status(status);
                     cx.notify();
                 })),
         );
 
     let auto_follow = Switch::new("logs-auto-follow")
-        .label("Auto Follow (Lock Selection)")
+        .label(app.t("Auto Follow (Lock Selection)"))
         .checked(app.ui_prefs.log_auto_follow)
         .with_size(Size::Small)
         .on_click({
@@ -131,7 +133,14 @@ pub(crate) fn render_logs(
             div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(format!("{line_count} lines")),
+                .child(format!(
+                    "{line_count} {}",
+                    if line_count == 1 {
+                        app.t("line")
+                    } else {
+                        app.t("lines")
+                    }
+                )),
         )
         .child(
             h_flex()
@@ -179,7 +188,7 @@ pub(crate) fn render_logs(
                         .items_center()
                         .gap_2()
                         .child(Icon::new(IconName::SquareTerminal).size_4())
-                        .child("Logs"),
+                        .child(crate::ui::i18n::tr(language, "Logs")),
                 )
                 .child(
                     v_flex()

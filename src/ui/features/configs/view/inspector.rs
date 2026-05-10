@@ -11,6 +11,7 @@ use gpui_component::{
 
 use crate::ui::features::configs::state::{ConfigsWorkspace, DraftValidationState};
 use crate::ui::format::{format_addresses, format_allowed_ips, format_dns, format_route_table};
+use crate::ui::i18n::{tr, Language};
 use crate::ui::state::{
     ConfigInspectorTab, ConfigSource, ConfigsPrimaryPane, EndpointFamily, WgApp,
 };
@@ -620,6 +621,7 @@ pub(super) fn render_diagnostics_strip(
 pub(super) fn editor_action_bar(
     data: &ConfigsViewData,
     app_handle: &Entity<WgApp>,
+    language: Language,
     _cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
     let manage_button = if data.is_busy || !data.has_saved_source || !data.has_selection {
@@ -643,21 +645,21 @@ pub(super) fn editor_action_bar(
                 let export_handle = menu_handle.clone();
                 let copy_handle = menu_handle.clone();
                 let delete_handle = menu_handle.clone();
-                menu.item(PopupMenuItem::new("Rename").on_click({
+                menu.item(PopupMenuItem::new(tr(language, "Rename")).on_click({
                     move |_, window, cx| {
                         rename_handle.update(cx, |this, cx| {
                             this.command_rename_config(window, cx);
                         });
                     }
                 }))
-                .item(PopupMenuItem::new("Export").on_click({
+                .item(PopupMenuItem::new(tr(language, "Export")).on_click({
                     move |_, _, cx| {
                         export_handle.update(cx, |this, cx| {
                             this.command_export_config(cx);
                         });
                     }
                 }))
-                .item(PopupMenuItem::new("Copy").on_click({
+                .item(PopupMenuItem::new(tr(language, "Copy")).on_click({
                     move |_, _, cx| {
                         copy_handle.update(cx, |this, cx| {
                             this.command_copy_config(cx);
@@ -665,7 +667,7 @@ pub(super) fn editor_action_bar(
                     }
                 }))
                 .item(PopupMenuItem::separator())
-                .item(PopupMenuItem::new("Delete").on_click({
+                .item(PopupMenuItem::new(tr(language, "Delete")).on_click({
                     move |_, window, cx| {
                         delete_handle.update(cx, |this, cx| {
                             this.command_delete_config(window, cx);
@@ -683,7 +685,7 @@ pub(super) fn editor_action_bar(
         .child(
             Button::new("cfg-save")
                 .icon(Icon::new(IconName::Check).size_3())
-                .label("Save")
+                .label(tr(language, "Save"))
                 .primary()
                 .small()
                 .compact()
@@ -700,7 +702,7 @@ pub(super) fn editor_action_bar(
         .child(
             Button::new("cfg-save-as")
                 .icon(Icon::new(IconName::Copy).size_3())
-                .label("Save as new")
+                .label(tr(language, "Save as new"))
                 .outline()
                 .small()
                 .compact()
@@ -718,7 +720,7 @@ pub(super) fn editor_action_bar(
             this.child(
                 Button::new("cfg-save-restart")
                     .icon(Icon::new(IconName::Redo2).size_3())
-                    .label("Save & Restart")
+                    .label(tr(language, "Save & Restart"))
                     .outline()
                     .small()
                     .compact()

@@ -11,6 +11,7 @@ use gpui_component::{
 };
 
 use crate::ui::features::configs::state::{ConfigsLibraryRow, ConfigsWorkspace};
+use crate::ui::i18n::tr;
 use crate::ui::state::{ConfigInspectorTab, ConfigsPrimaryPane, WgApp};
 
 use super::editor::render_editor_panel;
@@ -359,9 +360,11 @@ pub(super) fn render_configs_compact_layout(
 }
 
 pub(super) fn render_configs_shell_header(
+    app_handle: &Entity<WgApp>,
     data: &ConfigsViewData,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
+    let language = app_handle.read(cx).language();
     let selected_name = data.title.clone();
 
     div()
@@ -378,12 +381,17 @@ pub(super) fn render_configs_shell_header(
                 .child(
                     v_flex()
                         .gap_0p5()
-                        .child(div().text_lg().font_semibold().child("Configs"))
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_semibold()
+                                .child(tr(language, "Configs")),
+                        )
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Edit, validate, and manage tunnel profiles."),
+                                .child(tr(language, "Edit, validate, and manage tunnel profiles.")),
                         ),
                 )
                 .child(
@@ -393,13 +401,28 @@ pub(super) fn render_configs_shell_header(
                         .gap_2()
                         .child(Tag::secondary().small().rounded_full().child(selected_name))
                         .when(data.shared.draft_dirty, |this| {
-                            this.child(Tag::warning().small().rounded_full().child("Dirty"))
+                            this.child(
+                                Tag::warning()
+                                    .small()
+                                    .rounded_full()
+                                    .child(tr(language, "Dirty")),
+                            )
                         })
                         .when(data.shared.needs_restart, |this| {
-                            this.child(Tag::warning().small().rounded_full().child("Needs restart"))
+                            this.child(
+                                Tag::warning()
+                                    .small()
+                                    .rounded_full()
+                                    .child(tr(language, "Needs restart")),
+                            )
                         })
                         .when(data.is_running_draft, |this| {
-                            this.child(Tag::success().small().rounded_full().child("Running"))
+                            this.child(
+                                Tag::success()
+                                    .small()
+                                    .rounded_full()
+                                    .child(tr(language, "Running")),
+                            )
                         }),
                 ),
         )

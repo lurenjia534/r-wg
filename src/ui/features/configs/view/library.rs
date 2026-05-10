@@ -12,6 +12,7 @@ use gpui_component::{
 };
 
 use crate::ui::features::configs::state::{ConfigsLibraryRow, ConfigsWorkspace};
+use crate::ui::i18n::{tr, Language};
 use crate::ui::state::{ConfigsPrimaryPane, EndpointFamily, WgApp};
 
 use super::inspector::{endpoint_family_tag, source_tag};
@@ -33,6 +34,7 @@ pub(super) fn render_library_panel(
     window: &mut Window,
     cx: &mut Context<ConfigsWorkspace>,
 ) -> Div {
+    let language = app_handle.read(cx).language();
     let compact = matches!(mode, ConfigsLayoutMode::Compact);
     let framed = compact;
     let query = search_input.read(cx).value().trim().to_lowercase();
@@ -74,6 +76,7 @@ pub(super) fn render_library_panel(
                         selected_id,
                         &rows_for_list[row_ix],
                         compact,
+                        language,
                         cx,
                     )
                 })
@@ -119,19 +122,19 @@ pub(super) fn render_library_panel(
                                                 .text_xs()
                                                 .font_semibold()
                                                 .text_color(cx.theme().muted_foreground)
-                                                .child("LIBRARY"),
+                                                .child(tr(language, "LIBRARY")),
                                         )
                                         .child(
                                             div()
                                                 .text_base()
                                                 .font_semibold()
-                                                .child("Tunnel configs"),
+                                                .child(tr(language, "Tunnel configs")),
                                         ),
                                 )
                                 .child(Tag::secondary().small().child(if query.is_empty() {
-                                    format!("{count} configs")
+                                    format!("{count} {}", tr(language, "configs"))
                                 } else {
-                                    format!("{count}/{total_count} configs")
+                                    format!("{count}/{total_count} {}", tr(language, "configs"))
                                 })),
                         )
                         .child(
@@ -167,7 +170,7 @@ pub(super) fn render_library_panel(
                                 .child(
                                     Button::new("cfg-new")
                                         .icon(Icon::new(IconName::Plus).size_3())
-                                        .label("New")
+                                        .label(tr(language, "New"))
                                         .primary()
                                         .small()
                                         .compact()
@@ -194,7 +197,7 @@ pub(super) fn render_library_panel(
                                 .child(
                                     Button::new("cfg-library-import")
                                         .icon(Icon::new(IconName::FolderOpen).size_3())
-                                        .label("Import")
+                                        .label(tr(language, "Import"))
                                         .ghost()
                                         .small()
                                         .compact()
@@ -211,7 +214,7 @@ pub(super) fn render_library_panel(
                                 .child(
                                     Button::new("cfg-library-paste")
                                         .icon(Icon::new(IconName::Plus).size_3())
-                                        .label("Paste")
+                                        .label(tr(language, "Paste"))
                                         .ghost()
                                         .small()
                                         .compact()
@@ -243,7 +246,7 @@ pub(super) fn render_library_panel(
                                     div()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child("Unsaved draft in editor."),
+                                        .child(tr(language, "Unsaved draft in editor.")),
                                 )
                             },
                         )
@@ -252,7 +255,7 @@ pub(super) fn render_library_panel(
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("All profiles"),
+                                    .child(tr(language, "All profiles")),
                             )
                         }),
                 ),
@@ -275,7 +278,10 @@ pub(super) fn render_library_panel(
                         .py_6()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("No configs yet. Import a file or start a new draft.")
+                        .child(tr(
+                            language,
+                            "No configs yet. Import a file or start a new draft.",
+                        ))
                         .into_any_element()
                 } else {
                     div()
@@ -299,6 +305,7 @@ fn render_library_row(
     selected_id: Option<u64>,
     row: &ConfigsLibraryRow,
     compact: bool,
+    language: Language,
     cx: &mut App,
 ) -> Stateful<Div> {
     let is_selected = selected_id == Some(row.id);
@@ -383,10 +390,12 @@ fn render_library_row(
                                 .items_center()
                                 .gap_1()
                                 .when(row.is_running, |this| {
-                                    this.child(Tag::success().xsmall().child("Running"))
+                                    this.child(
+                                        Tag::success().xsmall().child(tr(language, "Running")),
+                                    )
                                 })
                                 .when(row.is_dirty, |this| {
-                                    this.child(Tag::warning().xsmall().child("Dirty"))
+                                    this.child(Tag::warning().xsmall().child(tr(language, "Dirty")))
                                 }),
                         ),
                 )
