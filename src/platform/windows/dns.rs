@@ -14,7 +14,8 @@ use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, NO_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
     FreeInterfaceDnsSettings, GetInterfaceDnsSettings, SetInterfaceDnsSettings,
     DNS_INTERFACE_SETTINGS, DNS_INTERFACE_SETTINGS3, DNS_INTERFACE_SETTINGS_VERSION3,
-    DNS_SETTING_DISABLE_UNCONSTRAINED_QUERIES, DNS_SETTING_NAMESERVER, DNS_SETTING_SEARCHLIST,
+    DNS_SETTING_DISABLE_UNCONSTRAINED_QUERIES, DNS_SETTING_IPV6, DNS_SETTING_NAMESERVER,
+    DNS_SETTING_SEARCHLIST,
 };
 
 use super::adapter::{guid_to_string, AdapterInfo};
@@ -26,6 +27,8 @@ use crate::log::events::dns as log_dns;
 struct DnsStateEntry {
     /// 变更目标接口 GUID。
     guid: GUID,
+    /// 本条记录针对的 DNS 地址族。
+    family: DnsFamily,
     /// 本次是否修改了 NameServer。
     touched_nameserver: bool,
     /// 本次是否修改了 SearchList。
@@ -38,6 +41,26 @@ struct DnsStateEntry {
     original_searchlist: Option<String>,
     /// 修改前 DisableUnconstrainedQueries（用于回滚）。
     original_disable_unconstrained_queries: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DnsFamily {
+    Ipv4,
+    Ipv6,
+}
+
+impl DnsFamily {
+    fn is_ipv6(self) -> bool {
+        matches!(self, Self::Ipv6)
+    }
+
+    fn flag(self) -> u64 {
+        if self.is_ipv6() {
+            DNS_SETTING_IPV6 as u64
+        } else {
+            0
+        }
+    }
 }
 
 /// 一次 DNS 应用操作的完整状态。
@@ -55,11 +78,15 @@ pub(super) struct DnsStateSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DnsStateEntrySnapshot {
     guid: String,
+    #[serde(default)]
+    ipv6: bool,
     touched_nameserver: bool,
     touched_search: bool,
+    #[serde(default)]
     touched_disable_unconstrained_queries: bool,
     original_nameserver: Option<String>,
     original_searchlist: Option<String>,
+    #[serde(default)]
     original_disable_unconstrained_queries: u32,
 }
 
@@ -71,6 +98,7 @@ impl DnsState {
                 .iter()
                 .map(|entry| DnsStateEntrySnapshot {
                     guid: guid_to_string(entry.guid),
+                    ipv6: entry.family.is_ipv6(),
                     touched_nameserver: entry.touched_nameserver,
                     touched_search: entry.touched_search,
                     touched_disable_unconstrained_queries: entry
@@ -94,6 +122,11 @@ impl DnsStateSnapshot {
             })?;
             entries.push(DnsStateEntry {
                 guid,
+                family: if entry.ipv6 {
+                    DnsFamily::Ipv6
+                } else {
+                    DnsFamily::Ipv4
+                },
                 touched_nameserver: entry.touched_nameserver,
                 touched_search: entry.touched_search,
                 touched_disable_unconstrained_queries: entry.touched_disable_unconstrained_queries,
@@ -121,13 +154,13 @@ pub(super) fn apply_dns(
     let mut entries = Vec::new();
 
     match apply_dns_with_guid(adapter.guid, servers, search) {
-        Ok(state) => entries.push(state),
+        Ok(states) => entries.extend(states),
         Err(primary_err) => {
             if let Some(fallback) = adapter.dns_guid_fallback {
                 if fallback != adapter.guid {
                     log_dns::apply_retry_fallback_guid();
-                    let fallback_state = apply_dns_with_guid(fallback, servers, search)?;
-                    entries.push(fallback_state);
+                    let fallback_states = apply_dns_with_guid(fallback, servers, search)?;
+                    entries.extend(fallback_states);
                 } else {
                     return Err(primary_err);
                 }
@@ -141,8 +174,8 @@ pub(super) fn apply_dns(
         if fallback != adapter.guid && !entries.iter().any(|entry| entry.guid == fallback) {
             // 主 GUID 已成功时，fallback 仅做增强，不影响主流程成功结果。
             log_dns::apply_retry_fallback_guid();
-            if let Ok(state) = apply_dns_with_guid(fallback, servers, search) {
-                entries.push(state);
+            if let Ok(states) = apply_dns_with_guid(fallback, servers, search) {
+                entries.extend(states);
             }
         }
     }
@@ -178,7 +211,8 @@ fn cleanup_dns_entry(state: &DnsStateEntry) -> Result<(), NetworkError> {
         return Ok(());
     }
 
-    let mut flags = 0u64;
+    let mut flags = state.family.flag();
+
     let mut nameserver_buf = None;
     if state.touched_nameserver {
         flags |= DNS_SETTING_NAMESERVER as u64;
@@ -245,9 +279,41 @@ fn apply_dns_with_guid(
     guid: GUID,
     servers: &[IpAddr],
     search: &[String],
+) -> Result<Vec<DnsStateEntry>, NetworkError> {
+    let v4_servers: Vec<IpAddr> = servers.iter().copied().filter(IpAddr::is_ipv4).collect();
+    let v6_servers: Vec<IpAddr> = servers.iter().copied().filter(IpAddr::is_ipv6).collect();
+
+    let mut entries = Vec::new();
+    if !v4_servers.is_empty() || !search.is_empty() {
+        entries.push(apply_dns_family_with_guid(
+            guid,
+            DnsFamily::Ipv4,
+            &v4_servers,
+            search,
+        )?);
+    }
+    if !v6_servers.is_empty() {
+        match apply_dns_family_with_guid(guid, DnsFamily::Ipv6, &v6_servers, &[]) {
+            Ok(entry) => entries.push(entry),
+            Err(err) => {
+                for entry in entries.iter().rev() {
+                    let _ = cleanup_dns_entry(entry);
+                }
+                return Err(err);
+            }
+        }
+    }
+    Ok(entries)
+}
+
+fn apply_dns_family_with_guid(
+    guid: GUID,
+    family: DnsFamily,
+    servers: &[IpAddr],
+    search: &[String],
 ) -> Result<DnsStateEntry, NetworkError> {
     let (original_nameserver, original_searchlist, original_disable_unconstrained_queries) =
-        read_interface_dns_settings(guid)?;
+        read_interface_dns_settings(guid, family)?;
 
     let search_items: Vec<String> = search
         .iter()
@@ -264,6 +330,7 @@ fn apply_dns_with_guid(
     if !touched_nameserver && !touched_search && !touched_disable_unconstrained_queries {
         return Ok(DnsStateEntry {
             guid,
+            family,
             touched_nameserver,
             touched_search,
             touched_disable_unconstrained_queries,
@@ -273,7 +340,7 @@ fn apply_dns_with_guid(
         });
     }
 
-    let mut flags = 0u64;
+    let mut flags = family.flag();
 
     let mut nameserver_buf = None;
     if touched_nameserver {
@@ -331,26 +398,23 @@ fn apply_dns_with_guid(
         });
     }
 
-    // 安全护栏：要求禁用跨接口查询时，必须确认系统已实际生效。
-    if touched_disable_unconstrained_queries {
-        let (_, _, effective_disable_unconstrained_queries) = read_interface_dns_settings(guid)?;
-        if effective_disable_unconstrained_queries == 0 {
-            return Err(NetworkError::UnsafeRouting(
-                "DisableUnconstrainedQueries did not persist; refusing to continue to avoid DNS leak"
-                    .to_string(),
-            ));
-        }
-    }
-
-    Ok(DnsStateEntry {
+    let entry = DnsStateEntry {
         guid,
+        family,
         touched_nameserver,
         touched_search,
         touched_disable_unconstrained_queries,
         original_nameserver,
         original_searchlist,
         original_disable_unconstrained_queries,
-    })
+    };
+
+    if let Err(err) = verify_dns_family(guid, family, servers, &search_items) {
+        let _ = cleanup_dns_entry(&entry);
+        return Err(err);
+    }
+
+    Ok(entry)
 }
 
 /// 读取接口当前 DNS 设置。
@@ -358,9 +422,13 @@ fn apply_dns_with_guid(
 /// `ERROR_FILE_NOT_FOUND` 视为“尚无记录”，按空值处理。
 fn read_interface_dns_settings(
     guid: GUID,
+    family: DnsFamily,
 ) -> Result<(Option<String>, Option<String>, u32), NetworkError> {
     let mut settings = DNS_INTERFACE_SETTINGS3::default();
     settings.Version = DNS_INTERFACE_SETTINGS_VERSION3;
+    // IPv6 rollback is only safe if the API returns IPv6-family settings here.
+    // The family validator below makes this fail closed if Windows ignores the flag.
+    settings.Flags = family.flag();
 
     let result = unsafe {
         GetInterfaceDnsSettings(
@@ -389,7 +457,79 @@ fn read_interface_dns_settings(
         );
     }
 
+    validate_nameserver_family(family, nameserver.as_deref(), "GetInterfaceDnsSettings")?;
+
     Ok((nameserver, searchlist, disable_unconstrained_queries))
+}
+
+fn verify_dns_family(
+    guid: GUID,
+    family: DnsFamily,
+    expected_servers: &[IpAddr],
+    expected_search: &[String],
+) -> Result<(), NetworkError> {
+    let (effective_nameserver, effective_searchlist, effective_disable_unconstrained_queries) =
+        read_interface_dns_settings(guid, family)?;
+
+    if !expected_servers.is_empty() {
+        let expected = expected_servers
+            .iter()
+            .map(|ip| ip.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        if effective_nameserver.as_deref() != Some(expected.as_str()) {
+            return Err(NetworkError::UnsafeRouting(format!(
+                "{family:?} DNS NameServer did not persist; expected {expected:?}, got {effective_nameserver:?}"
+            )));
+        }
+    }
+
+    if !expected_search.is_empty() {
+        let expected = expected_search.join(",");
+        if effective_searchlist.as_deref() != Some(expected.as_str()) {
+            return Err(NetworkError::UnsafeRouting(format!(
+                "{family:?} DNS SearchList did not persist; expected {expected:?}, got {effective_searchlist:?}"
+            )));
+        }
+    }
+
+    if effective_disable_unconstrained_queries == 0 {
+        return Err(NetworkError::UnsafeRouting(
+            "DisableUnconstrainedQueries did not persist; refusing to continue to avoid DNS leak"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_nameserver_family(
+    family: DnsFamily,
+    nameserver: Option<&str>,
+    context: &'static str,
+) -> Result<(), NetworkError> {
+    let Some(nameserver) = nameserver else {
+        return Ok(());
+    };
+
+    for item in nameserver
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        let ip: IpAddr = item.parse().map_err(|_| {
+            NetworkError::UnsafeRouting(format!(
+                "{context} returned an unparsable {family:?} DNS server: {item}"
+            ))
+        })?;
+        if family.is_ipv6() != ip.is_ipv6() {
+            return Err(NetworkError::UnsafeRouting(format!(
+                "{context} returned {ip} while reading {family:?} DNS settings"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 /// 把 Windows PWSTR 规范化为 `Option<String>`。
