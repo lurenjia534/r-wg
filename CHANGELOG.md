@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.5 - 2026-05-10
+
+- Added the UI internationalization foundation with persisted language preferences, system-locale resolution, and expanded Simplified Chinese translations across navigation, top-level status, settings, themes, advanced preferences, DNS, logs, overview, and the main Configs workspace surfaces.
+- Hardened Windows DNS application by splitting IPv4 and IPv6 writes into address-family-specific updates, validating the effective DNS server/search settings after each apply, and rolling back partial family updates if verification fails.
+- Improved Windows DNS cleanup and recovery snapshots so rollback preserves the DNS address family and restores `DisableUnconstrainedQueries` consistently for both live cleanup and persisted recovery state.
+
 ## 0.3.4 - 2026-05-06
 
 - Fixed Linux kernel WireGuard startup by treating `RTM_GETLINK` `ENODEV` during pre-create name checks as a missing interface instead of aborting before the `RTM_NEWLINK` create request.
