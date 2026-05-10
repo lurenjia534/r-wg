@@ -27,7 +27,6 @@ use crate::core::config::{InterfaceAddress, WireGuardConfig};
 #[cfg(target_os = "windows")]
 use crate::platform;
 
-#[expect(clippy::allow_attributes)]
 mod proto {
     tonic::include_proto!("ephemeralpeer");
 }

@@ -22,6 +22,10 @@
 //! - v10: StartRequest 新增 wireguard_backend_preference
 //! - v11: BackendErrorKind 新增 kernel/unsupported/ephemeral 结构化分类
 //! - v12: 新增 LogSnapshot/LogClear 后端日志缓冲接口
+//! - v13: Info 响应新增后端 capabilities，日志 IPC 使用有界脱敏快照
+//! - v14: Info 响应新增 service_version 与 platform 元数据
+//! - v15: 请求帧新增 transport-level request_id，便于跨日志关联
+//! - v16: capabilities 声明后端日志快照最大字节数
 //!
 //! # 消息格式
 //!
@@ -36,8 +40,10 @@
 //! 两者共用相同的消息格式，只是传输层不同。
 
 use std::io::{self, BufRead, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::core::route_plan::RouteApplyReport;
 
@@ -50,7 +56,28 @@ use super::engine::{
 ///
 /// 当 UI 和服务端的版本不匹配时，会返回 VersionMismatch 错误。
 /// 升级时需要确保双方都支持相同的版本。
-pub const IPC_PROTOCOL_VERSION: u32 = 12;
+pub const IPC_PROTOCOL_VERSION: u32 = 16;
+
+/// Maximum raw IPC frame size, including the trailing newline when present.
+///
+/// IPC uses one JSON value per line. Keeping a hard bound prevents a peer from
+/// forcing the privileged service to buffer an unbounded line before JSON
+/// parsing rejects it.
+pub const MAX_IPC_FRAME_BYTES: usize = 1024 * 1024;
+
+static NEXT_IPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+pub type IpcRequestId = u64;
+
+#[derive(Debug, Clone)]
+pub struct BackendRequest {
+    pub request_id: IpcRequestId,
+    pub command: BackendCommand,
+}
+
+pub fn next_ipc_request_id() -> IpcRequestId {
+    NEXT_IPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// UI -> 特权后端的命令枚举
 ///
@@ -111,8 +138,16 @@ impl BackendCommand {
 pub enum BackendReply {
     /// 纯成功响应：用于 Ping / Start / Stop 等不需要额外数据的命令
     Ok,
-    /// 元信息响应：返回协议版本
-    Info { protocol_version: u32 },
+    /// 元信息响应：返回协议版本与后端能力位
+    Info {
+        protocol_version: u32,
+        #[serde(default = "backend_service_version")]
+        service_version: String,
+        #[serde(default = "backend_platform")]
+        platform: String,
+        #[serde(default = "backend_capabilities")]
+        capabilities: BackendCapabilities,
+    },
     /// 状态查询响应：返回 Running/Stopped
     Status { status: EngineStatus },
     /// 统计查询响应：返回所有 Peer 的流量统计
@@ -132,6 +167,47 @@ pub enum BackendReply {
         kind: BackendErrorKind,
         message: String,
     },
+}
+
+/// 后端能力声明。
+///
+/// Info 响应使用能力位表达功能边界，避免 UI 只能通过协议版本推断可用接口。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackendCapabilities {
+    pub apply_report: bool,
+    pub runtime_snapshot: bool,
+    pub relay_inventory: bool,
+    pub log_snapshot: bool,
+    pub log_clear: bool,
+    pub max_ipc_frame_bytes: usize,
+    pub log_snapshot_max_lines: usize,
+    #[serde(default = "default_log_snapshot_max_bytes")]
+    pub log_snapshot_max_bytes: usize,
+}
+
+pub fn backend_capabilities() -> BackendCapabilities {
+    BackendCapabilities {
+        apply_report: true,
+        runtime_snapshot: true,
+        relay_inventory: true,
+        log_snapshot: true,
+        log_clear: true,
+        max_ipc_frame_bytes: MAX_IPC_FRAME_BYTES,
+        log_snapshot_max_lines: crate::log::MAX_LOG_SNAPSHOT_LINES,
+        log_snapshot_max_bytes: crate::log::MAX_LOG_SNAPSHOT_BYTES,
+    }
+}
+
+fn default_log_snapshot_max_bytes() -> usize {
+    crate::log::MAX_LOG_SNAPSHOT_BYTES
+}
+
+pub fn backend_service_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+pub fn backend_platform() -> String {
+    std::env::consts::OS.to_string()
 }
 
 /// 跨进程可恢复错误分类
@@ -277,6 +353,30 @@ pub fn write_json_line<T: Serialize>(writer: &mut impl Write, value: &T) -> io::
     writer.flush()
 }
 
+pub fn write_command_json_line(
+    writer: &mut impl Write,
+    request_id: IpcRequestId,
+    command: &BackendCommand,
+) -> io::Result<()> {
+    let mut value = serde_json::to_value(command)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    match value {
+        Value::Object(ref mut object) => {
+            object.insert(
+                "request_id".to_string(),
+                Value::Number(serde_json::Number::from(request_id)),
+            );
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "backend command did not serialize to a JSON object",
+            ));
+        }
+    }
+    write_json_line(writer, &value)
+}
+
 /// 读取单行 JSON 消息
 ///
 /// 读取一行（以换行符分隔），然后解析为 JSON。
@@ -285,15 +385,210 @@ pub fn write_json_line<T: Serialize>(writer: &mut impl Write, value: &T) -> io::
 /// - 返回 0 字节表示对端关闭连接
 /// - JSON 解析失败返回 InvalidData 错误
 pub fn read_json_line<T: for<'de> Deserialize<'de>>(reader: &mut impl BufRead) -> io::Result<T> {
-    let mut line = String::new();
-    let read = reader.read_line(&mut line)?;
-    if read == 0 {
-        // 对端提前断开连接
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "backend closed the connection",
-        ));
+    read_json_line_with_limit(reader, MAX_IPC_FRAME_BYTES)
+}
+
+pub fn read_backend_request(reader: &mut impl BufRead) -> io::Result<BackendRequest> {
+    let mut line = Vec::new();
+    read_bounded_line(reader, &mut line, MAX_IPC_FRAME_BYTES)?;
+    let value: Value = serde_json::from_slice(&line)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    let request_id = value
+        .as_object()
+        .and_then(|object| object.get("request_id"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(next_ipc_request_id);
+    let command = serde_json::from_value(value)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    Ok(BackendRequest {
+        request_id,
+        command,
+    })
+}
+
+fn read_json_line_with_limit<T: for<'de> Deserialize<'de>>(
+    reader: &mut impl BufRead,
+    max_frame_bytes: usize,
+) -> io::Result<T> {
+    let mut line = Vec::new();
+    read_bounded_line(reader, &mut line, max_frame_bytes)?;
+    serde_json::from_slice(&line).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn read_bounded_line(
+    reader: &mut impl BufRead,
+    line: &mut Vec<u8>,
+    max_frame_bytes: usize,
+) -> io::Result<()> {
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            if line.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "backend closed the connection",
+                ));
+            }
+            return Ok(());
+        }
+
+        let consumed = match buffer.iter().position(|byte| *byte == b'\n') {
+            Some(position) => position + 1,
+            None => buffer.len(),
+        };
+        if line.len().saturating_add(consumed) > max_frame_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("IPC frame exceeds {max_frame_bytes} bytes"),
+            ));
+        }
+
+        line.extend_from_slice(&buffer[..consumed]);
+        reader.consume(consumed);
+
+        if line.last() == Some(&b'\n') {
+            return Ok(());
+        }
     }
-    serde_json::from_str(line.trim_end())
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn read_json_line_accepts_valid_line() {
+        let mut reader = Cursor::new(
+            br#"{"type":"ping"}
+"#,
+        );
+
+        let command: BackendCommand = read_json_line(&mut reader).unwrap();
+
+        assert!(matches!(command, BackendCommand::Ping));
+    }
+
+    #[test]
+    fn read_json_line_accepts_eof_after_complete_json() {
+        let mut reader = Cursor::new(br#"{"type":"ping"}"#);
+
+        let command: BackendCommand = read_json_line(&mut reader).unwrap();
+
+        assert!(matches!(command, BackendCommand::Ping));
+    }
+
+    #[test]
+    fn read_json_line_rejects_empty_connection() {
+        let mut reader = Cursor::new(Vec::<u8>::new());
+
+        let err = read_json_line::<BackendCommand>(&mut reader).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_json_line_rejects_oversized_frame() {
+        let mut reader = Cursor::new(
+            br#"{"type":"ping"}
+"#,
+        );
+
+        let err = read_json_line_with_limit::<BackendCommand>(&mut reader, 4).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("IPC frame exceeds 4 bytes"));
+    }
+
+    #[test]
+    fn write_command_json_line_includes_request_id() {
+        let mut out = Vec::new();
+
+        write_command_json_line(&mut out, 42, &BackendCommand::Ping).unwrap();
+
+        let value: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("ping"));
+        assert_eq!(value.get("request_id").and_then(Value::as_u64), Some(42));
+    }
+
+    #[test]
+    fn backend_command_ignores_request_id_for_legacy_server_compatibility() {
+        let mut reader = Cursor::new(
+            br#"{"type":"ping","request_id":42}
+"#,
+        );
+
+        let command: BackendCommand = read_json_line(&mut reader).unwrap();
+
+        assert!(matches!(command, BackendCommand::Ping));
+    }
+
+    #[test]
+    fn read_backend_request_extracts_request_id() {
+        let mut reader = Cursor::new(
+            br#"{"type":"ping","request_id":42}
+"#,
+        );
+
+        let request = read_backend_request(&mut reader).unwrap();
+
+        assert_eq!(request.request_id, 42);
+        assert!(matches!(request.command, BackendCommand::Ping));
+    }
+
+    #[test]
+    fn read_backend_request_assigns_request_id_when_missing() {
+        let mut reader = Cursor::new(
+            br#"{"type":"ping"}
+"#,
+        );
+
+        let request = read_backend_request(&mut reader).unwrap();
+
+        assert!(request.request_id > 0);
+        assert!(matches!(request.command, BackendCommand::Ping));
+    }
+
+    #[test]
+    fn info_reply_deserializes_legacy_without_capabilities() {
+        let reply: BackendReply =
+            serde_json::from_str(r#"{"type":"info","protocol_version":12}"#).unwrap();
+
+        match reply {
+            BackendReply::Info {
+                protocol_version,
+                service_version,
+                platform,
+                capabilities,
+            } => {
+                assert_eq!(protocol_version, 12);
+                assert_eq!(service_version, backend_service_version());
+                assert_eq!(platform, backend_platform());
+                assert_eq!(capabilities, backend_capabilities());
+            }
+            other => panic!("unexpected reply: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn capabilities_deserialize_without_log_snapshot_max_bytes() {
+        let capabilities: BackendCapabilities = serde_json::from_str(
+            r#"{
+                "apply_report": true,
+                "runtime_snapshot": true,
+                "relay_inventory": true,
+                "log_snapshot": true,
+                "log_clear": true,
+                "max_ipc_frame_bytes": 1048576,
+                "log_snapshot_max_lines": 500
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            capabilities.log_snapshot_max_bytes,
+            crate::log::MAX_LOG_SNAPSHOT_BYTES
+        );
+    }
 }

@@ -1,7 +1,10 @@
+mod badges;
 mod editor;
+mod editor_actions;
 mod inspector;
 mod layout;
 mod library;
+mod pane_tabs;
 mod view_data;
 mod workspace;
 

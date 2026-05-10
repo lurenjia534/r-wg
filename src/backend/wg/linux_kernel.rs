@@ -1,7 +1,6 @@
 use std::env;
 use std::fmt;
 use std::fs;
-use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -21,6 +20,7 @@ use tokio::task::JoinHandle;
 use super::engine::{DaitaStats, EngineStats, PeerStats};
 use super::ephemeral::EphemeralPeerUpdate;
 use crate::core::config::DeviceSettings;
+use crate::storage::atomic;
 
 const NLM_F_REQUEST: u16 = 1;
 const NLM_F_ACK: u16 = 4;
@@ -454,7 +454,7 @@ fn write_kernel_backend_journal(
     };
     let json = serde_json::to_string(&journal)
         .map_err(|error| operation(format!("failed to encode kernel backend journal: {error}")))?;
-    write_atomic(&path, json.as_bytes())
+    atomic::write_atomic(&path, json.as_bytes())
         .map_err(|error| operation(format!("failed to write kernel backend journal: {error}")))
 }
 
@@ -499,28 +499,6 @@ fn kernel_backend_journal_path_in(state_directory: Option<&std::ffi::OsStr>) -> 
         .map(Path::new)
         .unwrap_or_else(|| Path::new("/var/lib/r-wg"))
         .join(KERNEL_BACKEND_JOURNAL_FILE)
-}
-
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp_path = path.with_file_name(format!(
-        ".{}.tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(KERNEL_BACKEND_JOURNAL_FILE)
-    ));
-    {
-        let mut file = fs::File::create(&tmp_path)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    fs::rename(&tmp_path, path)?;
-    if let Some(parent) = path.parent() {
-        fs::File::open(parent)?.sync_all()?;
-    }
-    Ok(())
 }
 
 fn quarantine_kernel_backend_journal(path: &Path) -> Result<(), KernelWireGuardError> {

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::config::InterfaceAddress;
 use crate::core::route_plan::RouteApplyReport;
+use crate::storage::atomic;
 
 use super::adapter::{AdapterInfo, AdapterSnapshot};
 use super::addresses::delete_unicast_address;
@@ -229,9 +230,7 @@ fn write_recovery_journal(path: &Path, journal: &RecoveryJournal) -> Result<(), 
     let json = serde_json::to_vec(journal).map_err(|err| {
         NetworkError::Io(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
     })?;
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, json)?;
-    fs::rename(tmp_path, path)?;
+    atomic::write_atomic(path, &json)?;
     Ok(())
 }
 
@@ -258,9 +257,7 @@ pub(super) fn write_persisted_apply_report(report: &RouteApplyReport) -> Result<
     let json = serde_json::to_vec(report).map_err(|err| {
         NetworkError::Io(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
     })?;
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, json)?;
-    fs::rename(tmp_path, path)?;
+    atomic::write_atomic(&path, &json)?;
     Ok(())
 }
 

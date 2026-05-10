@@ -1,9 +1,12 @@
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gpui_component::theme::ThemeMode;
 use r_wg::backend::wg::{DaitaMode, QuantumMode, WireGuardBackendPreference};
 use r_wg::dns::{DnsMode, DnsPreset};
+use r_wg::storage::{
+    app_paths,
+    state_repository::{StateRepository, StateRepositoryError},
+};
 use serde::{Deserialize, Serialize};
 
 use super::features::themes::AppearancePolicy;
@@ -11,15 +14,8 @@ use super::i18n::LanguagePreference;
 use super::state::{ConfigInspectorTab, ConfigSource, ProxiesViewMode, TrafficPeriod};
 
 pub(crate) const STATE_VERSION: u32 = 4;
-const STATE_FILE_NAME: &str = "state.json";
-const CONFIGS_DIR_NAME: &str = "configs";
 
-#[derive(Clone)]
-pub(crate) struct StoragePaths {
-    pub(crate) root: PathBuf,
-    pub(crate) configs_dir: PathBuf,
-    pub(crate) state_path: PathBuf,
-}
+pub(crate) type StoragePaths = app_paths::AppStoragePaths;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct PersistedState {
@@ -149,63 +145,47 @@ impl From<PersistedSource> for ConfigSource {
 }
 
 pub(crate) fn ensure_storage_dirs() -> Result<StoragePaths, String> {
-    let root = dirs::data_dir()
-        .map(|dir| dir.join("r-wg"))
-        .ok_or_else(|| "No data directory available".to_string())?;
-    let configs_dir = root.join(CONFIGS_DIR_NAME);
-    let state_path = root.join(STATE_FILE_NAME);
-    std::fs::create_dir_all(&configs_dir)
-        .map_err(|err| format!("Create storage dir failed: {err}"))?;
-    Ok(StoragePaths {
-        root,
-        configs_dir,
-        state_path,
-    })
+    app_paths::ensure_app_storage_dirs()
 }
 
 pub(crate) fn config_path(paths: &StoragePaths, id: u64) -> PathBuf {
-    paths.configs_dir.join(format!("{id}.conf"))
+    paths.config_path(id)
 }
 
 pub(crate) fn load_state(paths: &StoragePaths) -> Result<Option<PersistedState>, String> {
-    let text = match std::fs::read_to_string(&paths.state_path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(format!("Read state failed: {err}")),
-    };
-    let state = serde_json::from_str(&text).map_err(|err| format!("Parse state failed: {err}"))?;
-    Ok(Some(state))
+    StateRepository::new()
+        .load_json(&paths.state_path)
+        .map_err(format_load_error)
 }
 
 pub(crate) fn save_state(paths: &StoragePaths, state: &PersistedState) -> Result<(), String> {
-    let data =
-        serde_json::to_vec_pretty(state).map_err(|err| format!("Serialize state failed: {err}"))?;
-    write_atomic(&paths.state_path, &data)
+    StateRepository::new()
+        .save_json(&paths.state_path, state)
+        .map_err(format_save_error)
 }
 
-fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
-    let tmp_path = path.with_extension("tmp");
-    // 清理逻辑说明：
-    // - 先写入临时文件，再原子替换，避免部分写入导致文件损坏；
-    // - 如果目标已存在，先删除旧文件再替换，确保最终文件一致；
-    // - 任何一步失败都返回错误，调用方会在 UI 中提示。
-    std::fs::write(&tmp_path, contents).map_err(|err| format!("Write temp file failed: {err}"))?;
-    if let Err(err) = std::fs::rename(&tmp_path, path) {
-        if path.exists() {
-            std::fs::remove_file(path)
-                .map_err(|remove_err| format!("Remove old file failed: {remove_err}"))?;
-            std::fs::rename(&tmp_path, path)
-                .map_err(|rename_err| format!("Replace file failed: {rename_err}"))?;
-            return Ok(());
-        }
-        return Err(format!("Commit file failed: {err}"));
+fn format_load_error(error: StateRepositoryError) -> String {
+    match error {
+        StateRepositoryError::Read(err) => format!("Read state failed: {err}"),
+        StateRepositoryError::Parse(err) => format!("Parse state failed: {err}"),
+        StateRepositoryError::Serialize(err) => format!("Serialize state failed: {err}"),
+        StateRepositoryError::Write(err) => format!("Save state failed: {err}"),
     }
-    Ok(())
+}
+
+fn format_save_error(error: StateRepositoryError) -> String {
+    match error {
+        StateRepositoryError::Read(err) => format!("Read state failed: {err}"),
+        StateRepositoryError::Parse(err) => format!("Parse state failed: {err}"),
+        StateRepositoryError::Serialize(err) => format!("Serialize state failed: {err}"),
+        StateRepositoryError::Write(err) => format!("Save state failed: {err}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
@@ -216,14 +196,7 @@ mod tests {
             .expect("system clock should be after unix epoch")
             .as_nanos();
         let root = std::env::temp_dir().join(format!("r-wg-{test_name}-{unique}"));
-        let configs_dir = root.join(CONFIGS_DIR_NAME);
-        let state_path = root.join(STATE_FILE_NAME);
-        fs::create_dir_all(&configs_dir).expect("temp configs dir should be created");
-        StoragePaths {
-            root,
-            configs_dir,
-            state_path,
-        }
+        app_paths::ensure_app_storage_dirs_at(root).expect("temp storage should be created")
     }
 
     fn sample_state() -> PersistedState {

@@ -15,7 +15,7 @@ use crate::ui::features::configs::state::{ConfigsLibraryRow, ConfigsWorkspace};
 use crate::ui::i18n::{tr, Language};
 use crate::ui::state::{ConfigsPrimaryPane, EndpointFamily, WgApp};
 
-use super::inspector::{endpoint_family_tag, source_tag};
+use super::badges::{endpoint_family_tag, source_tag};
 use super::{
     ConfigsLayoutMode, ConfigsViewData, CONFIGS_LIBRARY_ROW_HEIGHT, CONFIGS_LIBRARY_SCROLL_STATE_ID,
 };
@@ -109,7 +109,7 @@ pub(super) fn render_library_panel(
                 .border_color(cx.theme().border.alpha(if compact { 1.0 } else { 0.88 }))
                 .child(
                     v_flex()
-                        .gap(px(if compact { 10.0 } else { 10.0 }))
+                        .gap(px(10.0))
                         .child(
                             h_flex()
                                 .items_start()

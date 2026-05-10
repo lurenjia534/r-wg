@@ -11,6 +11,9 @@ use tracing_subscriber::{layer::Context, layer::SubscriberExt, EnvFilter, Layer}
 
 // UI 日志面板最多保留的行数（环形缓冲容量）。
 const MAX_LOG_LINES: usize = 2000;
+// IPC 日志快照上限：只跨特权边界回传最近一段日志。
+pub const MAX_LOG_SNAPSHOT_LINES: usize = 500;
+pub const MAX_LOG_SNAPSHOT_BYTES: usize = 256 * 1024;
 // tracing 事件的固定 target，便于统一过滤与输出。
 const LOG_TARGET: &str = "r_wg";
 
@@ -500,6 +503,20 @@ pub fn snapshot() -> Vec<String> {
     lines
 }
 
+// 获取跨 IPC 传输用的日志快照。相比本地 UI 快照，这里限制行数/字节并做敏感字段脱敏。
+pub fn snapshot_for_ipc() -> Vec<String> {
+    let mut lines = snapshot();
+    if lines.len() > MAX_LOG_SNAPSHOT_LINES {
+        let keep_from = lines.len() - MAX_LOG_SNAPSHOT_LINES;
+        lines.drain(0..keep_from);
+    }
+    let lines = lines
+        .into_iter()
+        .map(|line| redact_sensitive_log_line(&line))
+        .collect::<Vec<_>>();
+    limit_snapshot_bytes(lines, MAX_LOG_SNAPSHOT_BYTES)
+}
+
 // 清空缓冲（用于 UI 清除按钮）。
 pub fn clear() {
     ensure_init();
@@ -598,6 +615,140 @@ fn parse_scopes(value: &str) -> Option<HashSet<String>> {
 
 fn normalize_scope_name(value: &str) -> String {
     value.trim().to_ascii_lowercase()
+}
+
+fn redact_sensitive_log_line(line: &str) -> String {
+    const SENSITIVE_KEYS: &[&str] = &[
+        "privatekey",
+        "private_key",
+        "presharedkey",
+        "preshared_key",
+        "password",
+        "token",
+        "auth",
+    ];
+
+    let mut out = line.to_string();
+    for key in SENSITIVE_KEYS {
+        out = redact_key_value(&out, key);
+    }
+    out
+}
+
+fn redact_key_value(line: &str, key: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let mut cursor = 0;
+    let mut out = String::with_capacity(line.len());
+
+    while let Some(relative_idx) = lower[cursor..].find(key) {
+        let key_start = cursor + relative_idx;
+        let key_end = key_start + key.len();
+
+        if !has_key_left_boundary(line, key_start) {
+            out.push_str(&line[cursor..key_end]);
+            cursor = key_end;
+            continue;
+        };
+
+        let mut separator_idx = key_end;
+        while separator_idx < line.len() {
+            let Some(ch) = line[separator_idx..].chars().next() else {
+                break;
+            };
+            if !ch.is_whitespace() {
+                break;
+            }
+            separator_idx += ch.len_utf8();
+        }
+
+        let Some(separator) = line[separator_idx..].chars().next() else {
+            out.push_str(&line[cursor..key_end]);
+            cursor = key_end;
+            continue;
+        };
+        if separator != '=' && separator != ':' {
+            out.push_str(&line[cursor..key_end]);
+            cursor = key_end;
+            continue;
+        }
+
+        let mut value_start = separator_idx + separator.len_utf8();
+        while value_start < line.len() {
+            let Some(ch) = line[value_start..].chars().next() else {
+                break;
+            };
+            if !ch.is_whitespace() {
+                break;
+            }
+            value_start += ch.len_utf8();
+        }
+
+        out.push_str(&line[cursor..value_start]);
+        let value_end = line[value_start..]
+            .find(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';')
+            .map(|offset| value_start + offset)
+            .unwrap_or(line.len());
+        out.push_str("<redacted>");
+        cursor = value_end;
+    }
+
+    out.push_str(&line[cursor..]);
+    out
+}
+
+fn has_key_left_boundary(line: &str, key_start: usize) -> bool {
+    line[..key_start]
+        .chars()
+        .next_back()
+        .map(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+        .unwrap_or(true)
+}
+
+fn limit_snapshot_bytes(lines: Vec<String>, max_bytes: usize) -> Vec<String> {
+    if max_bytes == 0 {
+        return Vec::new();
+    }
+
+    let mut bytes = 0usize;
+    let mut kept = Vec::new();
+    for line in lines.into_iter().rev() {
+        let line_len = line.len();
+        if bytes.saturating_add(line_len) <= max_bytes {
+            bytes += line_len;
+            kept.push(line);
+            continue;
+        }
+        if kept.is_empty() {
+            kept.push(truncate_to_byte_limit(&line, max_bytes));
+        }
+        break;
+    }
+    kept.reverse();
+    kept
+}
+
+fn truncate_to_byte_limit(line: &str, max_bytes: usize) -> String {
+    let marker = "...<truncated>";
+    if line.len() <= max_bytes {
+        return line.to_string();
+    }
+    if max_bytes <= marker.len() {
+        return marker[..max_bytes].to_string();
+    }
+
+    let content_limit = max_bytes - marker.len();
+    let mut end = 0usize;
+    for (idx, ch) in line.char_indices() {
+        let next = idx + ch.len_utf8();
+        if next > content_limit {
+            break;
+        }
+        end = next;
+    }
+    let mut out = String::with_capacity(max_bytes);
+    out.push_str(&line[..end]);
+    out.push_str(marker);
+    out
 }
 
 // 解析 tracing 事件字段，抽出 message 与 scope。

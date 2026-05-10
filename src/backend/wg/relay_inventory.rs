@@ -12,6 +12,8 @@ use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
+use crate::storage::atomic;
+
 #[cfg(not(target_os = "linux"))]
 use std::env;
 
@@ -292,21 +294,7 @@ fn write_cached_inventory_file(
     }
     let payload =
         serde_json::to_vec_pretty(cached).map_err(|error| Error::WriteCache(error.to_string()))?;
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, payload).map_err(|error| Error::WriteCache(error.to_string()))?;
-    if let Err(error) = fs::rename(&tmp_path, path) {
-        if path.exists() {
-            fs::remove_file(path).map_err(|remove_error| {
-                Error::WriteCache(format!(
-                    "failed to replace existing cache file after rename failure: {remove_error}"
-                ))
-            })?;
-            fs::rename(&tmp_path, path)
-                .map_err(|rename_error| Error::WriteCache(rename_error.to_string()))?;
-        } else {
-            return Err(Error::WriteCache(error.to_string()));
-        }
-    }
+    atomic::write_atomic(path, &payload).map_err(|error| Error::WriteCache(error.to_string()))?;
     Ok(())
 }
 

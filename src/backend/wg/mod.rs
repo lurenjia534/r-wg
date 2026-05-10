@@ -1,8 +1,8 @@
-/// WireGuard backend export layer.
-///
-/// - Linux: use the privileged service backend.
-/// - Windows: use the SCM service backend.
-/// - Other platforms: fall back to the local engine.
+//! WireGuard backend export layer.
+//!
+//! - Linux: use the privileged service backend.
+//! - Windows: use the SCM service backend.
+//! - Other platforms: fall back to the local engine.
 pub mod config;
 mod engine;
 mod ephemeral;

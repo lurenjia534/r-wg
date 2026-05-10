@@ -1,6 +1,6 @@
 // Focused regression tests for backend action guidance.
 
-use super::system::{
+use super::backend_diagnostics::{
     active_wireguard_backend_label, backend_recommended_action, backend_recovery_note,
     should_show_remove_action, should_show_repair_action,
 };

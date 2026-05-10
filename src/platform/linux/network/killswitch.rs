@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,6 +9,7 @@ use tokio::process::Command;
 
 use super::NetworkError;
 use crate::log::events::net as log_net;
+use crate::storage::atomic;
 
 const NFT_TABLE_NAME: &str = "r_wg_killswitch";
 const IPTABLES_CHAIN_NAME: &str = "R_WG_KILLSWITCH";
@@ -814,22 +814,7 @@ fn write_atomic_json(path: PathBuf, json: &[u8]) -> Result<(), NetworkError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let tmp_path = path.with_file_name(format!(
-        ".{}.tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(QUANTUM_GUARD_JOURNAL_FILE)
-    ));
-    {
-        let mut file = fs::File::create(&tmp_path)?;
-        file.write_all(json)?;
-        file.sync_all()?;
-    }
-    fs::rename(&tmp_path, &path)?;
-    if let Some(parent) = path.parent() {
-        fs::File::open(parent)?.sync_all()?;
-    }
-    Ok(())
+    atomic::write_atomic(&path, json).map_err(NetworkError::Io)
 }
 
 fn quantum_guard_journal_path() -> PathBuf {

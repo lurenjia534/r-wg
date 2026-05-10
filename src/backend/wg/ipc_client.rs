@@ -20,7 +20,9 @@ pub(crate) trait BackendTransport {
 
 pub(crate) fn info<T: BackendTransport>(transport: &T) -> Result<u32, EngineError> {
     match transport.send_command_raw(BackendCommand::Info) {
-        Ok(BackendReply::Info { protocol_version }) => Ok(protocol_version),
+        Ok(BackendReply::Info {
+            protocol_version, ..
+        }) => Ok(protocol_version),
         Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
         Ok(other) => Err(unexpected_reply(other)),
         Err(err) => Err(map_transport_error(
@@ -223,6 +225,9 @@ mod tests {
             match command {
                 BackendCommand::Info => Ok(BackendReply::Info {
                     protocol_version: IPC_PROTOCOL_VERSION,
+                    service_version: crate::backend::wg::ipc::backend_service_version(),
+                    platform: crate::backend::wg::ipc::backend_platform(),
+                    capabilities: crate::backend::wg::ipc::backend_capabilities(),
                 }),
                 BackendCommand::Start { .. } => Err(io::Error::from(io::ErrorKind::TimedOut)),
                 BackendCommand::Stop => Ok(BackendReply::Ok),

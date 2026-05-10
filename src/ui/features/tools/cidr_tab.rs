@@ -266,7 +266,7 @@ fn render_cidr_result_panel(
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     remaining.to_string(),
                                 ));
-                                let _ = app.update(cx, |app, cx| {
+                                app.update(cx, |app, cx| {
                                     app.push_success_toast("Remaining CIDRs copied", window, cx);
                                 });
                             }
@@ -285,7 +285,7 @@ fn render_cidr_result_panel(
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     payload.to_string(),
                                 ));
-                                let _ = app.update(cx, |app, cx| {
+                                app.update(cx, |app, cx| {
                                     app.push_success_toast("AllowedIPs line copied", window, cx);
                                 });
                             }

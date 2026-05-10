@@ -1,6 +1,9 @@
+mod backend;
+mod backend_diagnostics;
+mod connection;
+mod dns;
 mod page;
 mod preferences;
-mod system;
 #[cfg(test)]
 mod tests;
 

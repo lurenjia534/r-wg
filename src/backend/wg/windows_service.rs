@@ -11,7 +11,8 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
 use super::ipc::{
-    read_json_line, write_json_line, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
+    next_ipc_request_id, read_json_line, write_command_json_line, BackendCommand, BackendReply,
+    IPC_PROTOCOL_VERSION,
 };
 use super::ipc_client::{self, BackendTransport};
 use super::windows_pipe::PipeStream;
@@ -208,10 +209,17 @@ impl RemoteEngine {
     }
 
     fn send_command_raw(&self, command: BackendCommand) -> Result<BackendReply, io::Error> {
+        let request_id = next_ipc_request_id();
+        let command_name = command.name();
         let mut stream = PipeStream::connect()?;
-        write_json_line(&mut stream, &command)?;
+        crate::log::events::ipc::request_sent(request_id, command_name);
+        write_command_json_line(&mut stream, request_id, &command)?;
         let mut reader = BufReader::new(stream);
-        read_json_line(&mut reader)
+        let result = read_json_line(&mut reader);
+        if let Err(err) = &result {
+            crate::log::events::ipc::request_failed(request_id, command_name, err);
+        }
+        result
     }
 }
 

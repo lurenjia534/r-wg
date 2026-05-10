@@ -4,6 +4,7 @@ pub(crate) mod cidr_actions;
 mod cidr_tab;
 mod components;
 pub(crate) mod reachability_actions;
+mod reachability_results;
 mod reachability_tab;
 pub(crate) mod state;
 mod view;

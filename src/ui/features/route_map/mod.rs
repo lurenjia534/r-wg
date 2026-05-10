@@ -1,11 +1,21 @@
 pub(crate) mod controller;
 pub(crate) mod data;
 pub(crate) mod events;
+mod evidence_model;
 pub(crate) mod explain;
+mod explain_model;
 pub(crate) mod graph;
 pub(crate) mod inspector;
 pub(crate) mod inventory;
+mod plan_model;
+mod presentation_allowed;
+mod presentation_helpers;
+mod presentation_inventory;
+mod presentation_policy;
+mod presentation_warnings;
 mod presenter;
+mod routes;
+mod selection_model;
 mod view;
 
 use gpui::*;

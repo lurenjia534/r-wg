@@ -10,6 +10,7 @@ use super::super::policy::PolicyRoutingState;
 use super::super::NetworkError;
 use super::snapshot::{policy_snapshot, route_snapshots, route_snapshots_from_ops};
 use crate::core::route_plan::{RoutePlan, RoutePlanRouteOp};
+use crate::storage::atomic;
 
 const RECOVERY_JOURNAL_FILE: &str = "recovery.json";
 
@@ -97,7 +98,7 @@ fn write_recovery_journal(journal: &RecoveryJournal) -> Result<(), NetworkError>
     let json = serde_json::to_string(journal).map_err(|err| {
         NetworkError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
     })?;
-    fs::write(path, json)?;
+    atomic::write_atomic(&path, json.as_bytes())?;
     Ok(())
 }
 

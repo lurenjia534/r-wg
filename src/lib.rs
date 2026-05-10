@@ -28,12 +28,12 @@
 //! ```
 //!
 //! # 模块说明
-//! - [`application`]: 应用级服务（隧道会话、配置库、诊断服务）
-//! - [`backend`]: WireGuard 后端引擎与特权服务
-//! - [`core`]: 核心共享逻辑（配置解析、路由规划）
-//! - [`dns`]: DNS 配置与管理
-//! - [`log`]: 日志系统（基于 tracing）
-//! - [`platform`]: 平台特定实现（Linux/Windows 网络操作）
+//! - [`application`][]: 应用级服务（隧道会话、配置库、诊断服务）
+//! - [`backend`][]: WireGuard 后端引擎与特权服务
+//! - [`core`][]: 核心共享逻辑（配置解析、路由规划）
+//! - [`dns`][]: DNS 配置与管理
+//! - [`log`][]: 日志系统（基于 tracing）
+//! - [`platform`][]: 平台特定实现（Linux/Windows 网络操作）
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
@@ -74,3 +74,8 @@ pub mod tls;
 /// - [`platform::linux`]: Linux netlink 网络操作
 /// - [`platform::windows`]: Windows 网络API操作
 pub mod platform;
+
+/// 存储基础设施模块
+///
+/// 集中封装原子写入、权限与后续 repository 层复用的文件操作。
+pub mod storage;

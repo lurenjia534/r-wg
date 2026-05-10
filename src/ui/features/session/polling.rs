@@ -21,7 +21,7 @@ pub(crate) struct SampledRuntimeMetrics {
 pub(crate) fn start_stats_polling(app: &mut WgApp, cx: &mut Context<WgApp>) {
     app.stats.stats_generation = app.stats.stats_generation.wrapping_add(1);
     let generation = app.stats.stats_generation;
-    let tunnel_session = app.tunnel_session.clone();
+    let tunnel_session = app.services.tunnel_session.clone();
     let poll_interval = Duration::from_secs(2);
 
     cx.spawn(async move |view, cx| loop {

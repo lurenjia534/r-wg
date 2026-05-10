@@ -3,12 +3,12 @@ use r_wg::backend::wg::ActiveBackendStatus;
 use r_wg::core::config;
 
 use crate::ui::format::{format_bytes, format_duration, format_route_table, summarize_peers};
-use crate::ui::state::{
-    ConfigSource, TrafficPeriod, TrafficSummaryData, TrafficTrendData, TunnelConfig, WgApp,
-};
+use crate::ui::state::{ConfigSource, TrafficPeriod, TunnelConfig, WgApp};
 use crate::ui::view::shared::{
     format_allowed_summary, format_dns, format_endpoint, format_local_ip, ViewData,
 };
+
+use super::traffic_analytics::{TrafficSummaryData, TrafficTrendData};
 
 /// `OverviewData` 是 Overview 页的专属 ViewModel。
 ///

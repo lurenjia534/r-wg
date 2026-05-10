@@ -6,6 +6,8 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 use std::process::Command;
 
+use crate::storage::atomic;
+
 use super::super::EngineError;
 use super::install_model::{
     DEFAULT_DESKTOP_ENTRY_PATH, DEFAULT_ICON_PNG_PATH, DEFAULT_ICON_SVG_PATH, DESKTOP_ICON_PNG,
@@ -146,13 +148,8 @@ pub(super) fn write_root_owned_file(
         ))
     })?;
 
-    let temp_path = parent.join(".r-wg.install.tmp");
-    fs::write(&temp_path, contents)
-        .map_err(|err| remote_error(format!("failed to write temp {label}: {err}")))?;
-    fs::set_permissions(&temp_path, fs::Permissions::from_mode(mode))
-        .map_err(|err| remote_error(format!("failed to chmod {label}: {err}")))?;
-    fs::rename(&temp_path, path)
-        .map_err(|err| remote_error(format!("failed to place {label} {}: {err}", path.display())))
+    atomic::write_atomic_with_mode(path, contents, mode)
+        .map_err(|err| remote_error(format!("failed to write {label} {}: {err}", path.display())))
 }
 
 pub(super) fn remove_file_if_exists(path: &Path, label: &str) -> Result<(), EngineError> {

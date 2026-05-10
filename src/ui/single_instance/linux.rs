@@ -89,6 +89,7 @@ fn try_acquire_primary_lock(lock_path: &Path) -> Result<Option<File>, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(lock_path)
         .map_err(|err| {
             format!(

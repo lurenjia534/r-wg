@@ -7,7 +7,7 @@ use crate::ui::state::{BackendDiagnostic, WgApp};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn refresh_privileged_backend_status(app: &mut WgApp, cx: &mut Context<WgApp>) {
     let last_checked = app.ui.backend.checked_at;
-    let backend_admin = app.backend_admin.clone();
+    let backend_admin = app.services.backend_admin.clone();
     app.ui
         .set_backend_diagnostic(BackendDiagnostic::checking().with_checked_at(last_checked));
     cx.notify();
@@ -31,7 +31,7 @@ pub(crate) fn run_privileged_backend_action(
     action: PrivilegedServiceAction,
     cx: &mut Context<WgApp>,
 ) {
-    let backend_admin = app.backend_admin.clone();
+    let backend_admin = app.services.backend_admin.clone();
     let verb = backend_admin.action_verb(action);
     let last_checked = app.ui.backend.checked_at;
     app.set_status(format!("{verb} privileged backend..."));
@@ -46,7 +46,7 @@ pub(crate) fn run_privileged_backend_action(
         let _ = view.update(cx, |this, cx| {
             match result {
                 Ok(()) => {
-                    let done = this.backend_admin.action_success_message(action);
+                    let done = this.services.backend_admin.action_success_message(action);
                     this.set_status(done);
                 }
                 Err(err) => {

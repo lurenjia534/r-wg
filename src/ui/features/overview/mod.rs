@@ -3,6 +3,8 @@ mod chart;
 mod common;
 mod traffic;
 mod traffic_analytics;
+mod traffic_share;
+mod traffic_trend;
 mod view;
 mod view_model;
 

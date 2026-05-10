@@ -15,8 +15,9 @@ use crate::ui::i18n::tr;
 use crate::ui::state::{ConfigInspectorTab, ConfigsPrimaryPane, WgApp};
 
 use super::editor::render_editor_panel;
-use super::inspector::{render_configs_primary_pane_tabs, render_inspector_panel};
+use super::inspector::render_inspector_panel;
 use super::library::render_library_panel;
+use super::pane_tabs::render_configs_primary_pane_tabs;
 use super::{
     ConfigsLayoutMode, ConfigsRuntimeView, ConfigsViewData, CONFIGS_MEDIUM_INSPECTOR_HEIGHT,
 };

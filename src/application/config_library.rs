@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::{fs, io::ErrorKind};
 
 use crate::core::config;
+use crate::storage::config_repository::ConfigRepository;
 
 #[derive(Clone, Default)]
 pub struct ConfigLibraryService;
@@ -339,7 +339,7 @@ impl ConfigLibraryService {
     }
 
     pub fn read_import_source(&self, path: &Path) -> Result<ImportSource, String> {
-        let text = std::fs::read_to_string(path).map_err(|err| format!("Read failed: {err}"))?;
+        let text = self.read_config_text(path)?;
         config::parse_config(&text).map_err(|err| format!("Invalid config: {err}"))?;
         Ok(ImportSource {
             suggested_name: suggested_name_from_path(path),
@@ -363,7 +363,9 @@ impl ConfigLibraryService {
     }
 
     pub fn read_config_text(&self, path: &Path) -> Result<String, String> {
-        std::fs::read_to_string(path).map_err(|err| format!("Read failed: {err}"))
+        ConfigRepository::new()
+            .read_text(path)
+            .map_err(|err| format!("Read failed: {err}"))
     }
 
     pub fn resolve_export_text(
@@ -378,7 +380,9 @@ impl ConfigLibraryService {
     }
 
     pub fn write_config_text(&self, path: &Path, text: &str) -> Result<(), String> {
-        write_atomic(path, text.as_bytes())
+        ConfigRepository::new()
+            .write_text(path, text)
+            .map_err(|err| format!("Write failed: {err}"))
     }
 
     pub fn plan_export_path(&self, directory: &Path, config_name: &str) -> PathBuf {
@@ -391,14 +395,9 @@ impl ConfigLibraryService {
     }
 
     pub fn delete_config_files(&self, paths: &[PathBuf]) -> Result<(), String> {
-        for path in paths {
-            match fs::remove_file(path) {
-                Ok(()) => {}
-                Err(err) if err.kind() == ErrorKind::NotFound => {}
-                Err(err) => return Err(format!("Remove file failed: {err}")),
-            }
-        }
-        Ok(())
+        ConfigRepository::new()
+            .delete_files(paths)
+            .map_err(|err| format!("Remove file failed: {err}"))
     }
 }
 
@@ -625,22 +624,6 @@ fn sanitize_export_stem(name: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
-    let tmp_path = path.with_extension("tmp");
-    std::fs::write(&tmp_path, contents).map_err(|err| format!("Write temp file failed: {err}"))?;
-    if let Err(err) = std::fs::rename(&tmp_path, path) {
-        if path.exists() {
-            std::fs::remove_file(path)
-                .map_err(|remove_err| format!("Remove old file failed: {remove_err}"))?;
-            std::fs::rename(&tmp_path, path)
-                .map_err(|rename_err| format!("Replace file failed: {rename_err}"))?;
-            return Ok(());
-        }
-        return Err(format!("Commit file failed: {err}"));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

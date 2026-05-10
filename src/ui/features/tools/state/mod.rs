@@ -51,7 +51,9 @@ impl JobCancelHandle {
     }
 }
 
+#[derive(Default)]
 pub(crate) enum AsyncJobState<T> {
+    #[default]
     Idle,
     Running {
         generation: u64,
@@ -59,12 +61,6 @@ pub(crate) enum AsyncJobState<T> {
     },
     Ready(T),
     Failed(SharedString),
-}
-
-impl<T> Default for AsyncJobState<T> {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl<T> AsyncJobState<T> {

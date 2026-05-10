@@ -3,6 +3,7 @@ mod controller;
 mod files;
 mod lint;
 mod model;
+mod preview;
 mod resolver;
 mod view;
 

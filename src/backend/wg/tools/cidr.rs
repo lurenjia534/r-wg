@@ -253,9 +253,7 @@ fn subtract_prefix(
 ) -> Result<(), ToolError> {
     if !overlaps(include, exclude) {
         out.push(include.clone());
-    } else if contains_prefix(exclude, include) {
-        return Ok(());
-    } else if include.cidr >= max_bits(include.addr) {
+    } else if contains_prefix(exclude, include) || include.cidr >= max_bits(include.addr) {
         return Ok(());
     } else {
         let (left, right) = split_children(include);

@@ -327,6 +327,10 @@ async fn build_batch_reachability_result(
         })
         .count();
 
+    update_progress(&progress, |state| {
+        state.phase = ReachabilityAuditPhase::Completed;
+    });
+
     Ok(ReachabilityBatchResult {
         total_configs,
         endpoint_rows,

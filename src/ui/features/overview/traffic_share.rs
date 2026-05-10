@@ -1,0 +1,513 @@
+use gpui::prelude::FluentBuilder as _;
+use gpui::*;
+use gpui_component::{
+    chart::PieChart, h_flex, v_flex, ActiveTheme as _, Icon, IconName, StyledExt as _,
+};
+
+use crate::ui::format::format_bytes;
+
+use super::common::{tile_border, tile_surface};
+use super::traffic_analytics::TrafficSummaryData;
+
+pub(super) fn config_share_panel<T>(
+    summary: &TrafficSummaryData,
+    saved_total: u64,
+    upload_color: Hsla,
+    download_color: Hsla,
+    cx: &mut Context<T>,
+) -> Div {
+    let rows = config_share_rows(summary, saved_total, cx);
+
+    match config_share_mode(summary, saved_total) {
+        ConfigShareMode::Empty => config_share_empty_state(cx),
+        ConfigShareMode::Single => v_flex()
+            .gap_2()
+            .child(config_share_insight(summary, saved_total, cx))
+            .child(config_share_list(&rows, upload_color, download_color, cx)),
+        ConfigShareMode::Donut => h_flex()
+            .items_start()
+            .flex_wrap()
+            .gap_3()
+            .child(config_share_donut(summary, &rows, saved_total, cx))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(296.0))
+                    .gap_2()
+                    .child(config_share_insight(summary, saved_total, cx))
+                    .child(config_share_list(&rows, upload_color, download_color, cx)),
+            ),
+        ConfigShareMode::Bars => v_flex()
+            .gap_2()
+            .child(config_share_insight(summary, saved_total, cx))
+            .child(config_share_list(&rows, upload_color, download_color, cx)),
+    }
+}
+
+pub(super) fn saved_config_total(summary: &TrafficSummaryData) -> u64 {
+    summary
+        .ranked
+        .iter()
+        .fold(summary.others_total, |acc, item| {
+            acc.saturating_add(item.total_bytes())
+        })
+}
+
+pub(super) fn percent(value: u64, total: u64) -> f32 {
+    if total == 0 {
+        0.0
+    } else {
+        (value as f64 / total as f64 * 100.0) as f32
+    }
+}
+
+fn config_share_empty_state<T>(cx: &mut Context<T>) -> Div {
+    div()
+        .min_h(px(196.0))
+        .w_full()
+        .rounded_xl()
+        .border_1()
+        .border_color(tile_border(cx))
+        .bg(tile_surface(cx))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .child(
+            div()
+                .size(px(40.0))
+                .rounded_full()
+                .bg(cx
+                    .theme()
+                    .secondary
+                    .alpha(if cx.theme().is_dark() { 0.34 } else { 0.5 }))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    Icon::new(IconName::ChartPie)
+                        .size_4()
+                        .text_color(cx.theme().chart_3),
+                ),
+        )
+        .child(
+            div()
+                .text_sm()
+                .font_semibold()
+                .text_color(cx.theme().foreground)
+                .child("No saved config traffic in this period"),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().muted_foreground)
+                .child("Switch the period or wait for a config to record traffic."),
+        )
+}
+
+fn config_share_insight<T>(
+    summary: &TrafficSummaryData,
+    saved_total: u64,
+    cx: &mut Context<T>,
+) -> Div {
+    let lead_name = summary
+        .top_config_name
+        .as_deref()
+        .unwrap_or("No active config");
+    let lead_share = if summary.active_configs <= 1 {
+        "100% share".to_string()
+    } else {
+        format!(
+            "{:.1}% share",
+            percent(summary.top_config_total, saved_total)
+        )
+    };
+    let shell_bg = cx
+        .theme()
+        .secondary
+        .alpha(if cx.theme().is_dark() { 0.2 } else { 0.34 });
+    let shell_border = cx
+        .theme()
+        .border
+        .alpha(if cx.theme().is_dark() { 0.38 } else { 0.3 });
+
+    v_flex()
+        .gap_2()
+        .p_3()
+        .rounded_xl()
+        .border_1()
+        .border_color(shell_border)
+        .bg(shell_bg)
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().muted_foreground)
+                .child("Lead Config"),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .justify_between()
+                .flex_wrap()
+                .gap_2()
+                .child(
+                    div()
+                        .text_base()
+                        .font_semibold()
+                        .text_color(cx.theme().foreground)
+                        .child(lead_name.to_string()),
+                )
+                .child(summary_stat_chip(lead_share, cx.theme().chart_3, cx)),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .flex_wrap()
+                .gap_2()
+                .child(summary_stat_chip(
+                    format_bytes(summary.top_config_total),
+                    cx.theme().foreground,
+                    cx,
+                ))
+                .child(summary_stat_chip(
+                    format!("{} active", summary.active_configs),
+                    cx.theme().muted_foreground,
+                    cx,
+                ))
+                .when(summary.others_total > 0, |this| {
+                    this.child(summary_stat_chip(
+                        format!("{} in Others", format_bytes(summary.others_total)),
+                        cx.theme().muted_foreground,
+                        cx,
+                    ))
+                })
+                .when(summary.others_total == 0 && saved_total > 0, |this| {
+                    this.child(summary_stat_chip(
+                        format!("{} total", format_bytes(saved_total)),
+                        cx.theme().muted_foreground,
+                        cx,
+                    ))
+                }),
+        )
+}
+
+fn summary_stat_chip<T>(label: impl Into<SharedString>, color: Hsla, cx: &mut Context<T>) -> Div {
+    let label: SharedString = label.into();
+    div()
+        .px_2()
+        .py_1()
+        .rounded_full()
+        .bg(color.alpha(if cx.theme().is_dark() { 0.14 } else { 0.1 }))
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(color)
+        .child(label)
+}
+
+fn config_share_donut<T>(
+    summary: &TrafficSummaryData,
+    rows: &[ConfigShareRow],
+    saved_total: u64,
+    cx: &mut Context<T>,
+) -> Div {
+    div().min_w(px(248.0)).flex_1().child(
+        div()
+            .p_4()
+            .rounded_xl()
+            .bg(cx
+                .theme()
+                .secondary
+                .alpha(if cx.theme().is_dark() { 0.12 } else { 0.24 }))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .size(px(196.0))
+                    .relative()
+                    .child(
+                        PieChart::new(rows.to_vec())
+                            .value(|row| row.total as f32)
+                            .inner_radius(66.0)
+                            .outer_radius(88.0)
+                            .pad_angle(0.022)
+                            .color(|row| row.color)
+                            .into_any_element(),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().muted_foreground.opacity(0.72))
+                                    .child("SHARE"),
+                            )
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().foreground)
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .child(format_bytes(saved_total)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().muted_foreground.opacity(0.82))
+                                    .child(if summary.active_configs == 1 {
+                                        "1 config".to_string()
+                                    } else {
+                                        format!("{} configs", summary.active_configs)
+                                    }),
+                            ),
+                    ),
+            ),
+    )
+}
+
+fn config_share_list<T>(
+    rows: &[ConfigShareRow],
+    upload_color: Hsla,
+    download_color: Hsla,
+    cx: &mut Context<T>,
+) -> Div {
+    if rows.is_empty() {
+        return config_share_empty_state(cx);
+    }
+
+    let row_border = cx
+        .theme()
+        .border
+        .alpha(if cx.theme().is_dark() { 0.34 } else { 0.26 });
+    let row_surface = cx
+        .theme()
+        .background
+        .alpha(if cx.theme().is_dark() { 0.34 } else { 0.64 });
+    let list_border = tile_border(cx);
+    let list_surface = tile_surface(cx);
+    let track = cx
+        .theme()
+        .secondary
+        .alpha(if cx.theme().is_dark() { 0.46 } else { 0.58 });
+
+    let rows = rows.iter().map(|row| {
+        let split_total = row.rx_bytes.saturating_add(row.tx_bytes);
+        let upload_ratio = if split_total == 0 {
+            0.0
+        } else {
+            row.tx_bytes as f32 / split_total as f32
+        };
+
+        v_flex()
+            .gap_1()
+            .px_3()
+            .py_1()
+            .rounded_lg()
+            .border_1()
+            .border_color(row_border)
+            .bg(row_surface)
+            .child(
+                h_flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_1p5()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().size(px(8.0)).rounded_full().bg(row.color))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().foreground)
+                                    .child(row.name.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .items_baseline()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().foreground)
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .child(format_bytes(row.total)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!("{:.1}%", row.share_pct)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .h(px(6.0))
+                    .w_full()
+                    .rounded_full()
+                    .overflow_hidden()
+                    .bg(track)
+                    .child(if row.is_other {
+                        div()
+                            .h_full()
+                            .w(relative(row.share_pct / 100.0))
+                            .bg(row.color)
+                    } else {
+                        h_flex()
+                            .h_full()
+                            .w(relative(row.share_pct / 100.0))
+                            .child(div().h_full().w(relative(upload_ratio)).bg(upload_color))
+                            .child(div().h_full().flex_grow().bg(download_color))
+                    }),
+            )
+            .child(if row.is_other {
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Tail configs collapsed")
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_1p5()
+                    .child(direction_value("Up", row.tx_bytes, upload_color, cx))
+                    .child(direction_value("Down", row.rx_bytes, download_color, cx))
+                    .into_any_element()
+            })
+    });
+
+    v_flex()
+        .gap_1p5()
+        .p_2()
+        .bg(list_surface)
+        .rounded_xl()
+        .border_1()
+        .border_color(list_border)
+        .children(rows)
+}
+
+fn direction_value<T>(label: &str, value: u64, color: Hsla, cx: &mut Context<T>) -> Div {
+    h_flex()
+        .items_center()
+        .gap_1p5()
+        .child(div().size(px(7.0)).rounded_full().bg(color))
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().muted_foreground)
+                .child(label.to_string()),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(cx.theme().foreground)
+                .font_family(cx.theme().mono_font_family.clone())
+                .child(format_bytes(value)),
+        )
+}
+
+fn config_share_mode(summary: &TrafficSummaryData, saved_total: u64) -> ConfigShareMode {
+    if summary.active_configs == 0 || saved_total == 0 {
+        ConfigShareMode::Empty
+    } else if summary.active_configs == 1 && summary.others_total == 0 {
+        ConfigShareMode::Single
+    } else if summary.active_configs <= 5 {
+        ConfigShareMode::Donut
+    } else {
+        ConfigShareMode::Bars
+    }
+}
+
+fn config_share_rows<T>(
+    summary: &TrafficSummaryData,
+    saved_total: u64,
+    cx: &mut Context<T>,
+) -> Vec<ConfigShareRow> {
+    let palette = config_share_palette(cx);
+    let mut rows = summary
+        .ranked
+        .iter()
+        .enumerate()
+        .map(|(index, item)| ConfigShareRow {
+            name: item.name.clone(),
+            total: item.total_bytes(),
+            rx_bytes: item.rx_bytes,
+            tx_bytes: item.tx_bytes,
+            share_pct: percent(item.total_bytes(), saved_total),
+            color: palette[index % palette.len()],
+            is_other: false,
+        })
+        .collect::<Vec<_>>();
+
+    if summary.others_total > 0 {
+        rows.push(ConfigShareRow {
+            name: format!(
+                "Others ({})",
+                summary.active_configs.saturating_sub(summary.ranked.len())
+            ),
+            total: summary.others_total,
+            rx_bytes: 0,
+            tx_bytes: 0,
+            share_pct: percent(summary.others_total, saved_total),
+            color: cx
+                .theme()
+                .muted_foreground
+                .alpha(if cx.theme().is_dark() { 0.3 } else { 0.22 }),
+            is_other: true,
+        });
+    }
+
+    rows
+}
+
+fn config_share_palette<T>(cx: &mut Context<T>) -> [Hsla; 7] {
+    [
+        cx.theme().chart_3,
+        cx.theme().chart_4,
+        cx.theme().chart_5,
+        cx.theme().chart_3.opacity(0.8),
+        cx.theme().chart_4.opacity(0.8),
+        cx.theme().chart_5.opacity(0.8),
+        cx.theme()
+            .muted_foreground
+            .alpha(if cx.theme().is_dark() { 0.68 } else { 0.52 }),
+    ]
+}
+
+#[derive(Clone, Copy)]
+enum ConfigShareMode {
+    Empty,
+    Single,
+    Donut,
+    Bars,
+}
+
+#[derive(Clone)]
+struct ConfigShareRow {
+    name: String,
+    total: u64,
+    rx_bytes: u64,
+    tx_bytes: u64,
+    share_pct: f32,
+    color: Hsla,
+    is_other: bool,
+}

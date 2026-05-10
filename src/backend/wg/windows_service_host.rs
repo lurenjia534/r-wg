@@ -15,8 +15,8 @@ use windows::Win32::System::Services::{
 };
 
 use super::engine::Engine as LocalEngine;
-use super::ipc::{read_json_line, write_json_line, BackendCommand};
-use super::ipc_server::dispatch_command;
+use super::ipc::{read_backend_request, write_json_line};
+use super::ipc_server::dispatch_request;
 use super::windows_service::SERVICE_NAME;
 use super::{EngineError, EngineStatus};
 use crate::log::events::service as log_service;
@@ -149,11 +149,11 @@ fn handle_pipe_client(
     mut stream: super::windows_pipe::PipeStream,
     engine: LocalEngine,
 ) -> io::Result<()> {
-    let command: BackendCommand = {
+    let request = {
         let mut reader = BufReader::new(&mut stream);
-        read_json_line(&mut reader)?
+        read_backend_request(&mut reader)?
     };
-    let reply = dispatch_command(&engine, command);
+    let reply = dispatch_request(&engine, request);
     write_json_line(&mut stream, &reply)
 }
 

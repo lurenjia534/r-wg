@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::os::unix::net::UnixStream;
 
 use super::super::ipc::{
-    read_json_line, write_json_line, BackendCommand, BackendReply, IPC_PROTOCOL_VERSION,
+    next_ipc_request_id, read_json_line, write_command_json_line, BackendCommand, BackendReply,
+    IPC_PROTOCOL_VERSION,
 };
 use super::super::ipc_client::{self, BackendTransport};
 use super::super::{
@@ -54,7 +55,9 @@ pub fn probe_privileged_service() -> PrivilegedServiceStatus {
     if systemd_unit_is_active(SERVICE_UNIT_NAME) {
         let engine = RemoteEngine::new();
         return match engine.send_command_raw(BackendCommand::Info) {
-            Ok(BackendReply::Info { protocol_version }) => {
+            Ok(BackendReply::Info {
+                protocol_version, ..
+            }) => {
                 if protocol_version == IPC_PROTOCOL_VERSION {
                     match engine.status() {
                         Ok(_) => PrivilegedServiceStatus::Running,
@@ -190,12 +193,19 @@ impl RemoteEngine {
         &self,
         command: BackendCommand,
     ) -> Result<BackendReply, io::Error> {
+        let request_id = next_ipc_request_id();
+        let command_name = command.name();
         let mut stream = UnixStream::connect(self.socket_path.as_path())?;
         let _ = stream.set_read_timeout(Some(SERVICE_IO_TIMEOUT));
         let _ = stream.set_write_timeout(Some(SERVICE_IO_TIMEOUT));
-        write_json_line(&mut stream, &command)?;
+        crate::log::events::ipc::request_sent(request_id, command_name);
+        write_command_json_line(&mut stream, request_id, &command)?;
         let mut reader = BufReader::new(stream);
-        read_json_line(&mut reader)
+        let result = read_json_line(&mut reader);
+        if let Err(err) = &result {
+            crate::log::events::ipc::request_failed(request_id, command_name, err);
+        }
+        result
     }
 }
 

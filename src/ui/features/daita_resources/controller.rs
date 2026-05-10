@@ -5,7 +5,7 @@ use crate::ui::state::{DaitaResourcesDiagnostic, WgApp};
 pub(crate) fn refresh_daita_resources_status(app: &mut WgApp, cx: &mut Context<WgApp>) {
     let last_checked = app.ui.daita_resources.checked_at;
     let previous = app.ui.daita_resources.clone();
-    let tunnel_session = app.tunnel_session.clone();
+    let tunnel_session = app.services.tunnel_session.clone();
     app.ui.set_daita_resources_diagnostic(
         DaitaResourcesDiagnostic::checking().with_checked_at(last_checked),
     );
@@ -38,7 +38,7 @@ pub(crate) fn refresh_daita_resources_status(app: &mut WgApp, cx: &mut Context<W
 }
 
 pub(crate) fn refresh_daita_resources_cache(app: &mut WgApp, cx: &mut Context<WgApp>) {
-    let tunnel_session = app.tunnel_session.clone();
+    let tunnel_session = app.services.tunnel_session.clone();
     let previous = app.ui.daita_resources.clone();
     app.set_status("Refreshing DAITA resources...");
     app.ui

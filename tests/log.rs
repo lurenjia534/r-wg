@@ -4,6 +4,8 @@ use r_wg::log::{self, LogLevel};
 
 // 与日志模块容量保持一致，便于断言溢出行为。
 const MAX_LOG_LINES: usize = 2000;
+const MAX_LOG_SNAPSHOT_LINES: usize = log::MAX_LOG_SNAPSHOT_LINES;
+const MAX_LOG_SNAPSHOT_BYTES: usize = log::MAX_LOG_SNAPSHOT_BYTES;
 
 static INIT: Once = Once::new();
 static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -92,4 +94,99 @@ fn tracing_targets_under_app_namespace_are_captured_and_scoped() {
         .iter()
         .any(|line| line.ends_with("[r-wg][service] service target")));
     assert!(!lines.iter().any(|line| line.contains("external target")));
+}
+
+#[test]
+fn snapshot_for_ipc_limits_lines() {
+    let _guard = test_lock();
+    test_init();
+    log::set_buffer_enabled(true);
+    log::clear();
+
+    for idx in 0..(MAX_LOG_SNAPSHOT_LINES + 12) {
+        log::event(LogLevel::Info, "ipc", format_args!("ipc-line-{idx}"));
+    }
+
+    let lines = log::snapshot_for_ipc();
+
+    assert_eq!(lines.len(), MAX_LOG_SNAPSHOT_LINES);
+    assert!(lines
+        .first()
+        .expect("first ipc log line")
+        .ends_with("[r-wg][ipc] ipc-line-12"));
+}
+
+#[test]
+fn snapshot_for_ipc_limits_total_bytes() {
+    let _guard = test_lock();
+    test_init();
+    log::set_buffer_enabled(true);
+    log::clear();
+
+    for idx in 0..8 {
+        log::event(
+            LogLevel::Info,
+            "ipc",
+            format_args!("ipc-big-line-{idx}-{}", "x".repeat(64 * 1024)),
+        );
+    }
+
+    let lines = log::snapshot_for_ipc();
+    let total_bytes = lines.iter().map(|line| line.len()).sum::<usize>();
+
+    assert!(total_bytes <= MAX_LOG_SNAPSHOT_BYTES);
+    assert!(lines
+        .last()
+        .expect("latest ipc line")
+        .contains("ipc-big-line-7"));
+}
+
+#[test]
+fn snapshot_for_ipc_truncates_latest_line_when_needed() {
+    let _guard = test_lock();
+    test_init();
+    log::set_buffer_enabled(true);
+    log::clear();
+
+    log::event(
+        LogLevel::Info,
+        "ipc",
+        format_args!("oversized-{}", "x".repeat(MAX_LOG_SNAPSHOT_BYTES + 1024)),
+    );
+
+    let lines = log::snapshot_for_ipc();
+    let total_bytes = lines.iter().map(|line| line.len()).sum::<usize>();
+
+    assert_eq!(lines.len(), 1);
+    assert!(total_bytes <= MAX_LOG_SNAPSHOT_BYTES);
+    assert!(lines[0].contains("...<truncated>"));
+}
+
+#[test]
+fn snapshot_for_ipc_redacts_sensitive_key_values() {
+    let _guard = test_lock();
+    test_init();
+    log::set_buffer_enabled(true);
+    log::clear();
+
+    log::event(
+        LogLevel::Info,
+        "ipc",
+        format_args!(
+            "PrivateKey=secret-key token:secret-token auth = secret-auth author=kept visible"
+        ),
+    );
+
+    let line = log::snapshot_for_ipc()
+        .pop()
+        .expect("redacted ipc log line");
+
+    assert!(line.contains("PrivateKey=<redacted>"));
+    assert!(line.contains("token:<redacted>"));
+    assert!(line.contains("auth = <redacted>"));
+    assert!(line.contains("author=kept"));
+    assert!(line.contains("visible"));
+    assert!(!line.contains("secret-key"));
+    assert!(!line.contains("secret-token"));
+    assert!(!line.contains("secret-auth"));
 }

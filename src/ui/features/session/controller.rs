@@ -59,7 +59,7 @@ fn current_toggle_decision(app: &mut WgApp, cx: &mut Context<WgApp>) -> ToggleTu
 fn apply_toggle_decision(
     app: &mut WgApp,
     decision: ToggleTunnelDecision,
-    mut window: Option<&mut Window>,
+    window: Option<&mut Window>,
     cx: &mut Context<WgApp>,
 ) {
     match decision {
@@ -69,7 +69,7 @@ fn apply_toggle_decision(
         // 排队等待启动：忙碌中但有新启动请求
         ToggleTunnelDecision::QueuePendingStart { config_id } => {
             if app.ui_prefs.require_connect_password {
-                let Some(window) = window.as_deref_mut() else {
+                let Some(window) = window else {
                     let message = connect_password_window_required_message();
                     app.set_error(message);
                     tray::notify_system("r-wg", message, true);
@@ -102,7 +102,7 @@ fn apply_toggle_decision(
             app.set_status("Stopping...");
             cx.notify();
 
-            let tunnel_session = app.tunnel_session.clone();
+            let tunnel_session = app.services.tunnel_session.clone();
             cx.spawn(async move |view, cx| {
                 let stop_task = cx.background_spawn(async move { tunnel_session.stop() });
                 let result = stop_task.await;
@@ -140,7 +140,7 @@ fn apply_toggle_decision(
             restart_delay,
         } => {
             if app.ui_prefs.require_connect_password {
-                let Some(window) = window.as_deref_mut() else {
+                let Some(window) = window else {
                     let message = connect_password_window_required_message();
                     app.set_error(message);
                     tray::notify_system("r-wg", message, true);
@@ -216,8 +216,8 @@ fn start_with_config(
         return;
     }
 
-    let tunnel_session = app.tunnel_session.clone();
-    let config_library = app.config_library.clone();
+    let tunnel_session = app.services.tunnel_session.clone();
+    let config_library = app.services.config_library.clone();
     let dns_selection = DnsSelection::new(app.ui_prefs.dns_mode, app.ui_prefs.dns_preset);
     let quantum_mode = app.ui_prefs.quantum_mode;
     let daita_mode = app.ui_prefs.daita_mode;

@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 
 use gpui::App;
 use gpui_component::theme::{ThemeConfig, ThemeRegistry, ThemeSet};
+use r_wg::storage::{atomic, permissions};
 use serde_json::{Map, Value};
 
 use crate::ui::format::sanitize_file_stem;
@@ -74,7 +75,7 @@ pub(crate) fn themes_dir(storage: &StoragePaths) -> PathBuf {
 
 pub(crate) fn ensure_themes_dir(storage: &StoragePaths) -> Result<PathBuf, String> {
     let themes_dir = themes_dir(storage);
-    std::fs::create_dir_all(&themes_dir)
+    permissions::ensure_private_dir(&themes_dir)
         .map_err(|err| format!("Create themes dir failed: {err}"))?;
 
     let legacy_curated_path = themes_dir.join(LEGACY_CURATED_THEMES_FILE_NAME);
@@ -124,7 +125,7 @@ pub(crate) fn write_theme_set(
     let themes_dir = ensure_themes_dir(storage)?;
     let path = unique_theme_file_path(&themes_dir, file_stem);
     let data = encode_theme_set(theme_set)?;
-    std::fs::write(&path, data)
+    atomic::write_atomic(&path, &data)
         .map_err(|err| format!("Write theme {} failed: {err}", path.display()))?;
     Ok(path)
 }
@@ -265,7 +266,7 @@ fn sync_bundled_theme_files(themes_dir: &Path) -> Result<(), String> {
         };
 
         if needs_write {
-            std::fs::write(&path, file.contents)
+            atomic::write_atomic(&path, file.contents.as_bytes())
                 .map_err(|err| format!("Write bundled theme {} failed: {err}", path.display()))?;
         }
     }

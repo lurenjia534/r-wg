@@ -154,7 +154,7 @@ pub(crate) fn load_config_into_inputs(
     cx.notify();
 
     let view = cx.weak_entity();
-    let config_library = app.config_library.clone();
+    let config_library = app.services.config_library.clone();
     window
         .spawn(cx, async move |cx| {
             let path_for_match = path.clone();
@@ -266,15 +266,18 @@ pub(crate) fn save_draft(
     let existing_configs = existing_stored_configs(app);
     let next_id = app.configs.next_config_id();
     let next_storage_path = persistence::config_path(&storage, next_id);
-    let target_plan = match app.config_library.plan_save_target(SaveTargetRequest {
-        requested_name: draft.name.as_ref(),
-        text: text.as_ref(),
-        source_id: draft.source_id,
-        force_new,
-        existing_configs: &existing_configs,
-        next_id,
-        next_storage_path,
-    }) {
+    let target_plan = match app
+        .services
+        .config_library
+        .plan_save_target(SaveTargetRequest {
+            requested_name: draft.name.as_ref(),
+            text: text.as_ref(),
+            source_id: draft.source_id,
+            force_new,
+            existing_configs: &existing_configs,
+            next_id,
+            next_storage_path,
+        }) {
         Ok(plan) => plan,
         Err(err) => {
             app.set_error(err.message());
@@ -329,7 +332,7 @@ pub(crate) fn save_draft(
 
     let storage_path_for_write = storage_path.clone();
     let view = cx.weak_entity();
-    let config_library = app.config_library.clone();
+    let config_library = app.services.config_library.clone();
     window
         .spawn(cx, async move |cx| {
             let write_task = cx.background_spawn(async move {
@@ -398,12 +401,15 @@ pub(crate) fn handle_rename_click(app: &mut WgApp, window: &mut Window, cx: &mut
     draft::apply_draft_validation(app, cx);
     let draft = app.configs_draft_snapshot(cx);
     let existing_configs = existing_stored_configs(app);
-    let rename = match app.config_library.plan_rename(RenameConfigRequest {
-        requested_name: draft.name.as_ref(),
-        source_id: draft.source_id,
-        selected_id: app.selection.selected_id,
-        existing_configs: &existing_configs,
-    }) {
+    let rename = match app
+        .services
+        .config_library
+        .plan_rename(RenameConfigRequest {
+            requested_name: draft.name.as_ref(),
+            source_id: draft.source_id,
+            selected_id: app.selection.selected_id,
+            existing_configs: &existing_configs,
+        }) {
         Ok(RenameConfigDecision::Unchanged) => {
             app.set_status("Name unchanged");
             cx.notify();
@@ -500,13 +506,16 @@ fn delete_configs_internal(
     cx: &mut Context<WgApp>,
 ) {
     let existing_configs = existing_stored_configs(app);
-    let plan = match app.config_library.plan_delete(DeleteConfigsRequest {
-        requested_ids: ids,
-        existing_configs: &existing_configs,
-        running_id: app.runtime.running_id,
-        running_name: app.runtime.running_name.as_deref(),
-        policy,
-    }) {
+    let plan = match app
+        .services
+        .config_library
+        .plan_delete(DeleteConfigsRequest {
+            requested_ids: ids,
+            existing_configs: &existing_configs,
+            running_id: app.runtime.running_id,
+            running_name: app.runtime.running_name.as_deref(),
+            policy,
+        }) {
         DeleteConfigsDecision::NoSelection => {
             app.set_error("No configs selected");
             cx.notify();
@@ -519,7 +528,8 @@ fn delete_configs_internal(
         }
         DeleteConfigsDecision::OnlySkippedRunning { skipped_running } => {
             app.set_status(
-                app.config_library
+                app.services
+                    .config_library
                     .delete_status_message(&[], skipped_running.len()),
             );
             cx.notify();
@@ -565,6 +575,7 @@ fn delete_configs_internal(
         .map(|config| config.id)
         .collect::<Vec<_>>();
     match app
+        .services
         .config_library
         .plan_post_delete_selection(PostDeleteSelectionRequest {
             remaining_ids: &remaining_ids,
@@ -585,7 +596,8 @@ fn delete_configs_internal(
     }
 
     app.set_status(
-        app.config_library
+        app.services
+            .config_library
             .delete_status_message(&deleted_names, skipped_running.len()),
     );
     app.persist_state_async(cx);

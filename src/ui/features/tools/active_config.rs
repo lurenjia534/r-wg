@@ -359,9 +359,9 @@ impl ToolsWorkspace {
             } else {
                 parse_state
             };
-            self.active_config_cancel
-                .take()
-                .map(|cancel| cancel.cancel());
+            if let Some(cancel) = self.active_config_cancel.take() {
+                cancel.cancel();
+            }
             self.active_config_refresh_pending = refresh_pending;
             self.active_config = ActiveConfigSnapshot {
                 revision: self.active_config.revision.wrapping_add(1),
@@ -378,9 +378,9 @@ impl ToolsWorkspace {
         self.active_config_generation = self.active_config_generation.wrapping_add(1);
         let generation = self.active_config_generation;
         let cancel = JobCancelHandle::new();
-        self.active_config_cancel
-            .take()
-            .map(|existing| existing.cancel());
+        if let Some(existing) = self.active_config_cancel.take() {
+            existing.cancel();
+        }
         self.active_config_cancel = Some(cancel.clone());
         self.active_config_refresh_pending = false;
         let source_label = bridge.snapshot.source_label.clone();

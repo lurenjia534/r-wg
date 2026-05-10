@@ -25,7 +25,8 @@ use crate::ui::state::WgApp;
 
 use super::{
     cards::{network_status_card, running_status_card, traffic_stats_card},
-    traffic::{traffic_summary_card, traffic_trend_card},
+    traffic::traffic_summary_card,
+    traffic_trend::traffic_trend_card,
     view_model::OverviewData,
 };
 

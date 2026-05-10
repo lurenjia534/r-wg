@@ -1,4 +1,7 @@
+mod badges;
+mod collection;
 pub(crate) mod controller;
+mod detail;
 mod grid;
 mod model;
 mod view;

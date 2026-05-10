@@ -41,7 +41,7 @@ impl WgApp {
         log_ui::logs_opened();
         self.ui.backend_log_poll_generation = self.ui.backend_log_poll_generation.wrapping_add(1);
         let generation = self.ui.backend_log_poll_generation;
-        let tunnel_session = self.tunnel_session.clone();
+        let tunnel_session = self.services.tunnel_session.clone();
 
         cx.spawn(async move |view, cx| loop {
             let should_continue = view
@@ -101,7 +101,7 @@ impl WgApp {
                 input.set_value("", window, cx);
             });
         }
-        let tunnel_session = self.tunnel_session.clone();
+        let tunnel_session = self.services.tunnel_session.clone();
         cx.spawn(async move |view, cx| {
             let result = cx
                 .background_spawn(async move {

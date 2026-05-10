@@ -77,7 +77,7 @@ fn main() {
         Ok(ui::single_instance::StartupDecision::Primary(primary)) => ui::run(primary),
         // 次实例：已有实例在运行，新实例直接退出
         // 这是正常行为，不需要显示错误
-        Ok(ui::single_instance::StartupDecision::Secondary) => return,
+        Ok(ui::single_instance::StartupDecision::Secondary) => (),
         // 启动失败：可能是锁文件损坏或其他错误
         Err(err) => {
             r_wg::log::events::app::single_instance_failed(&err);

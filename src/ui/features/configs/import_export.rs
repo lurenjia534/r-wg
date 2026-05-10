@@ -189,7 +189,7 @@ pub(crate) fn start_import_from_paths(
     cx.notify();
 
     let view = cx.weak_entity();
-    let config_library = app.config_library.clone();
+    let config_library = app.services.config_library.clone();
     window
         .spawn(cx, async move |cx| {
             let mut batch = match view.update(cx, |this, _| {
@@ -339,7 +339,7 @@ pub(crate) fn handle_export_click(app: &mut WgApp, cx: &mut Context<WgApp>) {
         multiple: false,
         prompt: Some("Export WireGuard Config".into()),
     });
-    let config_library = app.config_library.clone();
+    let config_library = app.services.config_library.clone();
 
     cx.spawn(async move |view, cx| {
         let paths = match prompt.await {
@@ -510,7 +510,7 @@ pub(crate) fn handle_copy_click(app: &mut WgApp, cx: &mut Context<WgApp>) {
     app.set_status("Loading config...");
     cx.notify();
 
-    let config_library = app.config_library.clone();
+    let config_library = app.services.config_library.clone();
     cx.spawn(async move |view, cx| {
         let path_for_cache = selected.storage_path.clone();
         let read_task =

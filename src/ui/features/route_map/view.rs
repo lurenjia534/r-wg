@@ -51,7 +51,7 @@ impl RouteMapWorkspaceState {
             self.plan = Some(RouteMapData::build_plan(app, data));
         }
 
-        let evidence = RouteMapData::build_evidence();
+        let evidence = RouteMapData::build_evidence(app);
         if self.evidence.as_ref().map(|cached| cached.cache_key) != Some(evidence.cache_key) {
             self.evidence = Some(evidence);
         }

@@ -39,7 +39,7 @@ pub(crate) fn schedule_endpoint_family_refresh(
     config.endpoint_family = EndpointFamily::Unknown;
     app.selection.endpoint_family_loading.insert(config_id);
 
-    let config_library = app.config_library.clone();
+    let config_library = app.services.config_library.clone();
     cx.spawn(async move |view, cx| {
         let refresh_task = cx.background_spawn(async move {
             let text = match text {

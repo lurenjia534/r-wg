@@ -11,7 +11,7 @@ use crate::ui::features::configs::state::ConfigsWorkspace;
 use crate::ui::i18n::tr;
 use crate::ui::state::WgApp;
 
-use super::inspector::{editor_action_bar, render_diagnostics_strip};
+use super::editor_actions::{editor_action_bar, render_diagnostics_strip};
 use super::{ConfigsLayoutMode, ConfigsViewData};
 
 // Draft editor rendering and editor-side actions.
@@ -146,7 +146,7 @@ pub(super) fn render_editor_panel(
                     .alpha(if compact { 0.0 } else { 0.94 }))
                 .child(
                     v_flex()
-                        .gap(if compact { px(12.0) } else { px(12.0) })
+                        .gap(px(12.0))
                         .child(
                             h_flex()
                                 .items_center()
@@ -170,7 +170,7 @@ pub(super) fn render_editor_panel(
                                 .gap_4()
                                 .child(
                                     v_flex()
-                                        .gap(px(if compact { 8.0 } else { 8.0 }))
+                                        .gap(px(8.0))
                                         .child(
                                             h_flex()
                                                 .items_center()

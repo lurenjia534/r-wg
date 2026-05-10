@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use super::super::NetworkError;
 use crate::core::route_plan::RouteApplyReport;
+use crate::storage::atomic;
 
 const LAST_APPLY_REPORT_FILE: &str = "last-apply-report.json";
 
@@ -15,7 +16,7 @@ pub(crate) fn write_persisted_apply_report(report: &RouteApplyReport) -> Result<
     let json = serde_json::to_string(report).map_err(|err| {
         NetworkError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
     })?;
-    fs::write(path, json)?;
+    atomic::write_atomic(&path, json.as_bytes())?;
     Ok(())
 }
 
