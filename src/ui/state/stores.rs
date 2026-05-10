@@ -466,6 +466,7 @@ impl StatsState {
 }
 
 pub(crate) struct UiPrefsState {
+    pub(crate) log_viewer_enabled: bool,
     pub(crate) log_auto_follow: bool,
     pub(crate) require_connect_password: bool,
     pub(crate) kill_switch_enabled: bool,
@@ -501,6 +502,7 @@ impl UiPrefsState {
         language_preference: LanguagePreference,
     ) -> Self {
         Self {
+            log_viewer_enabled: true,
             log_auto_follow: true,
             require_connect_password: false,
             kill_switch_enabled: true,
@@ -644,6 +646,13 @@ fn init_rate_history() -> VecDeque<f32> {
 
 pub(crate) struct UiState {
     pub(crate) log_input: Option<Entity<InputState>>,
+    pub(crate) backend_log_lines: Vec<String>,
+    pub(crate) backend_log_last_sync: Option<Instant>,
+    pub(crate) backend_log_sync_in_flight: bool,
+    pub(crate) backend_log_last_error: Option<SharedString>,
+    pub(crate) backend_log_generation: u64,
+    pub(crate) backend_log_poll_active: bool,
+    pub(crate) backend_log_poll_generation: u64,
     pub(crate) proxy_search_input: Option<Entity<InputState>>,
     pub(crate) route_map_search_input: Option<Entity<InputState>>,
     pub(crate) route_map_search: RouteMapSearchState,
@@ -662,6 +671,13 @@ impl UiState {
     pub(super) fn new() -> Self {
         Self {
             log_input: None,
+            backend_log_lines: Vec::new(),
+            backend_log_last_sync: None,
+            backend_log_sync_in_flight: false,
+            backend_log_last_error: None,
+            backend_log_generation: 0,
+            backend_log_poll_active: false,
+            backend_log_poll_generation: 0,
             proxy_search_input: None,
             route_map_search_input: None,
             route_map_search: RouteMapSearchState::new(),

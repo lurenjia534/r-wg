@@ -80,6 +80,27 @@ pub(super) fn language_item(app: Entity<WgApp>, language: Language) -> SettingIt
     ))
 }
 
+pub(super) fn log_viewer_enabled_item(app: Entity<WgApp>, language: Language) -> SettingItem {
+    let get_handle = app.clone();
+    let set_handle = app;
+
+    SettingItem::new(
+        tr(language, "Enable Log Viewer"),
+        SettingField::switch(
+            move |cx| get_handle.read(cx).ui_prefs.log_viewer_enabled,
+            move |value, cx| {
+                set_handle.update(cx, |app, cx| {
+                    app.set_log_viewer_enabled_pref(value, cx);
+                });
+            },
+        ),
+    )
+    .description(tr(
+        language,
+        "Collect local log lines and sync backend logs when the Logs page is open.",
+    ))
+}
+
 pub(super) fn log_auto_follow_item(app: Entity<WgApp>, language: Language) -> SettingItem {
     let get_handle = app.clone();
     let set_handle = app;

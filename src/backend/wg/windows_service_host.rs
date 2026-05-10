@@ -19,6 +19,7 @@ use super::ipc::{read_json_line, write_json_line, BackendCommand};
 use super::ipc_server::dispatch_command;
 use super::windows_service::SERVICE_NAME;
 use super::{EngineError, EngineStatus};
+use crate::log::events::service as log_service;
 
 const START_WAIT_HINT_MS: u32 = 30_000;
 const STOP_WAIT_HINT_MS: u32 = 120_000;
@@ -45,7 +46,7 @@ pub fn run_service_dispatcher() -> Result<(), EngineError> {
 
 extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     if let Err(err) = service_main_inner() {
-        tracing::error!("windows service failed: {err}");
+        log_service::windows_service_failed(&err);
         if let Some(raw) = SERVICE_STATUS_HANDLE_RAW.get().copied() {
             let _ = set_service_status(service_status_handle(raw), SERVICE_STOPPED, 0, 1, 0);
         }
@@ -53,6 +54,7 @@ extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
 }
 
 fn service_main_inner() -> Result<(), EngineError> {
+    log_service::windows_service_starting();
     STOP_REQUESTED.store(false, Ordering::SeqCst);
 
     let service_name = encode_wide(SERVICE_NAME);
@@ -87,6 +89,7 @@ fn service_main_inner() -> Result<(), EngineError> {
         0,
         0,
     )?;
+    log_service::windows_service_running();
 
     let run_result = run_pipe_loop(&engine);
 
@@ -94,7 +97,7 @@ fn service_main_inner() -> Result<(), EngineError> {
 
     if matches!(engine.status(), Ok(EngineStatus::Running)) {
         if let Err(err) = engine.stop() {
-            tracing::warn!("failed to stop engine during service shutdown: {err}");
+            log_service::shutdown_stop_failed(&err);
         }
     }
 
@@ -133,11 +136,11 @@ fn run_pipe_loop(engine: &LocalEngine) -> Result<(), EngineError> {
             .name("wg-pipe-client".to_string())
             .spawn(move || {
                 if let Err(err) = handle_pipe_client(stream, engine) {
-                    tracing::debug!("named pipe client handling failed: {err}");
+                    log_service::windows_client_failed(&err);
                 }
             })
         {
-            tracing::warn!("failed to spawn named pipe client worker: {err}");
+            log_service::windows_spawn_failed(&err);
         }
     }
 }

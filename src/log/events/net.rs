@@ -41,6 +41,14 @@ pub fn apply_windows(tun_name: &str, addr_count: usize, dns_servers: usize, dns_
     );
 }
 
+pub fn apply_completed() {
+    log_info!("net", "network apply completed");
+}
+
+pub fn apply_failed(err: &impl fmt::Display) {
+    log_info!("net", "network apply failed: {err}");
+}
+
 pub fn link_index(link_index: u32) {
     log_info!("net", "link index: {link_index}");
 }

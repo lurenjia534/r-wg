@@ -12,10 +12,12 @@ use super::fs_ops::{configure_socket_permissions, lookup_group_gid, remove_stale
 use super::install_model::{ServiceOptions, SERVICE_IO_TIMEOUT, SERVICE_POLL_INTERVAL};
 use super::remote_error;
 use super::systemd::inherited_listener;
+use crate::log::events::service as log_service;
 
 static SERVICE_TERMINATE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn run_service(options: ServiceOptions) -> Result<(), super::super::EngineError> {
+    log_service::linux_service_starting();
     SERVICE_TERMINATE_REQUESTED.store(false, Ordering::Relaxed);
     let socket_gid = match options.socket_group.as_deref() {
         Some(group) => Some(lookup_group_gid(group)?),
@@ -52,6 +54,7 @@ pub(super) fn run_service(options: ServiceOptions) -> Result<(), super::super::E
         .map_err(|err| remote_error(format!("kernel backend startup repair failed: {err}")))?;
 
     let engine = LocalEngine::new();
+    log_service::linux_service_listening();
 
     loop {
         if SERVICE_TERMINATE_REQUESTED.load(Ordering::Relaxed) {
@@ -66,18 +69,18 @@ pub(super) fn run_service(options: ServiceOptions) -> Result<(), super::super::E
                         if let Err(err) =
                             handle_service_client(stream, &engine, options.allowed_uid, socket_gid)
                         {
-                            tracing::debug!("linux service client handling failed: {err}");
+                            log_service::linux_client_failed(&err);
                         }
                     })
                 {
-                    tracing::warn!("failed to spawn linux service client worker: {err}");
+                    log_service::linux_spawn_failed(&err);
                 }
             }
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(SERVICE_POLL_INTERVAL);
             }
             Err(err) => {
-                tracing::warn!("linux service accept failed: {err}");
+                log_service::linux_accept_failed(&err);
                 thread::sleep(SERVICE_POLL_INTERVAL);
             }
         }
@@ -106,7 +109,10 @@ fn graceful_stop_for_shutdown(engine: &LocalEngine) -> Result<(), super::super::
         Ok(())
         | Err(super::super::EngineError::NotRunning)
         | Err(super::super::EngineError::ChannelClosed) => Ok(()),
-        Err(err) => Err(err),
+        Err(err) => {
+            log_service::shutdown_stop_failed(&err);
+            Err(err)
+        }
     }
 }
 
@@ -122,14 +128,20 @@ fn handle_service_client(
         Ok(creds) if is_peer_allowed(creds, allowed_uid, allowed_gid) => {
             handle_command(&mut stream, engine)?
         }
-        Ok(_) => BackendReply::Error {
-            kind: super::super::ipc::BackendErrorKind::AccessDenied,
-            message: "peer is not allowed to access Linux privileged backend".to_string(),
-        },
-        Err(err) => BackendReply::Error {
-            kind: super::super::ipc::BackendErrorKind::AccessDenied,
-            message: format!("failed to inspect peer credentials: {err}"),
-        },
+        Ok(_) => {
+            log_service::linux_client_denied();
+            BackendReply::Error {
+                kind: super::super::ipc::BackendErrorKind::AccessDenied,
+                message: "peer is not allowed to access Linux privileged backend".to_string(),
+            }
+        }
+        Err(err) => {
+            log_service::linux_client_denied();
+            BackendReply::Error {
+                kind: super::super::ipc::BackendErrorKind::AccessDenied,
+                message: format!("failed to inspect peer credentials: {err}"),
+            }
+        }
     };
 
     write_json_line(&mut stream, &reply)

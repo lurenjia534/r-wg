@@ -16,7 +16,7 @@ fn test_init() {
             .level(LogLevel::Info)
             .stderr_enabled(true)
             .buffer_enabled(false)
-            .scopes(["net", "engine"])
+            .scopes(["app", "net", "engine", "ui", "ipc", "service"])
             .build();
         let _ = log::init_with(config);
     });
@@ -59,4 +59,37 @@ fn formatting_contains_scope_and_message() {
     let lines = log::snapshot();
     let last = lines.last().expect("log line captured");
     assert!(last.ends_with("[r-wg][net] hello"));
+}
+
+#[test]
+fn tracing_targets_under_app_namespace_are_captured_and_scoped() {
+    let _guard = test_lock();
+    test_init();
+    log::set_buffer_enabled(true);
+    log::clear();
+
+    tracing::warn!(target: "r_wg", scope = "net", "root target");
+    tracing::warn!(target: "r_wg::ui::startup", "ui target");
+    tracing::warn!(target: "r_wg::backend::wg::engine", "backend target");
+    tracing::warn!(target: "r_wg::backend::wg::ipc_server", "ipc target");
+    tracing::warn!(target: "r_wg::backend::wg::linux_service::server", "service target");
+    tracing::warn!(target: "some_external_crate", "external target");
+
+    let lines = log::snapshot();
+    assert!(lines
+        .iter()
+        .any(|line| line.ends_with("[r-wg][net] root target")));
+    assert!(lines
+        .iter()
+        .any(|line| line.ends_with("[r-wg][ui] ui target")));
+    assert!(lines
+        .iter()
+        .any(|line| line.ends_with("[r-wg][engine] backend target")));
+    assert!(lines
+        .iter()
+        .any(|line| line.ends_with("[r-wg][ipc] ipc target")));
+    assert!(lines
+        .iter()
+        .any(|line| line.ends_with("[r-wg][service] service target")));
+    assert!(!lines.iter().any(|line| line.contains("external target")));
 }

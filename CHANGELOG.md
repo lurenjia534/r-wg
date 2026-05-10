@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## 0.3.5 - 2026-05-10
 
 - Added the UI internationalization foundation with persisted language preferences, system-locale resolution, and expanded Simplified Chinese translations across navigation, top-level status, settings, themes, advanced preferences, DNS, logs, overview, and the main Configs workspace surfaces.
+- Reworked runtime logging around a unified tracing pipeline that captures `r_wg::*` targets, maps app/UI/engine/network/DNS/IPC/service scopes consistently, exposes privileged backend log snapshot/clear over IPC v12, and lets the Logs page merge UI and backend buffers with a persisted log-viewer enable switch under Preferences.
 - Hardened Windows DNS application by splitting IPv4 and IPv6 writes into address-family-specific updates, validating the effective DNS server/search settings after each apply, and rolling back partial family updates if verification fails.
 - Improved Windows DNS cleanup and recovery snapshots so rollback preserves the DNS address family and restores `DisableUnconstrainedQueries` consistently for both live cleanup and persisted recovery state.
 

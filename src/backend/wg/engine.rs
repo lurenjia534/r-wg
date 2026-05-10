@@ -456,6 +456,17 @@ impl Engine {
             .blocking_recv()
             .map_err(|_| EngineError::ChannelClosed)?
     }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
+    pub fn log_snapshot(&self) -> Result<Vec<String>, EngineError> {
+        Ok(crate::log::snapshot())
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
+    pub fn log_clear(&self) -> Result<(), EngineError> {
+        crate::log::clear();
+        Ok(())
+    }
 }
 
 /// 后台线程维护的运行态状态。
@@ -1285,11 +1296,18 @@ async fn run(mut rx: mpsc::Receiver<Command>) {
         match command {
             Command::Start(request, reply) => {
                 let result = catch_start_panic(&mut state, request).await;
+                match &result {
+                    Ok(()) => log_engine::tunnel_started(),
+                    Err(err) => log_engine::tunnel_start_failed(err),
+                }
                 let _ = reply.send(result);
             }
             Command::Stop(reply) => {
                 // 停止请求：返回 Ok/Err。
                 let result = state.stop().await;
+                if let Err(err) = &result {
+                    log_engine::stop_failed(err);
+                }
                 let _ = reply.send(result);
             }
             Command::Status(reply) => {
@@ -1339,7 +1357,7 @@ async fn catch_start_panic(
                 "backend worker panicked while starting tunnel: {}",
                 panic_payload_message(payload)
             );
-            tracing::error!("{message}");
+            log_engine::worker_panic(&message);
             recover_after_worker_panic(state).await;
             Err(EngineError::Remote(message))
         }
@@ -1349,7 +1367,7 @@ async fn catch_start_panic(
 async fn recover_after_worker_panic(state: &mut EngineState) {
     let apply_report = state.apply_report();
     if let Err(err) = state.cleanup_active_network_state().await {
-        tracing::warn!("failed to clean up network state after backend panic: {err}");
+        log_engine::panic_cleanup_failed(&err);
     }
     state.shutdown_active_backend().await;
     state.shutdown_cached_userspace_device().await;

@@ -42,6 +42,8 @@ pub(crate) struct PersistedState {
     #[serde(default)]
     pub(crate) language_preference: Option<LanguagePreference>,
     #[serde(default)]
+    pub(crate) log_viewer_enabled: Option<bool>,
+    #[serde(default)]
     pub(crate) log_auto_follow: Option<bool>,
     #[serde(default)]
     pub(crate) require_connect_password: Option<bool>,
@@ -236,6 +238,7 @@ mod tests {
             theme_light_name: Some("Signal Light".to_string()),
             theme_dark_name: Some("Network Dark".to_string()),
             language_preference: Some(LanguagePreference::System),
+            log_viewer_enabled: Some(true),
             log_auto_follow: Some(true),
             require_connect_password: Some(true),
             kill_switch_enabled: Some(true),
@@ -310,6 +313,7 @@ mod tests {
         assert_eq!(loaded.theme_light_name, state.theme_light_name);
         assert_eq!(loaded.theme_dark_name, state.theme_dark_name);
         assert_eq!(loaded.language_preference, state.language_preference);
+        assert_eq!(loaded.log_viewer_enabled, state.log_viewer_enabled);
         assert_eq!(loaded.log_auto_follow, state.log_auto_follow);
         assert_eq!(
             loaded.require_connect_password,

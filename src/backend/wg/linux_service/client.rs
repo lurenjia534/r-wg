@@ -123,6 +123,14 @@ impl Engine {
     pub fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
         self.inner.refresh_relay_inventory()
     }
+
+    pub fn log_snapshot(&self) -> Result<Vec<String>, EngineError> {
+        self.inner.log_snapshot()
+    }
+
+    pub fn log_clear(&self) -> Result<(), EngineError> {
+        self.inner.log_clear()
+    }
 }
 
 impl RemoteEngine {
@@ -168,6 +176,14 @@ impl RemoteEngine {
         &self,
     ) -> Result<RelayInventoryStatusSnapshot, EngineError> {
         ipc_client::refresh_relay_inventory(self, EngineError::ChannelClosed)
+    }
+
+    pub(super) fn log_snapshot(&self) -> Result<Vec<String>, EngineError> {
+        ipc_client::log_snapshot(self, EngineError::ChannelClosed)
+    }
+
+    pub(super) fn log_clear(&self) -> Result<(), EngineError> {
+        ipc_client::log_clear(self, EngineError::ChannelClosed)
     }
 
     pub(super) fn send_command_raw(

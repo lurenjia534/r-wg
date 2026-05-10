@@ -1,3 +1,4 @@
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     button::Button,
@@ -5,9 +6,9 @@ use gpui_component::{
     h_flex,
     input::{Input, Position},
     switch::Switch,
-    v_flex, ActiveTheme as _, Icon, IconName, Sizable as _, Size,
+    v_flex, ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, Size,
 };
-use r_wg::log;
+use r_wg::log::events::ui as log_ui;
 
 use super::super::state::WgApp;
 
@@ -18,13 +19,19 @@ pub(crate) fn render_logs(
     cx: &mut Context<WgApp>,
 ) -> impl IntoElement {
     app.ensure_log_input(window, cx);
+    let log_viewer_enabled = app.ui_prefs.log_viewer_enabled;
+    if log_viewer_enabled {
+        app.ensure_backend_log_polling(cx);
+    } else {
+        app.stop_backend_log_polling();
+    }
     let language = app.language();
     let log_input = app
         .ui
         .log_input
         .clone()
         .expect("log input should be initialized");
-    let latest_lines = log::snapshot();
+    let latest_lines = app.merged_log_lines();
     let latest_text = if latest_lines.is_empty() {
         String::new()
     } else {
@@ -38,7 +45,15 @@ pub(crate) fn render_logs(
         (current_text, cursor_at_end)
     };
 
-    if app.ui_prefs.log_auto_follow && cursor_at_end && current_text != latest_text {
+    if !log_viewer_enabled && !current_text.is_empty() {
+        log_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+    } else if log_viewer_enabled
+        && app.ui_prefs.log_auto_follow
+        && cursor_at_end
+        && current_text != latest_text
+    {
         let latest_text = latest_text.clone();
         log_input.update(cx, |input, cx| {
             input.set_value(latest_text.clone(), window, cx);
@@ -64,6 +79,7 @@ pub(crate) fn render_logs(
                 .outline()
                 .small()
                 .compact()
+                .disabled(!log_viewer_enabled)
                 .on_click(cx.listener(|this, _, window, cx| {
                     let text = this
                         .ui
@@ -71,6 +87,12 @@ pub(crate) fn render_logs(
                         .as_ref()
                         .map(|input| input.read(cx).value().to_string())
                         .unwrap_or_default();
+                    let line_count = if text.is_empty() {
+                        0
+                    } else {
+                        text.lines().count()
+                    };
+                    log_ui::logs_copied(line_count);
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
                     this.push_success_toast(this.t("Logs copied"), window, cx);
                 })),
@@ -81,13 +103,9 @@ pub(crate) fn render_logs(
                 .outline()
                 .small()
                 .compact()
+                .disabled(!log_viewer_enabled)
                 .on_click(cx.listener(|this, _, window, cx| {
-                    log::clear();
-                    if let Some(log_input) = this.ui.log_input.clone() {
-                        log_input.update(cx, |input, cx| {
-                            input.set_value("", window, cx);
-                        });
-                    }
+                    this.clear_all_logs(window, cx);
                     let status = this.t("Logs cleared");
                     this.set_status(status);
                     cx.notify();
@@ -98,14 +116,15 @@ pub(crate) fn render_logs(
         .label(app.t("Auto Follow (Lock Selection)"))
         .checked(app.ui_prefs.log_auto_follow)
         .with_size(Size::Small)
+        .disabled(!log_viewer_enabled)
         .on_click({
             let app_handle = cx.entity();
             let log_input = log_input.clone();
             move |checked: &bool, window, cx| {
                 app_handle.update(cx, |app, cx| {
                     app.set_log_auto_follow_pref(*checked, cx);
-                    if *checked {
-                        let latest_lines = log::snapshot();
+                    if *checked && app.ui_prefs.log_viewer_enabled {
+                        let latest_lines = app.merged_log_lines();
                         let latest_text = if latest_lines.is_empty() {
                             String::new()
                         } else {
@@ -195,6 +214,14 @@ pub(crate) fn render_logs(
                         .gap_3()
                         .flex_grow()
                         .child(header)
+                        .when(!log_viewer_enabled, |this| {
+                            this.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(app.t("Log viewer disabled in Preferences.")),
+                            )
+                        })
                         .child(log_editor.flex_grow().min_h(px(0.0))),
                 ),
         )

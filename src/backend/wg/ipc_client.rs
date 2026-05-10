@@ -137,6 +137,30 @@ pub(crate) fn refresh_relay_inventory<T: BackendTransport>(
     }
 }
 
+pub(crate) fn log_snapshot<T: BackendTransport>(
+    transport: &T,
+    missing_error: EngineError,
+) -> Result<Vec<String>, EngineError> {
+    check_protocol(transport)?;
+    match transport.send_command_raw(BackendCommand::LogSnapshot) {
+        Ok(BackendReply::LogSnapshot { lines }) => Ok(lines),
+        Ok(BackendReply::Error { kind, message }) => Err(map_backend_error(kind, message)),
+        Ok(other) => Err(unexpected_reply(other)),
+        Err(err) => Err(map_transport_error(transport, err, Some(missing_error))),
+    }
+}
+
+pub(crate) fn log_clear<T: BackendTransport>(
+    transport: &T,
+    missing_error: EngineError,
+) -> Result<(), EngineError> {
+    check_protocol(transport)?;
+    match transport.send_command_raw(BackendCommand::LogClear) {
+        Ok(reply) => expect_unit(reply),
+        Err(err) => Err(map_transport_error(transport, err, Some(missing_error))),
+    }
+}
+
 fn check_protocol<T: BackendTransport>(transport: &T) -> Result<(), EngineError> {
     let protocol_version = info(transport)?;
     if protocol_version == IPC_PROTOCOL_VERSION {
@@ -202,6 +226,10 @@ mod tests {
                 }),
                 BackendCommand::Start { .. } => Err(io::Error::from(io::ErrorKind::TimedOut)),
                 BackendCommand::Stop => Ok(BackendReply::Ok),
+                BackendCommand::LogSnapshot => Ok(BackendReply::LogSnapshot {
+                    lines: vec!["backend-line".to_string()],
+                }),
+                BackendCommand::LogClear => Ok(BackendReply::Ok),
                 other => panic!("unexpected command: {other:?}"),
             }
         }
@@ -252,6 +280,33 @@ mod tests {
                 BackendCommand::Start { .. },
                 BackendCommand::Stop
             ]
+        ));
+    }
+
+    #[test]
+    fn log_snapshot_checks_protocol_and_returns_lines() {
+        let transport = MockTransport::default();
+
+        let lines = log_snapshot(&transport, EngineError::ChannelClosed).unwrap();
+
+        assert_eq!(lines, vec!["backend-line".to_string()]);
+        let commands = transport.commands.borrow();
+        assert!(matches!(
+            commands.as_slice(),
+            [BackendCommand::Info, BackendCommand::LogSnapshot]
+        ));
+    }
+
+    #[test]
+    fn log_clear_checks_protocol_and_expects_ok() {
+        let transport = MockTransport::default();
+
+        log_clear(&transport, EngineError::ChannelClosed).unwrap();
+
+        let commands = transport.commands.borrow();
+        assert!(matches!(
+            commands.as_slice(),
+            [BackendCommand::Info, BackendCommand::LogClear]
         ));
     }
 }

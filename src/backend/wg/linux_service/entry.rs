@@ -250,6 +250,6 @@ fn parse_manage_command(
 }
 
 fn exit_linux_entry_error(context: &str, err: EngineError) -> ! {
-    crate::log_error!("engine", "{context}: {err}");
+    crate::log_error!("service", "{context}: {err}");
     std::process::exit(1);
 }

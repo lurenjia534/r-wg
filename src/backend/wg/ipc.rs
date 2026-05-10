@@ -21,6 +21,7 @@
 //! - v9: StartRequest 新增 kill_switch_enabled
 //! - v10: StartRequest 新增 wireguard_backend_preference
 //! - v11: BackendErrorKind 新增 kernel/unsupported/ephemeral 结构化分类
+//! - v12: 新增 LogSnapshot/LogClear 后端日志缓冲接口
 //!
 //! # 消息格式
 //!
@@ -49,7 +50,7 @@ use super::engine::{
 ///
 /// 当 UI 和服务端的版本不匹配时，会返回 VersionMismatch 错误。
 /// 升级时需要确保双方都支持相同的版本。
-pub const IPC_PROTOCOL_VERSION: u32 = 11;
+pub const IPC_PROTOCOL_VERSION: u32 = 12;
 
 /// UI -> 特权后端的命令枚举
 ///
@@ -77,6 +78,29 @@ pub enum BackendCommand {
     RelayInventoryStatus,
     /// 下载并刷新缓存的 Mullvad relay inventory
     RefreshRelayInventory,
+    /// 查询后端进程当前日志缓冲
+    LogSnapshot,
+    /// 清空后端进程日志缓冲
+    LogClear,
+}
+
+impl BackendCommand {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Ping => "ping",
+            Self::Info => "info",
+            Self::Start { .. } => "start",
+            Self::Stop => "stop",
+            Self::Status => "status",
+            Self::Stats => "stats",
+            Self::ApplyReport => "apply_report",
+            Self::RuntimeSnapshot => "runtime_snapshot",
+            Self::RelayInventoryStatus => "relay_inventory_status",
+            Self::RefreshRelayInventory => "refresh_relay_inventory",
+            Self::LogSnapshot => "log_snapshot",
+            Self::LogClear => "log_clear",
+        }
+    }
 }
 
 /// 特权后端 -> UI 的响应枚举
@@ -101,6 +125,8 @@ pub enum BackendReply {
     RelayInventoryStatus {
         snapshot: RelayInventoryStatusSnapshot,
     },
+    /// 后端日志缓冲快照
+    LogSnapshot { lines: Vec<String> },
     /// 执行失败响应：包含错误分类和可读消息
     Error {
         kind: BackendErrorKind,

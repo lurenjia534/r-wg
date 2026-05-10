@@ -239,6 +239,7 @@ impl<'a> PersistedStateSnapshot<'a> {
                 .as_ref()
                 .map(ToString::to_string),
             language_preference: Some(self.ui_prefs.language_preference),
+            log_viewer_enabled: Some(self.ui_prefs.log_viewer_enabled),
             log_auto_follow: Some(self.ui_prefs.log_auto_follow),
             require_connect_password: Some(self.ui_prefs.require_connect_password),
             kill_switch_enabled: Some(self.ui_prefs.kill_switch_enabled),
@@ -325,6 +326,7 @@ struct PersistedStateRestore {
     theme_light_name: Option<SharedString>,
     theme_dark_name: Option<SharedString>,
     language_preference: Option<LanguagePreference>,
+    log_viewer_enabled: Option<bool>,
     log_auto_follow: Option<bool>,
     require_connect_password: Option<bool>,
     kill_switch_enabled: Option<bool>,
@@ -431,6 +433,7 @@ impl PersistedStateRestore {
             theme_light_name: Some(light.entry.name.clone()),
             theme_dark_name: Some(dark.entry.name.clone()),
             language_preference: state.language_preference,
+            log_viewer_enabled: state.log_viewer_enabled,
             log_auto_follow: state.log_auto_follow,
             require_connect_password: state.require_connect_password,
             kill_switch_enabled: state.kill_switch_enabled,
@@ -491,6 +494,10 @@ impl PersistedStateRestore {
         }
         if let Some(language_preference) = self.language_preference {
             ui_prefs.language_preference = language_preference;
+        }
+        if let Some(log_viewer_enabled) = self.log_viewer_enabled {
+            ui_prefs.log_viewer_enabled = log_viewer_enabled;
+            r_wg::log::set_buffer_enabled(log_viewer_enabled);
         }
         if let Some(log_auto_follow) = self.log_auto_follow {
             ui_prefs.log_auto_follow = log_auto_follow;

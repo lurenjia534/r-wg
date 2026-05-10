@@ -105,6 +105,14 @@ impl TunnelSessionService {
     pub fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
         self.engine.refresh_relay_inventory()
     }
+
+    pub fn log_snapshot(&self) -> Result<Vec<String>, EngineError> {
+        self.engine.log_snapshot()
+    }
+
+    pub fn log_clear(&self) -> Result<(), EngineError> {
+        self.engine.log_clear()
+    }
 }
 
 /// 启动隧道的请求参数

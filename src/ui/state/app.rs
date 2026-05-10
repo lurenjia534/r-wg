@@ -291,6 +291,25 @@ impl WgApp {
         cx.notify();
     }
 
+    pub(crate) fn set_log_viewer_enabled_pref(
+        &mut self,
+        value: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.ui_prefs.log_viewer_enabled != value {
+            self.ui_prefs.log_viewer_enabled = value;
+            r_wg::log::set_buffer_enabled(value);
+            if !value {
+                self.stop_backend_log_polling();
+                self.ui.backend_log_lines.clear();
+                self.ui.backend_log_last_error = None;
+                self.ui.backend_log_last_sync = None;
+            }
+            self.persist_state_async(cx);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn set_language_preference(
         &mut self,
         value: LanguagePreference,
@@ -431,6 +450,9 @@ impl WgApp {
     pub(crate) fn set_sidebar_active(&mut self, value: SidebarItem, cx: &mut gpui::Context<Self>) {
         if self.ui_session.sidebar_active != value {
             self.ui_session.sidebar_active = value;
+            if value != SidebarItem::Logs {
+                self.stop_backend_log_polling();
+            }
             cx.notify();
         }
     }

@@ -12,8 +12,8 @@ use crate::ui::view::widgets::{PageShell, PageShellHeader};
 use super::preferences::wireguard_backend_item;
 use super::preferences::{
     connect_password_item, daita_mode_item, daita_resources_item, dns_mode_item, dns_preset_item,
-    inspector_tab_item, kill_switch_item, language_item, log_auto_follow_item, quantum_mode_item,
-    traffic_period_item,
+    inspector_tab_item, kill_switch_item, language_item, log_auto_follow_item,
+    log_viewer_enabled_item, quantum_mode_item, traffic_period_item,
 };
 use super::system::{privileged_backend_item, troubleshooting_item};
 
@@ -90,6 +90,7 @@ pub(crate) fn render_advanced(app: &mut WgApp, cx: &mut Context<WgApp>) -> Div {
             SettingGroup::new()
                 .title(tr(language, "Logs"))
                 .description(tr(language, "Control how the runtime log viewer behaves."))
+                .item(log_viewer_enabled_item(app_handle.clone(), language))
                 .item(log_auto_follow_item(app_handle.clone(), language)),
         )
         .group(

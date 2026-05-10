@@ -56,11 +56,14 @@ impl LogLevel {
 // scope 用于功能域分组，便于按模块开关日志。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogScope {
+    App,
     Net,
     Engine,
     Stats,
     Dns,
     Ui,
+    Ipc,
+    Service,
     Other(&'static str),
 }
 
@@ -68,11 +71,14 @@ impl LogScope {
     // scope 的字符串形式会进入日志文本与过滤逻辑。
     pub fn as_str(self) -> &'static str {
         match self {
+            LogScope::App => "app",
             LogScope::Net => "net",
             LogScope::Engine => "engine",
             LogScope::Stats => "stats",
             LogScope::Dns => "dns",
             LogScope::Ui => "ui",
+            LogScope::Ipc => "ipc",
+            LogScope::Service => "service",
             LogScope::Other(value) => value,
         }
     }
@@ -144,7 +150,7 @@ impl LogConfig {
     // scope 是否允许输出（不设白名单则全部允许）。
     fn scope_allowed(&self, scope: &str) -> bool {
         if let Some(scopes) = &self.scopes {
-            return scopes.contains(scope);
+            return scopes.contains(&normalize_scope_name(scope));
         }
         true
     }
@@ -185,7 +191,7 @@ impl LogConfigBuilder {
                 self.scopes = None;
                 return self;
             }
-            set.insert(item.to_string());
+            set.insert(normalize_scope_name(item));
         }
         self.scopes = if set.is_empty() { None } else { Some(set) };
         self
@@ -521,6 +527,46 @@ fn build_filter(config: &LogConfig) -> EnvFilter {
     EnvFilter::new(format!("{LOG_TARGET}={level}"))
 }
 
+fn is_app_target(target: &str) -> bool {
+    target == LOG_TARGET || target.starts_with("r_wg::")
+}
+
+fn scope_from_target(target: &str) -> &'static str {
+    if target == LOG_TARGET {
+        return LogScope::App.as_str();
+    }
+    if target.starts_with("r_wg::ui::") {
+        return LogScope::Ui.as_str();
+    }
+    if target.starts_with("r_wg::backend::wg::ipc")
+        || target.starts_with("r_wg::backend::wg::linux_service::client")
+        || target.starts_with("r_wg::backend::wg::windows_pipe")
+    {
+        return LogScope::Ipc.as_str();
+    }
+    if target.starts_with("r_wg::backend::wg::linux_service::")
+        || target.starts_with("r_wg::backend::wg::windows_service")
+    {
+        return LogScope::Service.as_str();
+    }
+    if target.starts_with("r_wg::backend::")
+        || target.starts_with("r_wg::application::")
+        || target.starts_with("r_wg::core::route_plan::")
+    {
+        return LogScope::Engine.as_str();
+    }
+    if target.starts_with("r_wg::platform::") {
+        return LogScope::Net.as_str();
+    }
+    if target.starts_with("r_wg::dns::") || target.starts_with("r_wg::core::dns::") {
+        return LogScope::Dns.as_str();
+    }
+    if target.starts_with("r_wg::log::") {
+        return LogScope::App.as_str();
+    }
+    LogScope::App.as_str()
+}
+
 // 解析通用布尔字符串。
 fn parse_bool(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
@@ -536,7 +582,7 @@ fn parse_scopes(value: &str) -> Option<HashSet<String>> {
         .split(',')
         .map(|item| item.trim())
         .filter(|item| !item.is_empty())
-        .map(|item| item.to_string())
+        .map(normalize_scope_name)
         .collect();
     if scopes.is_empty() {
         return None;
@@ -548,6 +594,10 @@ fn parse_scopes(value: &str) -> Option<HashSet<String>> {
         return None;
     }
     Some(scopes)
+}
+
+fn normalize_scope_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 // 解析 tracing 事件字段，抽出 message 与 scope。
@@ -603,8 +653,7 @@ fn format_event_line(event: &Event<'_>) -> String {
     event.record(&mut visitor);
     let scope = visitor
         .scope
-        .as_deref()
-        .unwrap_or_else(|| event.metadata().target());
+        .unwrap_or_else(|| scope_from_target(event.metadata().target()).to_string());
     let message = if let Some(message) = visitor.message {
         message
     } else if !visitor.fields.is_empty() {
@@ -652,9 +701,9 @@ fn scope_allowed_for_event(event: &Event<'_>) -> bool {
     }
     let mut visitor = ScopeVisitor::default();
     event.record(&mut visitor);
-    let Some(scope) = visitor.scope else {
-        return false;
-    };
+    let scope = visitor
+        .scope
+        .unwrap_or_else(|| scope_from_target(event.metadata().target()).to_string());
     config.scope_allowed(&scope)
 }
 
@@ -677,7 +726,7 @@ where
         if !LOG_BUFFER_ENABLED.load(Ordering::Relaxed) {
             return;
         }
-        if event.metadata().target() != LOG_TARGET {
+        if !is_app_target(event.metadata().target()) {
             return;
         }
         if !scope_allowed_for_event(event) {
@@ -700,7 +749,7 @@ where
         if !LOG_STDERR_ENABLED.load(Ordering::Relaxed) {
             return;
         }
-        if event.metadata().target() != LOG_TARGET {
+        if !is_app_target(event.metadata().target()) {
             return;
         }
         if !scope_allowed_for_event(event) {

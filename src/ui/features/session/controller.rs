@@ -15,6 +15,7 @@ use r_wg::application::{
 #[cfg(target_os = "windows")]
 use r_wg::backend::wg::EngineError;
 use r_wg::core::dns::DnsSelection;
+use r_wg::log::events::ui as log_ui;
 
 use crate::ui::permissions::start_permission_message;
 use crate::ui::state::{PendingStart, TunnelConfig, WgApp};
@@ -29,6 +30,7 @@ use super::password_gate::{
 ///
 /// 这是主 UI 入口点，会根据当前状态决定执行什么操作。
 pub(crate) fn handle_start_stop(app: &mut WgApp, _window: &mut Window, cx: &mut Context<WgApp>) {
+    log_ui::connect_button_clicked();
     let decision = current_toggle_decision(app, cx);
     apply_toggle_decision(app, decision, Some(_window), cx);
 }
@@ -86,6 +88,7 @@ fn apply_toggle_decision(
                 config_id,
                 password_authorized: false,
             })) {
+                log_ui::tunnel_stop_requested();
                 app.set_status("Stopping... (queued start)");
                 cx.notify();
             }
@@ -93,6 +96,7 @@ fn apply_toggle_decision(
 
         // 停止运行中的隧道
         ToggleTunnelDecision::StopRunning => {
+            log_ui::tunnel_stop_requested();
             app.runtime.begin_stop();
             app.stats.stats_generation = app.stats.stats_generation.wrapping_add(1);
             app.set_status("Stopping...");
@@ -118,6 +122,7 @@ fn apply_toggle_decision(
                         }
                         Err(err) => {
                             let message = format!("Stop failed: {err}");
+                            log_ui::tunnel_stop_failed(&message);
                             complete_stop_failure(this, message.clone());
                             tray::notify_system("r-wg", &message, true);
                         }
@@ -165,7 +170,9 @@ fn apply_toggle_decision(
 
         // 启动被阻止（显示错误消息）
         ToggleTunnelDecision::Blocked(reason) => {
-            app.set_error(reason.message());
+            let message = reason.message();
+            log_ui::tunnel_start_blocked(message);
+            app.set_error(message);
             cx.notify();
         }
     }
@@ -203,6 +210,7 @@ fn start_with_config(
 ) {
     // 权限检查
     if let Some(message) = start_permission_message() {
+        log_ui::tunnel_start_blocked(&message);
         app.set_error(message);
         cx.notify();
         return;
@@ -217,6 +225,7 @@ fn start_with_config(
     let wireguard_backend_preference = app.ui_prefs.wireguard_backend_preference;
 
     app.runtime.begin_start();
+    log_ui::tunnel_start_requested(&selected.name);
     app.set_status(starting_status_text(
         &selected.name,
         quantum_mode,
@@ -249,6 +258,7 @@ fn start_with_config(
             Err(message) => {
                 view.update(cx, |this, cx| {
                     this.runtime.finish_start_attempt();
+                    log_ui::tunnel_start_failed(&message);
                     this.set_error(message);
                     cx.notify();
                 })
@@ -322,6 +332,7 @@ fn start_with_config(
                         (false, false) => {}
                     }
                     let notification = format!("Tunnel connected: {}", selected.name);
+                    log_ui::tunnel_started(&selected.name);
                     this.set_status(status);
                     tray::notify_system("r-wg", &notification, false);
                     this.start_stats_polling(cx);
@@ -347,6 +358,7 @@ fn start_with_config(
                             .or(snapshot.last_daita_failure)
                     });
                     let message = format_start_failure(&err, negotiation_failure);
+                    log_ui::tunnel_start_failed(&message);
                     this.set_error(message.clone());
                     tray::notify_system("r-wg", &message, true);
                 }
@@ -383,11 +395,14 @@ pub(crate) fn start_config_by_id(
     password_authorized: bool,
 ) {
     if app.ui_prefs.require_connect_password && !password_authorized {
-        app.set_error(connect_password_window_required_message());
+        let message = connect_password_window_required_message();
+        log_ui::tunnel_start_blocked(message);
+        app.set_error(message);
         cx.notify();
         return;
     }
     let Some(selected) = app.configs.find_by_id(config_id) else {
+        log_ui::tunnel_start_blocked(missing_message);
         app.set_error(missing_message.to_string());
         cx.notify();
         return;
@@ -430,6 +445,7 @@ pub(crate) fn complete_stop_success(app: &mut WgApp, cx: &mut Context<WgApp>) {
     app.refresh_configs_workspace_row_flags(cx);
     app.stats.clear_runtime_metrics();
     app.set_status("Stopped");
+    log_ui::tunnel_stopped();
 }
 
 /// 完成停止失败

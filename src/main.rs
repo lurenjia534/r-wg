@@ -65,6 +65,7 @@ fn main() {
     // 日志必须在任何其他操作之前初始化，
     // 确保所有模块都能正确地输出日志。
     r_wg::log::init();
+    r_wg::log::events::app::startup();
 
     // --------------------------------------------------------------------
     // 步骤 3: 单实例检测与 UI 启动
@@ -79,7 +80,7 @@ fn main() {
         Ok(ui::single_instance::StartupDecision::Secondary) => return,
         // 启动失败：可能是锁文件损坏或其他错误
         Err(err) => {
-            tracing::error!("ui single-instance startup failed: {err}");
+            r_wg::log::events::app::single_instance_failed(&err);
             ui::single_instance::report_startup_error(&err);
         }
     }

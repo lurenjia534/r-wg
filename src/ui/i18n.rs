@@ -132,6 +132,10 @@ fn zh_cn(key: &'static str) -> &'static str {
         "Keep the log pane pinned to the latest runtime events." => {
             "让日志面板始终停留在最新运行事件。"
         }
+        "Collect local log lines and sync backend logs when the Logs page is open." => {
+            "收集本地日志，并在打开日志页时同步后端日志。"
+        }
+        "Enable Log Viewer" => "启用日志查看器",
         "Language" => "语言",
         "Last Month" => "上月",
         "Last updated" => "最后更新",
@@ -143,6 +147,7 @@ fn zh_cn(key: &'static str) -> &'static str {
         "Logs" => "日志",
         "Logs cleared" => "日志已清除",
         "Logs copied" => "日志已复制",
+        "Log viewer disabled in Preferences." => "日志查看器已在偏好设置中关闭。",
         "LIBRARY" => "配置库",
         "Manage appearance, defaults, and system integration in one place." => {
             "在一个位置管理外观、默认值和系统集成。"

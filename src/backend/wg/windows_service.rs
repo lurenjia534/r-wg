@@ -150,6 +150,14 @@ impl Engine {
     pub fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
         self.inner.refresh_relay_inventory()
     }
+
+    pub fn log_snapshot(&self) -> Result<Vec<String>, EngineError> {
+        self.inner.log_snapshot()
+    }
+
+    pub fn log_clear(&self) -> Result<(), EngineError> {
+        self.inner.log_clear()
+    }
 }
 
 impl RemoteEngine {
@@ -189,6 +197,14 @@ impl RemoteEngine {
 
     fn refresh_relay_inventory(&self) -> Result<RelayInventoryStatusSnapshot, EngineError> {
         ipc_client::refresh_relay_inventory(self, EngineError::ChannelClosed)
+    }
+
+    fn log_snapshot(&self) -> Result<Vec<String>, EngineError> {
+        ipc_client::log_snapshot(self, EngineError::ChannelClosed)
+    }
+
+    fn log_clear(&self) -> Result<(), EngineError> {
+        ipc_client::log_clear(self, EngineError::ChannelClosed)
     }
 
     fn send_command_raw(&self, command: BackendCommand) -> Result<BackendReply, io::Error> {
@@ -266,7 +282,11 @@ fn is_access_denied_error(err: &io::Error) -> bool {
 }
 
 fn exit_windows_entry_error(context: &str, err: EngineError) -> ! {
-    tracing::error!("{context}: {err}");
+    crate::log::event(
+        crate::log::LogLevel::Error,
+        "service",
+        format_args!("{context}: {err}"),
+    );
     std::process::exit(1);
 }
 

@@ -1,5 +1,5 @@
 // 引擎生命周期事件日志（scope = engine）。
-use crate::log_info;
+use crate::{log_error, log_info, log_warn};
 
 pub fn start(tun_name: &str, config_len: usize) {
     log_info!(
@@ -8,6 +8,14 @@ pub fn start(tun_name: &str, config_len: usize) {
         tun_name,
         config_len
     );
+}
+
+pub fn tunnel_started() {
+    log_info!("engine", "tunnel started");
+}
+
+pub fn tunnel_start_failed(err: &impl std::fmt::Display) {
+    log_warn!("engine", "tunnel start failed: {err}");
 }
 
 pub fn auto_fwmark(fwmark: u32) {
@@ -75,6 +83,21 @@ pub fn stop_requested() {
     log_info!("engine", "stop requested");
 }
 
+pub fn stop_failed(err: &impl std::fmt::Display) {
+    log_warn!("engine", "stop failed: {err}");
+}
+
 pub fn device_stopped() {
     log_info!("engine", "device stopped");
+}
+
+pub fn worker_panic(message: &str) {
+    log_error!("engine", "{message}");
+}
+
+pub fn panic_cleanup_failed(err: &impl std::fmt::Display) {
+    log_warn!(
+        "engine",
+        "failed to clean up network state after backend panic: {err}"
+    );
 }

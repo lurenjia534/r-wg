@@ -589,7 +589,16 @@ pub async fn apply_network_config(
     .await;
 
     netlink.shutdown().await;
-    result.map_err(|error| NetworkApplyError { error, report })
+    match result {
+        Ok(result) => {
+            log_net::apply_completed();
+            Ok(result)
+        }
+        Err(error) => {
+            log_net::apply_failed(&error);
+            Err(NetworkApplyError { error, report })
+        }
+    }
 }
 
 async fn abort_apply(
