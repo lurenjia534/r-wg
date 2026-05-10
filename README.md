@@ -181,11 +181,11 @@ flowchart TD
     Main --> Lib
 
     subgraph UI["src/ui - unprivileged desktop process"]
-        UiRun --> WgApp["state::WgApp<br/>central UI state"]
-        WgApp --> Views["view + features<br/>overview, configs, route map, tools, backend admin"]
+        UiRun --> WgApp["state::WgApp<br/>root coordinator + state slices"]
+        WgApp --> Views["view + features<br/>overview, configs, route map, tools, themes, logs"]
         WgApp --> Actions["commands + actions<br/>UI command handlers"]
         WgApp --> Tray["tray<br/>platform tray integration"]
-        WgApp --> Persist["persistence<br/>state.json + configs/*.conf"]
+        WgApp --> Persist["persistence actions<br/>prefs, configs, traffic, restore"]
         Actions --> SessionController["features::session::controller<br/>start/stop orchestration"]
     end
 
@@ -207,16 +207,28 @@ flowchart TD
         RouteCore["route_plan<br/>allowed routes, full tunnel, apply report"]
     end
 
+    subgraph Storage["src/storage - local data repositories"]
+        StoragePaths["app_paths + permissions<br/>private app data dirs"]
+        StorageAtomic["atomic writer<br/>temp file, fsync, rename"]
+        StorageRepos["config/state repositories<br/>state.json + configs/*.conf"]
+    end
+
     ConfigLibrary --> ConfigCore
+    ConfigLibrary --> StorageRepos
+    Persist --> StorageRepos
+    StorageRepos --> StoragePaths
+    StorageRepos --> StorageAtomic
     TunnelSession --> DnsCore
 
     subgraph Backend["src/backend/wg - WireGuard backend facade"]
         WgFacade["wg::mod<br/>cfg-selected Engine export"]
         RemoteClient["ipc_client + linux_service::client + windows_service<br/>remote Engine client"]
-        IpcProtocol["ipc<br/>single-line JSON protocol v9"]
+        IpcProtocol["ipc<br/>single-line JSON protocol v16<br/>request_id + capabilities"]
         IpcServer["ipc_server<br/>command dispatch"]
-        LocalEngine["engine::Engine<br/>background thread + tokio runtime"]
+        LocalEngine["engine::Engine<br/>facade + command channel"]
+        EngineInternals["engine/*<br/>strategy, runner, start/stop pipelines, snapshots"]
         Ephemeral["ephemeral<br/>ML-KEM/HQC and DAITA negotiation"]
+        KernelBackend["linux_kernel<br/>kernel WireGuard backend"]
         RelayInventory["relay_inventory<br/>Mullvad DAITA cache"]
         Tools["tools<br/>CIDR and reachability helpers"]
     end
@@ -227,21 +239,23 @@ flowchart TD
     RemoteClient --> IpcProtocol
     IpcProtocol --> IpcServer
     IpcServer --> LocalEngine
-    LocalEngine --> ConfigCore
-    LocalEngine --> RouteCore
-    LocalEngine --> Ephemeral
+    LocalEngine --> EngineInternals
+    EngineInternals --> ConfigCore
+    EngineInternals --> RouteCore
+    EngineInternals --> Ephemeral
+    EngineInternals --> KernelBackend
     Ephemeral --> RelayInventory
     WgFacade --> Tools
 
     subgraph Platform["src/platform - privileged OS networking"]
         PlatformFacade["platform::mod<br/>apply/cleanup facade"]
-        LinuxPlatform["linux::network<br/>netlink, DNS, policy routes, kill switch, recovery"]
+        LinuxPlatform["linux::network<br/>apply/cleanup pipelines + staged DNS/routes/policy/kill switch/recovery"]
         WindowsPlatform["windows<br/>adapter, routes, DNS, NRPT, firewall, recovery"]
         MacPlaceholder["macos<br/>placeholder"]
     end
 
-    LocalEngine --> Gotatun["gotatun<br/>userspace WireGuard device"]
-    LocalEngine --> PlatformFacade
+    EngineInternals --> Gotatun["gotatun<br/>userspace WireGuard device"]
+    EngineInternals --> PlatformFacade
     PlatformFacade --> LinuxPlatform
     PlatformFacade --> WindowsPlatform
     PlatformFacade --> MacPlaceholder
@@ -266,72 +280,71 @@ At runtime, Linux and Windows use the same logical split: the desktop app stays 
 flowchart LR
     subgraph Desktop["Unprivileged desktop process"]
         GPUI["GPUI window + tray"]
-        AppState["WgApp state"]
-        AppServices["Application services<br/>TunnelSession, BackendAdmin, ConfigLibrary"]
-        RemoteEngine["cfg-selected remote Engine<br/>Linux UDS client / Windows pipe client"]
-        BackendManager["backend service management<br/>manage_privileged_service"]
-        UserData["User data dir<br/>state.json, configs/*.conf, theme prefs, traffic history"]
+        AppRoot["WgApp<br/>root coordinator"]
+        Features["ui/features<br/>overview, configs, tools, route map, themes, logs"]
+        Services["application services<br/>TunnelSession, BackendAdmin, ConfigLibrary"]
+        Storage["user data<br/>state.json, configs/*.conf, traffic, theme prefs"]
+        LogsPage["Logs page<br/>UI ring buffer + backend snapshot"]
     end
 
-    subgraph IPC["Privilege boundary"]
-        LinuxSocket["Linux<br/>systemd socket, Unix domain socket"]
-        WindowsPipe["Windows<br/>SCM service, named pipe"]
-        JsonProtocol["backend/wg/ipc.rs<br/>single-line JSON protocol v9"]
-        LinuxManager["Linux management<br/>systemd units and socket files"]
-        WindowsManager["Windows management<br/>SCM service manager and elevation"]
+    subgraph Boundary["Privilege boundary"]
+        Transport["Linux UDS / Windows named pipe"]
+        IPC["backend/wg/ipc.rs<br/>single-line JSON protocol v16"]
+        Commands["Info, Start, Stop, Status, Stats,<br/>RuntimeSnapshot, ApplyReport,<br/>RelayInventory, LogSnapshot, LogClear"]
     end
 
-    subgraph Service["Privileged backend process"]
-        ServiceEntry["service entry<br/>linux_service::entry or windows_service::maybe_run_service_mode"]
-        ServiceLoop["service loop<br/>UDS accept or named-pipe accept"]
+    subgraph Service["Privileged backend service"]
+        ServiceEntry["linux_service / windows_service"]
         Dispatch["ipc_server::dispatch_command"]
-        EngineThread["engine::Engine<br/>serialized command channel"]
-        TokioRuntime["backend thread<br/>dedicated tokio runtime"]
+        Engine["engine::Engine<br/>facade + serialized command runner"]
+        BackendChoice["backend strategy<br/>Auto / Kernel / Userspace"]
+        Logs["backend log ring buffer<br/>bounded redacted snapshot"]
     end
 
     subgraph Runtime["Tunnel runtime"]
-        Parser["core::config<br/>parse config"]
-        DnsSelection["core::dns<br/>apply DNS selection"]
-        RoutePlan["core::route_plan<br/>build RoutePlan and RouteApplyReport"]
-        Device["gotatun device<br/>TUN, UDP, peers, stats"]
-        EphemeralRuntime["optional ephemeral upgrade<br/>quantum PSK and DAITA"]
-        MullvadCache["relay_inventory cache<br/>mullvad-relays.json"]
+        CoreConfig["core::config"]
+        Dns["core::dns"]
+        RoutePlan["core::route_plan"]
+        Userspace["GotaTun userspace device"]
+        Kernel["Linux kernel WireGuard"]
+        Ephemeral["Quantum / DAITA ephemeral upgrade"]
+        RelayCache["relay_inventory cache"]
     end
 
-    subgraph OS["Privileged OS state"]
-        LinuxNet["Linux network apply<br/>addresses, routes, policy rules, DNS, kill switch, recovery journal"]
-        WindowsNet["Windows network apply<br/>adapter lookup, addresses, metrics, bypass routes, DNS, NRPT, firewall, recovery"]
+    subgraph Platform["Privileged OS networking"]
+        LinuxApply["Linux apply pipeline<br/>link, routes, policy, DNS, kill switch, recovery"]
+        WindowsApply["Windows apply pipeline<br/>adapter, routes, DNS, NRPT, firewall, recovery"]
     end
 
-    GPUI --> AppState
-    AppState --> AppServices
-    AppState --> UserData
-    AppServices --> RemoteEngine
-    AppServices --> BackendManager
-    RemoteEngine --> LinuxSocket
-    RemoteEngine --> WindowsPipe
-    BackendManager --> LinuxManager
-    BackendManager --> WindowsManager
-    LinuxSocket --> JsonProtocol
-    WindowsPipe --> JsonProtocol
-    JsonProtocol --> ServiceLoop
-    ServiceEntry --> ServiceLoop
-    ServiceLoop --> Dispatch
-    Dispatch --> EngineThread
-    EngineThread --> TokioRuntime
-    TokioRuntime --> Parser
-    Parser --> DnsSelection
-    DnsSelection --> RoutePlan
-    RoutePlan --> Device
-    RoutePlan --> LinuxNet
-    RoutePlan --> WindowsNet
-    Device --> EphemeralRuntime
-    EphemeralRuntime --> MullvadCache
-    EphemeralRuntime --> Device
+    GPUI --> AppRoot
+    AppRoot --> Features
+    AppRoot --> Services
+    AppRoot --> Storage
+    Features --> LogsPage
+    Services --> Transport
+    LogsPage --> Transport
 
-    LinuxManager -. install / repair / remove .-> LinuxNet
-    WindowsManager -. install / repair / remove .-> WindowsNet
-    EngineThread -. status, stats, runtime snapshot, apply report .-> AppServices
+    Transport --> IPC
+    IPC --> Commands
+    Commands --> Dispatch
+    ServiceEntry --> Dispatch
+    Dispatch --> Engine
+    Dispatch --> Logs
+
+    Engine --> CoreConfig
+    Engine --> Dns
+    Engine --> RoutePlan
+    Engine --> BackendChoice
+    BackendChoice --> Userspace
+    BackendChoice --> Kernel
+    Userspace --> Ephemeral
+    Ephemeral --> RelayCache
+    RoutePlan --> LinuxApply
+    RoutePlan --> WindowsApply
+    Kernel --> LinuxApply
+    Userspace --> LinuxApply
+    Userspace --> WindowsApply
+    Logs --> LogsPage
 ```
 
 The tunnel start path is intentionally serialized after it crosses into the backend. That keeps device setup, network apply, rollback, and status/report snapshots in one ordered command stream.
@@ -347,7 +360,7 @@ sequenceDiagram
     participant Service as privileged IPC service
     participant Engine as local engine::Engine
     participant Core as core config/dns/route_plan
-    participant Device as gotatun Device
+    participant Device as WireGuard backend
     participant Platform as platform apply pipeline
 
     User->>UI: Click On
@@ -357,14 +370,15 @@ sequenceDiagram
     Library-->>Controller: WireGuard config text
     Controller->>Session: start(StartTunnelRequest)
     Session->>Remote: Engine.start(request)
-    Remote->>Service: Info, then Start over JSON IPC v9
+    Remote->>Service: Info, then Start over JSON IPC v16
     Service->>Engine: dispatch_command(Start)
     Engine->>Engine: enqueue Start on backend thread
     Engine->>Core: parse_config
     Core-->>Engine: WireGuardConfig
     Engine->>Core: normalize DNS and build RoutePlan
     Core-->>Engine: DeviceSettings + RoutePlan
-    Engine->>Device: create or reuse TUN, set key, port, fwmark, peers
+    Engine->>Engine: choose Linux kernel or GotaTun backend
+    Engine->>Device: create or reuse backend, set key, port, fwmark, peers
     Engine->>Platform: apply_network_config(tun, config, plan, kill_switch)
     Platform-->>Engine: NetworkState + RouteApplyReport
     opt Quantum or DAITA enabled
