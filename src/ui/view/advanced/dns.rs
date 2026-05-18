@@ -27,7 +27,7 @@ pub(super) fn render_dns_preset_field(app: Entity<WgApp>, cx: &mut gpui::App) ->
         if active {
             button
                 .dropdown_caret(true)
-                .dropdown_menu_with_anchor(gpui::Corner::TopRight, move |menu: PopupMenu, _, _| {
+                .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu: PopupMenu, _, _| {
                     dns_preset_options()
                         .iter()
                         .fold(menu, |menu, (value, label)| {

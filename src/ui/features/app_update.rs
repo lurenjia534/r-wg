@@ -1,14 +1,9 @@
 use std::process::Command;
 use std::time::Duration;
 
-use gpui::{
-    div, prelude::FluentBuilder, AnyWindowHandle, App, AppContext, IntoElement, ParentElement,
-    Styled,
-};
+use gpui::{div, prelude::FluentBuilder, AnyWindowHandle, App, AppContext, ParentElement, Styled};
 use gpui_component::{
-    button::{Button, ButtonVariant},
-    dialog::DialogButtonProps,
-    ActiveTheme as _, WindowExt,
+    button::ButtonVariant, dialog::DialogButtonProps, ActiveTheme as _, WindowExt,
 };
 use http_body_util::{BodyExt as _, Empty};
 use hyper::body::Bytes;
@@ -177,12 +172,21 @@ fn open_update_dialog(update: UpdateInfo, window: &mut gpui::Window, cx: &mut Ap
         let release_url = update.release_url.clone();
         dialog
             .title(div().text_lg().child("Update available"))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Open release")
                     .ok_variant(ButtonVariant::Primary)
-                    .cancel_text("Later"),
+                    .show_cancel(true)
+                    .cancel_text("Later")
+                    .on_ok({
+                        let release_url = release_url.clone();
+                        move |_, _, _| {
+                            if let Err(err) = open_release_url(&release_url) {
+                                tracing::warn!("failed to open release URL: {err}");
+                            }
+                            true
+                        }
+                    }),
             )
             .child(
                 div()
@@ -209,28 +213,6 @@ fn open_update_dialog(update: UpdateInfo, window: &mut gpui::Window, cx: &mut Ap
                         .child(body),
                 )
             })
-            .footer(move |_ok, _cancel, _window, _cx| {
-                let open_button = Button::new("update-dialog-open-release")
-                    .label("Open release")
-                    .on_click({
-                        let release_url = release_url.clone();
-                        move |_, window, cx| {
-                            if let Err(err) = open_release_url(&release_url) {
-                                tracing::warn!("failed to open release URL: {err}");
-                            }
-                            window.close_dialog(cx);
-                        }
-                    });
-                let later_button = Button::new("update-dialog-later").label("Later").on_click(
-                    move |_, window, cx| {
-                        window.close_dialog(cx);
-                    },
-                );
-                vec![
-                    later_button.into_any_element(),
-                    open_button.into_any_element(),
-                ]
-            })
     });
 }
 
@@ -244,7 +226,6 @@ fn open_update_status_dialog(
     window.open_dialog(cx, move |dialog, _window, dlg_cx| {
         dialog
             .title(div().text_lg().child(title))
-            .alert()
             .button_props(DialogButtonProps::default().ok_text("OK"))
             .child(div().text_sm().child(body.clone()))
             .when_some(detail.clone(), |dialog, detail| {

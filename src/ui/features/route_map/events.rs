@@ -42,7 +42,7 @@ pub(crate) fn render_events(
                 .collect::<Vec<_>>()
         },
     )
-    .track_scroll(scroll_handle.clone())
+    .track_scroll(&scroll_handle)
     .with_sizing_behavior(ListSizingBehavior::Auto)
     .w_full()
     .flex_1()

@@ -83,7 +83,7 @@ pub(super) fn render_library_panel(
                 .collect::<Vec<_>>()
         },
     )
-    .track_scroll(scroll_handle.clone())
+    .track_scroll(&scroll_handle)
     .w_full()
     .flex_1();
 

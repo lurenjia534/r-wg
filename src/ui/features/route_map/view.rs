@@ -7,7 +7,7 @@ use gpui_component::{
     scroll::ScrollableElement as _,
     tab::{Tab, TabBar},
     tag::Tag,
-    v_flex, ActiveTheme as _, PixelsExt as _, Selectable, Sizable as _, StyledExt as _,
+    v_flex, ActiveTheme as _, Selectable, Sizable as _, StyledExt as _,
 };
 
 use crate::ui::state::{RouteFamilyFilter, RouteMapMode, WgApp};

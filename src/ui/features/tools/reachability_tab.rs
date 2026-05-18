@@ -494,7 +494,7 @@ fn render_reachability_prefill_action(
             .xsmall()
             .disabled(disabled)
             .dropdown_caret(true)
-            .dropdown_menu_with_anchor(Corner::TopRight, {
+            .dropdown_menu_with_anchor(Anchor::TopRight, {
                 let workspace = cx.entity();
                 move |menu: PopupMenu, _, _| {
                     let mut menu = menu;

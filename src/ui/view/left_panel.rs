@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use gpui_component::{
     h_flex,
-    sidebar::{Sidebar, SidebarGroup, SidebarToggleButton},
+    sidebar::{Sidebar, SidebarGroup, SidebarItem as ComponentSidebarItem, SidebarToggleButton},
     tooltip::Tooltip,
-    v_flex, ActiveTheme as _, Collapsible, Icon, IconName, StyledExt as _,
+    v_flex, ActiveTheme as _, Collapsible, Icon, IconName, Side, StyledExt as _,
 };
 
 use crate::ui::i18n::{tr, Language, LanguagePreference};
@@ -149,7 +149,7 @@ impl LeftPanelState {
     }
 }
 
-#[derive(IntoElement)]
+#[derive(Clone)]
 struct NavMenu {
     app: Entity<WgApp>,
     collapsed: bool,
@@ -198,8 +198,13 @@ impl Collapsible for NavMenu {
     }
 }
 
-impl RenderOnce for NavMenu {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+impl ComponentSidebarItem for NavMenu {
+    fn render(
+        self,
+        _id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
         v_flex().gap_1().children(
             self.items
                 .into_iter()
@@ -239,7 +244,7 @@ impl RenderOnce for LeftPanelSurface {
         let footer =
             NavMenu::new(self.app.clone(), self.snapshot.footer.clone()).collapsed(collapsed);
 
-        Sidebar::left()
+        Sidebar::new("left-sidebar")
             .collapsible(matches!(self.presentation, LeftPanelPresentation::Docked))
             .collapsed(collapsed)
             .w(px(SIDEBAR_EXPANDED_WIDTH))
@@ -260,7 +265,7 @@ impl RenderOnce for LeftPanelSurface {
                     self.snapshot.network.clone(),
                 )),
             )
-            .footer(footer)
+            .footer(footer.render("left-sidebar-footer", window, cx))
     }
 }
 
@@ -409,7 +414,8 @@ fn render_sidebar_header(
     presentation: LeftPanelPresentation,
     cx: &mut App,
 ) -> impl IntoElement {
-    let toggle = SidebarToggleButton::left()
+    let toggle = SidebarToggleButton::new()
+        .side(Side::Left)
         .collapsed(collapsed)
         .on_click(move |_, window, cx| {
             app_handle.update(cx, |app, cx| match presentation {

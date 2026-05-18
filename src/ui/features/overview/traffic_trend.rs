@@ -152,10 +152,10 @@ pub(crate) fn traffic_trend_card<T>(trend: &TrafficTrendData, cx: &mut Context<T
                                     .size_full()
                                     .child(
                                         BarChart::new(trend.points.clone())
-                                            .x(|point| point.label.clone())
-                                            .y(|point| point.bytes as f64)
+                                            .band(|point| point.label.clone())
+                                            .value(|point| point.bytes as f64)
                                             .tick_margin(1)
-                                            .fill(move |point| {
+                                            .fill(move |point, _, _, _| {
                                                 if point.is_today {
                                                     bar_today
                                                 } else if label_peak > 0

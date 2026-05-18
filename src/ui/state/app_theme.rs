@@ -83,18 +83,15 @@ impl WgApp {
         let storage = self.configs.ensure_storage().ok();
         let light = themes::resolve_theme_preference(
             ThemeMode::Light,
-            self.ui_prefs.theme_light_key.as_deref().map(|key| &**key),
-            self.ui_prefs
-                .theme_light_name
-                .as_deref()
-                .map(|name| &**name),
+            self.ui_prefs.theme_light_key.as_deref(),
+            self.ui_prefs.theme_light_name.as_deref(),
             storage.as_ref(),
             cx,
         );
         let dark = themes::resolve_theme_preference(
             ThemeMode::Dark,
-            self.ui_prefs.theme_dark_key.as_deref().map(|key| &**key),
-            self.ui_prefs.theme_dark_name.as_deref().map(|name| &**name),
+            self.ui_prefs.theme_dark_key.as_deref(),
+            self.ui_prefs.theme_dark_name.as_deref(),
             storage.as_ref(),
             cx,
         );

@@ -283,11 +283,11 @@ fn open_kill_switch_disable_dialog(
         let disable_handle = app_handle.clone();
         dialog
             .title(div().text_lg().child("Turn off Kill Switch?"))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Turn Off")
                     .ok_variant(ButtonVariant::Danger)
+                    .show_cancel(true)
                     .cancel_text("Keep Enabled"),
             )
             .child(

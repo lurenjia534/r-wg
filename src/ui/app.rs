@@ -13,7 +13,7 @@
 //! main()
 //!   └── run(primary)
 //!         ├── 创建 TunnelSessionService (Engine)
-//!         ├── Application::new().run()
+//!         ├── gpui_platform::application().run()
 //!         │     └── GPUI 事件循环
 //!         │           ├── 加载主题偏好
 //!         │           ├── 创建窗口
@@ -85,7 +85,7 @@ pub fn run(primary: PrimaryInstance) {
     // Engine 运行在独立线程中，不阻塞 UI。
     let tunnel_session = TunnelSessionService::new(Engine::new());
 
-    Application::new()
+    gpui_platform::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             // 初始化 GPUI 组件库
@@ -102,8 +102,8 @@ pub fn run(primary: PrimaryInstance) {
             // 解析亮色主题
             let light_theme = themes::resolve_theme_preference(
                 gpui_component::theme::ThemeMode::Light,
-                startup_theme.light_key.as_deref().map(|key| &**key),
-                startup_theme.light_name.as_deref().map(|name| &**name),
+                startup_theme.light_key.as_deref(),
+                startup_theme.light_name.as_deref(),
                 storage.as_ref(),
                 cx,
             );
@@ -111,8 +111,8 @@ pub fn run(primary: PrimaryInstance) {
             // 解析暗色主题
             let dark_theme = themes::resolve_theme_preference(
                 gpui_component::theme::ThemeMode::Dark,
-                startup_theme.dark_key.as_deref().map(|key| &**key),
-                startup_theme.dark_name.as_deref().map(|name| &**name),
+                startup_theme.dark_key.as_deref(),
+                startup_theme.dark_name.as_deref(),
                 storage.as_ref(),
                 cx,
             );

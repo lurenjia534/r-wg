@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use gpui::SharedString;
 use gpui::{AppContext, Context, Window};
-use gpui::{SharedString, Timer};
 use gpui_component::input::InputState;
 
 use crate::ui::state::{RouteFamilyFilter, RouteMapMode, WgApp};
@@ -78,7 +78,9 @@ impl WgApp {
         self.ui.route_map_search.worker_active = true;
 
         cx.spawn(async move |view, cx| loop {
-            Timer::after(Duration::from_millis(150)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
 
             let Some(query) = view
                 .update(cx, |this, _| {

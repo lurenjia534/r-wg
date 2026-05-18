@@ -53,7 +53,7 @@ pub(super) fn render_routes(
                 .collect::<Vec<_>>()
         },
     )
-    .track_scroll(scroll_handle.clone())
+    .track_scroll(&scroll_handle)
     .w_full()
     .flex_1();
 

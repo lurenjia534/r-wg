@@ -6,7 +6,6 @@ use gpui_component::{
         shape::Line,
         StrokeStyle, AXIS_GAP,
     },
-    PixelsExt,
 };
 
 use super::traffic_analytics::TrafficTrendPoint;

@@ -1,7 +1,7 @@
 use gpui::prelude::FluentBuilder as _;
 use std::time::Duration;
 
-use gpui::{div, Axis, Div, Entity, ParentElement, SharedString, Styled, Timer, Window};
+use gpui::{div, Axis, Div, Entity, ParentElement, SharedString, Styled, Window};
 use gpui_component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_component::description_list::DescriptionList;
 use gpui_component::dialog::DialogButtonProps;
@@ -328,11 +328,11 @@ fn open_backend_remove_dialog(app_handle: Entity<WgApp>, window: &mut Window, cx
         let remove_handle = app_handle.clone();
         dialog
             .title(div().text_lg().child("Remove Privileged Backend?"))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Remove")
                     .ok_variant(ButtonVariant::Danger)
+                    .show_cancel(true)
                     .cancel_text("Cancel"),
             )
             .child(
@@ -369,18 +369,18 @@ fn ensure_backend_freshness_ticker(app: Entity<WgApp>, window: &mut Window, cx: 
     cx.spawn({
         let ticker_running = ticker_running.clone();
         async move |cx| loop {
-            Timer::after(Duration::from_secs(10)).await;
+            cx.background_executor()
+                .timer(Duration::from_secs(10))
+                .await;
 
-            let keep_running = app
-                .update(cx, |app, cx| {
-                    if app.ui_session.sidebar_active == SidebarItem::Advanced {
-                        cx.notify();
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false);
+            let keep_running = app.update(cx, |app, cx| {
+                if app.ui_session.sidebar_active == SidebarItem::Advanced {
+                    cx.notify();
+                    true
+                } else {
+                    false
+                }
+            });
 
             if !keep_running {
                 let _ = ticker_running.update(cx, |running, _| {

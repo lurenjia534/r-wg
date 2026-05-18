@@ -226,7 +226,7 @@ fn render_audit_result(
                         .collect::<Vec<_>>()
                 },
             )
-            .track_scroll(scroll_handle.clone())
+            .track_scroll(&scroll_handle)
             .w_full()
             .flex_1();
             div().child(

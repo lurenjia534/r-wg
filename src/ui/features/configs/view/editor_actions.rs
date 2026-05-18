@@ -1,5 +1,5 @@
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, Context, Corner, Div, Entity, IntoElement, ParentElement, Styled};
+use gpui::{div, px, Anchor, Context, Div, Entity, IntoElement, ParentElement, Styled};
 use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
@@ -135,7 +135,7 @@ pub(super) fn editor_action_bar(
             .small()
             .compact()
             .dropdown_caret(true)
-            .dropdown_menu_with_anchor(Corner::TopRight, move |menu: PopupMenu, _, _| {
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu: PopupMenu, _, _| {
                 let rename_handle = menu_handle.clone();
                 let export_handle = menu_handle.clone();
                 let copy_handle = menu_handle.clone();

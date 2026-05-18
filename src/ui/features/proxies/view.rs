@@ -492,7 +492,7 @@ fn proxy_filter_menu_button(
         .xsmall()
         .selected(selected_value.is_some())
         .dropdown_caret(true)
-        .dropdown_menu_with_anchor(Corner::BottomLeft, move |menu, _, _| {
+        .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
             let mut menu = menu
                 .min_w(px(140.0))
                 .max_h(px(280.0))

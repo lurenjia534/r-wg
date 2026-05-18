@@ -190,18 +190,15 @@ impl WgApp {
 
         let light_theme = resolve_theme_config(
             ThemeMode::Light,
-            self.ui_prefs.theme_light_key.as_deref().map(|key| &**key),
-            self.ui_prefs
-                .theme_light_name
-                .as_deref()
-                .map(|name| &**name),
+            self.ui_prefs.theme_light_key.as_deref(),
+            self.ui_prefs.theme_light_name.as_deref(),
             Some(&storage),
             cx,
         );
         let dark_theme = resolve_theme_config(
             ThemeMode::Dark,
-            self.ui_prefs.theme_dark_key.as_deref().map(|key| &**key),
-            self.ui_prefs.theme_dark_name.as_deref().map(|name| &**name),
+            self.ui_prefs.theme_dark_key.as_deref(),
+            self.ui_prefs.theme_dark_name.as_deref(),
             Some(&storage),
             cx,
         );
@@ -383,15 +380,15 @@ fn lint_counts_for_active_palettes(
 ) -> ThemeLintCounts {
     let light_theme = resolve_theme_config(
         ThemeMode::Light,
-        app.ui_prefs.theme_light_key.as_deref().map(|key| &**key),
-        app.ui_prefs.theme_light_name.as_deref().map(|name| &**name),
+        app.ui_prefs.theme_light_key.as_deref(),
+        app.ui_prefs.theme_light_name.as_deref(),
         Some(storage),
         cx,
     );
     let dark_theme = resolve_theme_config(
         ThemeMode::Dark,
-        app.ui_prefs.theme_dark_key.as_deref().map(|key| &**key),
-        app.ui_prefs.theme_dark_name.as_deref().map(|name| &**name),
+        app.ui_prefs.theme_dark_key.as_deref(),
+        app.ui_prefs.theme_dark_name.as_deref(),
         Some(storage),
         cx,
     );

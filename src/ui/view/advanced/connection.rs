@@ -36,7 +36,7 @@ pub(super) fn wireguard_backend_item(app: Entity<WgApp>) -> SettingItem {
                         .compact()
                         .dropdown_caret(true)
                         .dropdown_menu_with_anchor(
-                            gpui::Corner::TopRight,
+                            gpui::Anchor::TopRight,
                             move |menu: PopupMenu, _, _| {
                                 wireguard_backend_options().iter().fold(
                                     menu,
@@ -215,11 +215,11 @@ fn open_daita_requires_userspace_dialog(
         let confirm_handle = app_handle.clone();
         dialog
             .title(div().text_lg().child("Switch to GotaTun for DAITA?"))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Switch to GotaTun")
                     .ok_variant(ButtonVariant::Primary)
+                    .show_cancel(true)
                     .cancel_text("Cancel"),
             )
             .child(

@@ -120,11 +120,11 @@ pub(crate) fn remove_connect_password(
         let view = view.clone();
         dialog
             .title(div().text_lg().child("Remove connection password?"))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Remove")
                     .ok_variant(ButtonVariant::Danger)
+                    .show_cancel(true)
                     .cancel_text("Cancel"),
             )
             .child(div().text_sm().child(
@@ -245,11 +245,11 @@ fn open_connect_password_editor_dialog(
 
         let mut dialog = dialog
             .title(div().text_lg().child(title))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text(ok_text)
                     .ok_variant(ButtonVariant::Primary)
+                    .show_cancel(true)
                     .cancel_text("Cancel"),
             )
             .child(
@@ -412,11 +412,11 @@ fn open_connect_password_prompt_dialog(
 
         dialog
             .title(div().text_lg().child("Connection password"))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Unlock")
                     .ok_variant(ButtonVariant::Primary)
+                    .show_cancel(true)
                     .cancel_text("Cancel"),
             )
             .child(

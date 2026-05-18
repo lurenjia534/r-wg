@@ -197,7 +197,7 @@ fn render_theme_palette_field(app: Entity<WgApp>, mode: ThemeMode, cx: &mut gpui
             .small()
             .compact()
             .dropdown_caret(true)
-            .dropdown_menu_with_anchor(gpui::Corner::TopRight, move |menu: PopupMenu, _, cx| {
+            .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu: PopupMenu, _, cx| {
                 let available = available_themes(mode, storage.as_ref(), cx);
                 let mut builtin = Vec::new();
                 let mut recommended = Vec::new();

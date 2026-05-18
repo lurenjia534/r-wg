@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use gpui::{AppContext, Context, Timer, Window};
+use gpui::{AppContext, Context, Window};
 
 use super::super::persistence;
 use super::super::state::WgApp;
@@ -135,7 +135,9 @@ impl WgApp {
         self.persistence.worker_active = true;
 
         cx.spawn(async move |view, cx| loop {
-            Timer::after(Duration::from_millis(200)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(200))
+                .await;
 
             let Some(state) = view
                 .update(cx, |this, _cx| {

@@ -234,10 +234,11 @@ fn render_glossary_section(
             ButtonCustomVariant::new(cx)
                 .color(cx.theme().group_box.alpha(0.58))
                 .foreground(cx.theme().foreground)
-                .border(cx.theme().border.alpha(0.6))
                 .hover(cx.theme().group_box.alpha(0.82))
                 .active(cx.theme().group_box.alpha(0.92)),
         )
+        .border_1()
+        .border_color(cx.theme().border.alpha(0.6))
         .compact()
         .w_full()
         .child(

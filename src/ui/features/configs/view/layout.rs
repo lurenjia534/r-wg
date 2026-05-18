@@ -7,7 +7,7 @@ use gpui_component::{
     input::InputState,
     resizable::{h_resizable, resizable_panel, ResizableState},
     tag::Tag,
-    v_flex, ActiveTheme as _, PixelsExt, Sizable as _, StyledExt as _,
+    v_flex, ActiveTheme as _, Sizable as _, StyledExt as _,
 };
 
 use crate::ui::features::configs::state::{ConfigsLibraryRow, ConfigsWorkspace};

@@ -1,7 +1,7 @@
-use gpui::{div, Context, IntoElement, ParentElement, SharedString, Styled, Window};
+use gpui::{div, Context, ParentElement, SharedString, Styled, Window};
 use gpui_component::{
     button::{Button, ButtonVariant, ButtonVariants as _},
-    dialog::DialogButtonProps,
+    dialog::{DialogButtonProps, DialogFooter},
     ActiveTheme as _, WindowExt,
 };
 
@@ -99,11 +99,11 @@ pub(crate) fn confirm_discard_or_save(
         let app_handle_ok = app_handle.clone();
         dialog
             .title(div().text_lg().child(title.clone()))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Save")
                     .ok_variant(ButtonVariant::Primary)
+                    .show_cancel(true)
                     .cancel_text("Cancel"),
             )
             .child(div().text_sm().child(body.clone()))
@@ -113,7 +113,7 @@ pub(crate) fn confirm_discard_or_save(
                     .text_color(dlg_cx.theme().muted_foreground)
                     .child("Save your edits, discard them, or cancel this action."),
             )
-            .footer(move |_ok, _cancel, _window, _cx| {
+            .footer({
                 let save_handle = app_handle_save.clone();
                 let discard_handle = app_handle_discard.clone();
                 let save_button = Button::new("draft-dialog-save").label("Save").on_click(
@@ -147,11 +147,10 @@ pub(crate) fn confirm_discard_or_save(
                     .on_click(|_, window, cx| {
                         window.close_dialog(cx);
                     });
-                vec![
-                    cancel_button.into_any_element(),
-                    discard_button.into_any_element(),
-                    save_button.into_any_element(),
-                ]
+                DialogFooter::new()
+                    .child(cancel_button)
+                    .child(discard_button)
+                    .child(save_button)
             })
             .on_ok(move |_, window, cx| {
                 app_handle_ok.update(cx, |app, cx| {
@@ -218,11 +217,11 @@ pub(crate) fn open_delete_current_config_dialog(
         let delete_handle = app_handle.clone();
         dialog
             .title(div().text_lg().child("Delete config?"))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Delete")
                     .ok_variant(ButtonVariant::Danger)
+                    .show_cancel(true)
                     .cancel_text("Cancel"),
             )
             .child(

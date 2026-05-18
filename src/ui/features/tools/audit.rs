@@ -4,7 +4,7 @@ use std::{
 };
 
 use futures_util::stream::{self, StreamExt as _, TryStreamExt as _};
-use gpui::{AppContext as _, Context, SharedString, Timer};
+use gpui::{AppContext as _, Context, SharedString};
 use r_wg::backend::wg::tools::format_endpoint_display;
 use r_wg::core::config::{self, PeerConfig};
 use tokio::runtime::Builder;
@@ -118,7 +118,9 @@ impl ToolsWorkspace {
         cx: &mut Context<Self>,
     ) {
         cx.spawn(async move |view, cx| loop {
-            Timer::after(AUDIT_PROGRESS_POLL_INTERVAL).await;
+            cx.background_executor()
+                .timer(AUDIT_PROGRESS_POLL_INTERVAL)
+                .await;
             let keep_running = view
                 .update(cx, |this, cx| {
                     if this.reachability.audit.generation() != Some(generation) {

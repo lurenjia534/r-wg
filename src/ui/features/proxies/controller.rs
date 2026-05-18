@@ -1,7 +1,7 @@
-use gpui::{div, App, Context, Entity, IntoElement, ParentElement, Styled, Window};
+use gpui::{div, App, Context, Entity, ParentElement, Styled, Window};
 use gpui_component::{
     button::{Button, ButtonVariant, ButtonVariants},
-    dialog::DialogButtonProps,
+    dialog::{DialogButtonProps, DialogFooter},
     ActiveTheme as _, WindowExt,
 };
 
@@ -30,11 +30,11 @@ pub(crate) fn open_delete_dialog(
         let clear_selection = clear_selection;
         let mut dialog = dialog
             .title(div().text_lg().child(title.clone()))
-            .confirm()
             .button_props(
                 DialogButtonProps::default()
                     .ok_text("Delete")
                     .ok_variant(ButtonVariant::Danger)
+                    .show_cancel(true)
                     .cancel_text("Cancel"),
             )
             .child(div().text_sm().child(body.clone()));
@@ -56,7 +56,7 @@ pub(crate) fn open_delete_dialog(
             }
         };
 
-        dialog = dialog.footer(move |_ok, _cancel, _window, _cx| {
+        dialog = dialog.footer({
             let app_handle = app_handle.clone();
             let ids = ids.clone();
             let delete_button = Button::new("proxy-dialog-delete")
@@ -72,10 +72,9 @@ pub(crate) fn open_delete_dialog(
                 .on_click(|_, window, cx| {
                     window.close_dialog(cx);
                 });
-            vec![
-                cancel_button.into_any_element(),
-                delete_button.into_any_element(),
-            ]
+            DialogFooter::new()
+                .child(cancel_button)
+                .child(delete_button)
         });
 
         dialog = dialog.on_ok(move |_, window, cx| {
