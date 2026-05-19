@@ -49,15 +49,13 @@ pub(crate) fn render_logs(
         log_input.update(cx, |input, cx| {
             input.set_value("", window, cx);
         });
-    } else if log_viewer_enabled
-        && app.ui_prefs.log_auto_follow
-        && cursor_at_end
-        && current_text != latest_text
-    {
+    } else if log_viewer_enabled && current_text != latest_text {
         let latest_text = latest_text.clone();
+        let should_follow =
+            app.ui_prefs.log_auto_follow && (cursor_at_end || current_text.is_empty());
         log_input.update(cx, |input, cx| {
             input.set_value(latest_text.clone(), window, cx);
-            if !latest_text.is_empty() {
+            if should_follow && !latest_text.is_empty() {
                 input.set_cursor_position(log_end_position(&latest_text), window, cx);
             }
         });
