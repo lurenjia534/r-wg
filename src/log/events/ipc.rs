@@ -1,21 +1,21 @@
 use crate::{log_debug, log_info, log_warn};
 
 pub fn request_sent(request_id: u64, command: &str) {
-    log_info!(
+    log_debug!(
         "ipc",
         "backend request sent: id={request_id} command={command}"
     );
 }
 
 pub fn request_received(request_id: u64, command: &str) {
-    log_info!(
+    log_debug!(
         "ipc",
         "backend request received: id={request_id} command={command}"
     );
 }
 
 pub fn request_completed(request_id: u64, command: &str) {
-    log_info!(
+    log_debug!(
         "ipc",
         "backend request completed: id={request_id} command={command}"
     );
