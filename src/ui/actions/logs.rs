@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use gpui::{AppContext, Context, SharedString, Window};
-use gpui_component::input::InputState;
 use r_wg::log;
 use r_wg::log::events::{ipc as log_ipc, ui as log_ui};
 
@@ -12,23 +11,6 @@ const BACKEND_LOG_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_MERGED_LOG_LINES: usize = 2000;
 
 impl WgApp {
-    /// 确保日志输入框已创建，避免在没有窗口时初始化。
-    pub(crate) fn ensure_log_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.ui.log_input.is_some() {
-            return;
-        }
-
-        let input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("text")
-                .line_number(false)
-                .soft_wrap(true)
-                .searchable(false)
-                .placeholder("No logs captured")
-        });
-        self.ui.log_input = Some(input);
-    }
-
     pub(crate) fn ensure_backend_log_polling(&mut self, cx: &mut Context<Self>) {
         if !self.ui_prefs.log_viewer_enabled {
             self.stop_backend_log_polling();
@@ -85,7 +67,7 @@ impl WgApp {
         self.ui.backend_log_sync_in_flight = false;
     }
 
-    pub(crate) fn clear_all_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn clear_all_logs(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.ui_prefs.log_viewer_enabled {
             return;
         }
@@ -96,11 +78,6 @@ impl WgApp {
         self.ui.backend_log_last_error = None;
         self.ui.backend_log_last_sync = None;
         self.ui.backend_log_generation = self.ui.backend_log_generation.wrapping_add(1);
-        if let Some(log_input) = self.ui.log_input.clone() {
-            log_input.update(cx, |input, cx| {
-                input.set_value("", window, cx);
-            });
-        }
         let tunnel_session = self.services.tunnel_session.clone();
         cx.spawn(async move |view, cx| {
             let result = cx

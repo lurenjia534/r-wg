@@ -1,4 +1,4 @@
-use crate::{log_info, log_warn};
+use crate::{log_debug, log_info, log_warn};
 
 pub fn request_sent(request_id: u64, command: &str) {
     log_info!(
@@ -29,11 +29,11 @@ pub fn request_failed(request_id: u64, command: &str, err: &impl std::fmt::Displ
 }
 
 pub fn backend_log_snapshot_requested() {
-    log_info!("ipc", "backend log snapshot requested");
+    log_debug!("ipc", "backend log snapshot requested");
 }
 
 pub fn backend_log_snapshot_received(line_count: usize) {
-    log_info!("ipc", "backend log snapshot received: lines={line_count}");
+    log_debug!("ipc", "backend log snapshot received: lines={line_count}");
 }
 
 pub fn backend_log_snapshot_failed(err: &impl std::fmt::Display) {

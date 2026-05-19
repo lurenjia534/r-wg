@@ -10,7 +10,6 @@ use super::{
 };
 
 pub(crate) struct UiState {
-    pub(crate) log_input: Option<Entity<InputState>>,
     pub(crate) backend_log_lines: Vec<String>,
     pub(crate) backend_log_last_sync: Option<Instant>,
     pub(crate) backend_log_sync_in_flight: bool,
@@ -34,7 +33,6 @@ pub(crate) struct UiState {
 impl UiState {
     pub(super) fn new() -> Self {
         Self {
-            log_input: None,
             backend_log_lines: Vec::new(),
             backend_log_last_sync: None,
             backend_log_sync_in_flight: false,
