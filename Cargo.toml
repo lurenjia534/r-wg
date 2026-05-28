@@ -20,7 +20,7 @@ hyper = { version = "1.8.1", features = ["client", "http1"] }
 hyper-rustls = { version = "0.27.7", default-features = false, features = ["http1", "native-tokio", "ring", "tls12"] }
 hyper-util = { version = "0.1.19", features = ["client", "client-legacy", "http1", "tokio"] }
 ipnetwork = "0.21.1" # gotatun 公共 Peer/Allowed IPs 类型依赖
-dirs = "5.0"
+dirs = "6.0"
 ml-kem = { version = "0.2.1", features = ["zeroize"] }
 pqcrypto-hqc = { version = "0.2.1", default-features = false }
 pqcrypto-traits = "0.3.5"
