@@ -9,7 +9,7 @@ gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "6b8d9773392a627eed4e9b93d3b840d43e7fdf1f", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "6b8d9773392a627eed4e9b93d3b840d43e7fdf1f" }
-gotatun = { git = "https://github.com/mullvad/gotatun", branch = "main", version = "0.6.0", features = ["device", "tun", "daita"] }
+gotatun = { git = "https://github.com/mullvad/gotatun", branch = "main", version = "0.7.1", features = ["device", "tun", "daita"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "sync", "net", "process", "time"] }
 base64 = "0.22.1"
 chrono = "0.4.43"
